@@ -38,6 +38,7 @@ import os
 import platform
 import re
 import secrets
+import shlex
 import shutil
 import statistics
 import subprocess
@@ -550,15 +551,15 @@ class DockerServerManager:
             cuda_env += f" -e CUDA_VISIBLE_DEVICES={cuda_visible}"
         run_cmd = (
             f"docker run --rm --gpus all {cuda_env}"
-            f" --name {self.container_name}"
+            f" --name {shlex.quote(self.container_name)}"
             f" -p {self.port}:8000 --ipc=host"
-            f" -v {cache_dir}:/root/.cache/huggingface"
-            f" {self.docker_image}"
-            f" --model {model}"
+            f" -v {shlex.quote(str(cache_dir))}:/root/.cache/huggingface"
+            f" {shlex.quote(self.docker_image)}"
+            f" --model {shlex.quote(model)}"
         )
         if extra_args:
-            run_cmd += f" {extra_args}"
-        pull_cmd = f"docker pull {self.docker_image}"
+            run_cmd += f" {shlex.join(shlex.split(extra_args))}"
+        pull_cmd = f"docker pull {shlex.quote(self.docker_image)}"
         server_cmd = f"{pull_cmd} && {run_cmd}"
 
         # Kill any stale session with the same stable name
@@ -624,7 +625,7 @@ class OllamaServerManager:
             _require_command("ollama")
             server_cmd = "ollama serve"
             if extra_args:
-                server_cmd += f" {extra_args}"
+                server_cmd += f" {shlex.join(shlex.split(extra_args))}"
             # Kill any stale session with the same stable name
             subprocess.run(
                 ["tmux", "kill-session", "-t", self.session_name],
@@ -689,11 +690,11 @@ class NativeVllmServerManager:
         _require_command("tmux")
         _require_command("vllm")
 
-        server_cmd = f"vllm serve {model}"
+        server_cmd = f"vllm serve {shlex.quote(model)}"
         if self.port != self.DEFAULT_PORT:
             server_cmd += f" --port {self.port}"
         if extra_args:
-            server_cmd += f" {extra_args}"
+            server_cmd += f" {shlex.join(shlex.split(extra_args))}"
 
         # Kill any stale session with the same stable name
         subprocess.run(
