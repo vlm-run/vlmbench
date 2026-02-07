@@ -6,7 +6,7 @@
 #   "openai>=1.0",
 #   "tenacity>=8",
 #   "Pillow>=10",
-#   "pdf2image>=1.16",
+#   "pypdfium2>=4",
 # ]
 # ///
 """
@@ -972,17 +972,21 @@ def image_to_base64(path: Path) -> str:
     return f"data:{mime};base64,{b64}"
 
 
-def pdf_to_base64_images(path: Path) -> list[str]:
-    """Convert PDF pages to base64 data URIs using pdf2image."""
-    from pdf2image import convert_from_path
+def pdf_to_base64_images(path: Path, dpi: int = 150) -> list[str]:
+    """Convert PDF pages to base64 data URIs using pypdfium2."""
+    import pypdfium2 as pdfium
 
-    images = convert_from_path(str(path))
+    doc = pdfium.PdfDocument(str(path))
     results = []
-    for img in images:
+    for idx in range(len(doc)):
+        page = doc[idx]
+        bitmap = page.render(scale=dpi / 72)
+        img = bitmap.to_pil()
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
         results.append(f"data:image/png;base64,{b64}")
+    doc.close()
     return results
 
 
