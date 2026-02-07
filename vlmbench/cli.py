@@ -81,6 +81,21 @@ DEFAULT_API_KEY = "no-key"
 DEFAULT_VLLM_IMAGE = "vllm-openai:latest"
 STEEL_BLUE = "#4A78B8"
 
+IMAGEGEN_PROMPTS: list[str] = [
+    "a red apple on a white table",
+    "a mountain lake at sunset with snow-capped peaks",
+    "a gothic cathedral with stained glass windows",
+    "a portrait of an astronaut in a space suit",
+    "an abstract painting with geometric shapes in blue and gold",
+    "a storefront sign that reads 'OPEN 24 HOURS'",
+    "a tiger walking through a bamboo forest",
+    "a bowl of ramen with steam rising, top-down view",
+    "a futuristic city skyline at night with neon lights",
+    "a watercolor painting of sunflowers in a vase",
+    "a cozy cabin in a snowy forest with smoke from the chimney",
+    "a close-up of a mechanical watch with visible gears",
+]
+
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".tiff", ".bmp"}
 PDF_EXTENSIONS = {".pdf"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
@@ -198,6 +213,53 @@ class BenchmarkResult:
     input: InputInfo = field(default_factory=InputInfo)
     results: Results = field(default_factory=Results)
     runs_raw: list[RunRaw] = field(default_factory=list)
+
+
+# ── ImageGen Schema ──────────────────────────────────────────────────────────
+
+
+@dataclass
+class ImageGenRunRaw:
+    prompt_idx: int = 0
+    run: int = 0
+    latency_s: float = 0.0
+    error: Optional[str] = None
+
+
+@dataclass
+class ImageGenConfig:
+    num_prompts: int = 0
+    image_size: str = "1024x1024"
+    n_per_prompt: int = 1
+    seed: Optional[int] = None
+    runs: int = 1
+    max_concurrency: int = 1
+
+
+@dataclass
+class ImageGenResults:
+    s_per_image: StatBlock = field(default_factory=StatBlock)
+    images_per_min: float = 0.0
+    images_generated: int = 0
+    image_size: str = ""
+    total_duration_s: float = 0.0
+    errors: int = 0
+    retries: int = 0
+    vram_peak_mib: Optional[int] = None
+
+
+@dataclass
+class ImageGenBenchmarkResult:
+    schema_version: str = SCHEMA_VERSION
+    type: str = "imagegen"
+    run_id: str = ""
+    timestamp: str = ""
+    tag: Optional[str] = None
+    model: ModelInfo = field(default_factory=ModelInfo)
+    environment: EnvironmentInfo = field(default_factory=EnvironmentInfo)
+    config: ImageGenConfig = field(default_factory=ImageGenConfig)
+    results: ImageGenResults = field(default_factory=ImageGenResults)
+    runs_raw: list[ImageGenRunRaw] = field(default_factory=list)
 
 
 def _coerce_field(ftype: type, val: Any) -> Any:
@@ -673,10 +735,11 @@ class NativeVllmServerManager:
 
     DEFAULT_PORT = 8000
 
-    def __init__(self, port: int | None = None) -> None:
+    def __init__(self, port: int | None = None, omni: bool = False) -> None:
         self.port = port or self.DEFAULT_PORT
+        self.omni = omni
         self._base_url = f"http://localhost:{self.port}/v1"
-        self.session_name = _tmux_session_name("vllm")
+        self.session_name = _tmux_session_name("vllm-omni" if omni else "vllm")
 
     def is_running(self) -> bool:
         try:
@@ -691,6 +754,8 @@ class NativeVllmServerManager:
         _require_command("vllm")
 
         server_cmd = f"vllm serve {shlex.quote(model)}"
+        if self.omni:
+            server_cmd += " --omni"
         if self.port != self.DEFAULT_PORT:
             server_cmd += f" --port {self.port}"
         if extra_args:
@@ -717,7 +782,8 @@ class NativeVllmServerManager:
                 ["tmux", "select-pane", "-t", f"{self.session_name}:.0"],
                 check=True,
             )
-        console.print(f"  [cyan]Started native vLLM in tmux session '[bold]{self.session_name}[/bold]'[/cyan]")
+        label = "vllm-omni" if self.omni else "native vLLM"
+        console.print(f"  [cyan]Started {label} in tmux session '[bold]{self.session_name}[/bold]'[/cyan]")
         console.print(f"  [dim]Attach with: tmux attach -t {self.session_name}[/dim]")
 
     def wait_ready(self, timeout: int = 600) -> bool:
@@ -767,11 +833,13 @@ def _auto_detect_backend() -> str:
 
 
 def _resolve_backend_for_monitor(backend: str) -> str:
-    """Resolve backend string to a category: 'ollama', 'vllm', or 'sglang'."""
+    """Resolve backend string to a category: 'ollama', 'vllm', 'vllm-omni', or 'sglang'."""
     if backend == "auto":
         return "ollama" if platform.system() == "Darwin" else "vllm"
     if backend == "ollama":
         return "ollama"
+    if backend == "vllm-omni":
+        return "vllm-omni"
     if backend.startswith("sglang"):
         return "sglang"
     return "vllm"
@@ -783,6 +851,8 @@ def _create_server_manager(backend: str) -> DockerServerManager | OllamaServerMa
         return OllamaServerManager()
     if backend == "vllm":
         return NativeVllmServerManager()
+    if backend == "vllm-omni":
+        return NativeVllmServerManager(omni=True)
     return DockerServerManager(backend)
 
 
@@ -907,7 +977,7 @@ def resolve_server(
     manager = _create_server_manager(backend)
 
     if isinstance(manager, NativeVllmServerManager):
-        backend_label = "native vLLM"
+        backend_label = "vllm-omni" if manager.omni else "native vLLM"
     else:
         backend_label = getattr(manager, "docker_image", backend)
     console.print(f"  [cyan]Auto-starting {backend_label}...[/cyan]")
@@ -1322,6 +1392,167 @@ def run_benchmark(
     return runs_raw, retries
 
 
+# ── ImageGen Benchmark Core ──────────────────────────────────────────────────
+
+
+def call_imagegen(
+    client: OpenAI,
+    model: str,
+    prompt: str,
+    size: str,
+    n: int,
+    seed: Optional[int],
+) -> dict[str, Any]:
+    """Call images.generate and measure latency.
+
+    Returns dict with keys: latency_s, error, data.
+    """
+    t_start = time.perf_counter()
+    try:
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "size": size,
+            "n": n,
+            "response_format": "b64_json",
+        }
+        if seed is not None:
+            kwargs["seed"] = seed
+        response = client.images.generate(**kwargs)
+        latency_s = time.perf_counter() - t_start
+        return {"latency_s": latency_s, "error": None, "data": response.data}
+    except Exception as e:
+        return {"latency_s": time.perf_counter() - t_start, "error": str(e), "data": None}
+
+
+def _call_imagegen_with_retry(
+    client: OpenAI,
+    model: str,
+    prompt: str,
+    size: str,
+    n: int,
+    seed: Optional[int],
+) -> tuple[dict[str, Any], int]:
+    """Call imagegen with retry, return (result, retry_count)."""
+    attempt = 0
+
+    @retry(
+        retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError)),
+        wait=wait_exponential(multiplier=1, min=1, max=60),
+        stop=stop_after_attempt(5),
+    )
+    def _inner() -> dict[str, Any]:
+        nonlocal attempt
+        attempt += 1
+        result = call_imagegen(client, model, prompt, size, n, seed)
+        if result["error"] is not None:
+            raise RuntimeError(result["error"])
+        return result
+
+    try:
+        result = _inner()
+        return result, max(0, attempt - 1)
+    except Exception as e:
+        return {"latency_s": 0.0, "error": str(e), "data": None}, max(0, attempt - 1)
+
+
+def run_imagegen_benchmark(
+    client: OpenAI,
+    model: str,
+    prompts: list[str],
+    size: str,
+    n: int,
+    seed: Optional[int],
+    runs: int,
+    max_concurrency: int,
+    warmup: int,
+    save_images_dir: Optional[Path],
+    progress_callback: Any = None,
+) -> tuple[list[ImageGenRunRaw], int]:
+    """Run image generation benchmark.
+
+    Returns (runs_raw, retries_count).
+    """
+    runs_raw: list[ImageGenRunRaw] = []
+    retries = 0
+
+    # Warmup on first prompt
+    for w in range(warmup):
+        if progress_callback:
+            progress_callback("warmup", w + 1, 0)
+        try:
+            result = call_imagegen(client, model, prompts[0], size, n, seed)
+            if result["error"] is not None:
+                err_str = result["error"].lower()
+                if any(
+                    kw in err_str
+                    for kw in ("not found", "404", "does not exist", "invalid model", "401", "403", "unauthorized")
+                ):
+                    console.print()
+                    print_error("Warmup failed", result["error"])
+                    raise typer.Exit(1)
+                if w == 0:
+                    console.print(f"  [yellow]Warmup warning: {result['error']}[/yellow]")
+        except typer.Exit:
+            raise
+        except Exception as e:
+            if w == 0:
+                console.print(f"  [yellow]Warmup warning: {e}[/yellow]")
+
+    # Prepare save dir
+    if save_images_dir:
+        save_images_dir.mkdir(parents=True, exist_ok=True)
+
+    # Timed runs
+    def execute_single(prompt_idx: int, run_num: int) -> ImageGenRunRaw:
+        nonlocal retries
+        try:
+            result, retry_count = _call_imagegen_with_retry(client, model, prompts[prompt_idx], size, n, seed)
+            retries += retry_count
+            # Save images if requested
+            if save_images_dir and result["data"]:
+                for img_idx, img_data in enumerate(result["data"]):
+                    b64 = getattr(img_data, "b64_json", None)
+                    if b64:
+                        img_bytes = base64.b64decode(b64)
+                        fname = f"p{prompt_idx:02d}_r{run_num}_n{img_idx}.png"
+                        (save_images_dir / fname).write_bytes(img_bytes)
+            return ImageGenRunRaw(
+                prompt_idx=prompt_idx,
+                run=run_num,
+                latency_s=round(result["latency_s"], 3),
+                error=result["error"],
+            )
+        except Exception as e:
+            return ImageGenRunRaw(
+                prompt_idx=prompt_idx,
+                run=run_num,
+                latency_s=0,
+                error=str(e),
+            )
+
+    completed = 0
+
+    for run_num in range(1, runs + 1):
+        if progress_callback:
+            progress_callback("run", run_num, completed)
+
+        with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+            futures = {executor.submit(execute_single, i, run_num): i for i in range(len(prompts))}
+            for future in as_completed(futures):
+                run_result = future.result()
+                runs_raw.append(run_result)
+                completed += 1
+                if run_result.error and completed == 1:
+                    console.print()
+                    print_error("Benchmark aborted", f"First request failed: {run_result.error}")
+                    raise typer.Exit(1)
+                if progress_callback:
+                    progress_callback("progress", run_num, completed)
+
+    return runs_raw, retries
+
+
 # ── Display ───────────────────────────────────────────────────────────────────
 
 
@@ -1673,6 +1904,220 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
     console.print()
 
 
+# ── ImageGen Display ─────────────────────────────────────────────────────────
+
+
+def print_imagegen_config(
+    model_id: str,
+    base_url: str,
+    backend: str,
+    backend_version: Optional[str],
+    env: EnvironmentInfo,
+    num_prompts: int,
+    image_size: str,
+    n_per_prompt: int,
+    seed: Optional[int],
+    runs: int,
+    max_concurrency: int,
+    tmux_session: str | None = None,
+) -> None:
+    """Print the configuration block for imagegen benchmark."""
+    lines = Text()
+
+    # Model line
+    lines.append("  Model      ", style="bold cyan")
+    lines.append(f"{model_id}\n")
+
+    # Server line
+    version_str = f" {backend_version}" if backend_version else ""
+    backend_display = "vLLM-Omni" if "omni" in backend else backend.capitalize()
+    lines.append("  Server     ", style="bold cyan")
+    lines.append(f"{base_url} ")
+    lines.append("• ", style="dim")
+    lines.append(f"{backend_display}{version_str}\n")
+
+    # Hardware line
+    if env.gpu_name:
+        lines.append("  Hardware   ", style="bold cyan")
+        if env.accelerator == "cuda":
+            vram_str = f"({env.gpu_vram_mib} MiB)" if env.gpu_vram_mib else ""
+            driver_str = f" • Driver {env.gpu_driver}" if env.gpu_driver else ""
+            lines.append(f"{env.gpu_name} {vram_str} ")
+            lines.append("• ", style="dim")
+            lines.append(f"CUDA{driver_str}\n")
+        else:
+            lines.append(f"{env.gpu_name}\n")
+    elif env.cpu:
+        lines.append("  Hardware   ", style="bold cyan")
+        lines.append(f"{env.cpu}\n")
+
+    # Prompts line
+    lines.append("  Prompts    ", style="bold cyan")
+    lines.append(f"{num_prompts} built-in prompts ")
+    lines.append("• ", style="dim")
+    lines.append(f"size={image_size} ")
+    lines.append("• ", style="dim")
+    lines.append(f"n={n_per_prompt}")
+    if seed is not None:
+        lines.append(" ")
+        lines.append("• ", style="dim")
+        lines.append(f"seed={seed}")
+    lines.append("\n")
+
+    # Config line
+    lines.append("  Config     ", style="bold cyan")
+    lines.append(f"runs={runs} ")
+    lines.append("• ", style="dim")
+    lines.append(f"concurrency={max_concurrency}")
+
+    # Tmux session line
+    if tmux_session:
+        lines.append("\n")
+        lines.append("  Tmux       ", style="bold cyan")
+        lines.append(f"{tmux_session} ", style="bold")
+        lines.append("• ", style="dim")
+        lines.append("tmux attach -t ", style="dim")
+        lines.append(tmux_session, style="dim")
+
+    panel = Panel(
+        lines,
+        title="[bold]Configuration[/bold]",
+        title_align="left",
+        border_style="bright_magenta",
+        box=box.ROUNDED,
+        padding=(1, 1),
+    )
+    console.print(panel)
+
+
+def print_imagegen_results(result: ImageGenBenchmarkResult, save_path: str) -> None:
+    """Print the results card for imagegen benchmark."""
+    r = result.results
+    lines = Text()
+
+    # s/img
+    lines.append("  s/img        ", style="bold cyan")
+    lines.append(f"{r.s_per_image.mean:>6.2f} s", style="bold")
+    lines.append(
+        f"    (p50: {r.s_per_image.p50:.2f}  p95: {r.s_per_image.p95:.2f}  p99: {r.s_per_image.p99:.2f})\n", style="dim"
+    )
+
+    # Throughput
+    lines.append("  Throughput   ", style="bold cyan")
+    lines.append(f"{r.images_per_min:>6.1f} img/min\n", style="bold")
+
+    # VRAM
+    if r.vram_peak_mib is not None:
+        lines.append("  VRAM         ", style="bold cyan")
+        lines.append(f"{r.vram_peak_mib:>6d} MiB peak\n", style="bold")
+
+    # Reliability
+    total_ok = r.images_generated - r.errors
+    lines.append("  Reliability  ", style="bold cyan")
+    if r.errors == 0:
+        lines.append(f"{total_ok}/{r.images_generated} ok", style="bold green")
+    else:
+        lines.append(f"{total_ok}/{r.images_generated} ok", style="bold yellow")
+    lines.append(f", {r.retries} retries", style="dim" if r.retries == 0 else "yellow")
+
+    panel = Panel(
+        lines,
+        title="[bold]Results[/bold]",
+        title_align="left",
+        border_style="green",
+        box=box.ROUNDED,
+        padding=(1, 1),
+    )
+    console.print(panel)
+    console.print(f"  [green bold]>[/green bold] Saved [dim]->[/dim] {save_path}")
+    console.print()
+
+
+def print_imagegen_compare_table(results: list[ImageGenBenchmarkResult]) -> None:
+    """Print comparison table for imagegen results, sorted by s/img ascending (fastest first)."""
+    console.print(f"  [bold]compare[/bold] [dim]({len(results)} runs, imagegen)[/dim]")
+    console.print()
+
+    sorted_results = sorted(results, key=lambda r: r.results.s_per_image.mean)
+    best_s_per_img = sorted_results[0].results.s_per_image.mean if sorted_results else 0
+
+    table = Table(
+        show_header=True,
+        header_style="bold white",
+        box=box.ROUNDED,
+        border_style="dim white",
+        padding=(0, 1),
+    )
+    table.add_column("Model", min_width=24, no_wrap=True, style=f"bold {STEEL_BLUE}")
+    table.add_column("s/img \u2191", justify="right", min_width=7)
+    table.add_column("s/img p95", justify="right", min_width=8, style="dim")
+    table.add_column("img/min", justify="right", min_width=7)
+    table.add_column("Duration (s)", justify="right", min_width=8, style="dim")
+    table.add_column("Workers", justify="right", min_width=4, style="dim")
+    table.add_column("VRAM", justify="right", min_width=9, style="dim")
+    table.add_column("Backend", min_width=7, style="dim")
+    table.add_column("Hardware", min_width=14, style="dim")
+
+    for r in sorted_results:
+        be = r.environment.backend
+        be_ver = r.environment.backend_version or ""
+        be_label = f"vLLM-Omni {be_ver}".strip() if "omni" in be else f"{be.capitalize()} {be_ver}".strip()
+
+        vram_gb = f"{r.results.vram_peak_mib / 1024:.2f} GB" if r.results.vram_peak_mib is not None else "-"
+        is_fastest = r.results.s_per_image.mean == best_s_per_img
+        s_img_style = "bold bright_green" if is_fastest else "white"
+
+        table.add_row(
+            r.model.model_id,
+            Text(f"{r.results.s_per_image.mean:.2f}", style=s_img_style),
+            f"{r.results.s_per_image.p95:.2f}",
+            f"{r.results.images_per_min:.1f}",
+            f"{r.results.total_duration_s:.1f}",
+            str(r.config.max_concurrency),
+            vram_gb,
+            be_label,
+            r.environment.gpu_name or "-",
+        )
+
+    console.print(table)
+    console.print()
+
+    # Summary
+    all_s_img = [r.results.s_per_image.mean for r in results]
+    total_duration = sum(r.results.total_duration_s for r in results)
+    total_errors = sum(r.results.errors for r in results)
+
+    lines = Text()
+    lines.append("Runs       ", style=f"bold {STEEL_BLUE}")
+    lines.append(f"{len(results)}", style="white")
+    lines.append(f"  total duration {total_duration:.1f}s\n", style="dim")
+
+    lines.append("s/img      ", style=f"bold {STEEL_BLUE}")
+    lines.append(f"{min(all_s_img):.2f}", style="bright_green")
+    lines.append(" best", style="dim")
+    lines.append(f"   {max(all_s_img):.2f}", style="white")
+    lines.append(" worst", style="dim")
+    lines.append(f"   {statistics.mean(all_s_img):.2f}", style="white")
+    lines.append(" avg\n", style="dim")
+
+    reliability_style = "bright_green" if total_errors == 0 else "yellow"
+    lines.append("Errors     ", style=f"bold {STEEL_BLUE}")
+    lines.append(f"{total_errors}", style=reliability_style)
+
+    panel = Panel(
+        lines,
+        title="[bold]Summary[/bold]",
+        title_align="left",
+        subtitle=f"[dim]vlmbench v{VERSION}[/dim]",
+        subtitle_align="right",
+        border_style="dim white",
+        box=box.ROUNDED,
+        padding=(1, 2),
+    )
+    console.print(panel)
+    console.print()
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 app = typer.Typer(
@@ -1891,29 +2336,209 @@ def run(
 
 
 @app.command()
+def imagegen(
+    model: str = typer.Option(..., "--model", "-m", help="Model ID (e.g. Qwen/Qwen-Image, Tongyi-MAI/Z-Image-Turbo)"),
+    base_url: Optional[str] = typer.Option(None, "--base-url", help="OpenAI-compatible base URL"),
+    api_key: str = typer.Option(DEFAULT_API_KEY, "--api-key", envvar="OPENAI_API_KEY", help="API key"),
+    size: str = typer.Option("1024x1024", "--size", help="Image size (e.g. 1024x1024, 512x512)"),
+    n: int = typer.Option(1, "--n", help="Number of images per prompt"),
+    seed: Optional[int] = typer.Option(None, "--seed", help="Random seed for reproducibility"),
+    runs: int = typer.Option(DEFAULT_RUNS, "--runs", help="Timed runs per prompt"),
+    warmup: int = typer.Option(1, "--warmup", help="Number of warmup runs (not recorded)"),
+    max_concurrency: int = typer.Option(DEFAULT_CONCURRENCY, "--max-concurrency", help="Max parallel requests"),
+    save: str = typer.Option(DEFAULT_SAVE_DIR, "--save", help="Output directory for results JSON"),
+    tag: Optional[str] = typer.Option(None, "--tag", help="Custom grouping label"),
+    serve: bool = typer.Option(True, "--serve/--no-serve", help="Auto-start inference server if none detected"),
+    backend: str = typer.Option("vllm-omni", "--backend", help="Backend: vllm-omni (default), vllm, auto, etc."),
+    serve_args: Optional[str] = typer.Option(None, "--serve-args", help="Extra CLI args for the server command"),
+    save_images: Optional[str] = typer.Option(None, "--save-images", help="Directory to save generated images"),
+) -> None:
+    """Benchmark image generation models (vllm-omni)."""
+    prompts = IMAGEGEN_PROMPTS
+
+    # Resolve base URL
+    base_url, tmux_session = resolve_server(
+        base_url=base_url,
+        serve=serve,
+        backend=backend,
+        model=model,
+        serve_args=serve_args,
+    )
+
+    # Collect environment
+    env = collect_environment(base_url)
+
+    # Print configuration
+    print_imagegen_config(
+        model_id=model,
+        base_url=base_url,
+        backend=env.backend,
+        backend_version=env.backend_version,
+        env=env,
+        num_prompts=len(prompts),
+        image_size=size,
+        n_per_prompt=n,
+        seed=seed,
+        runs=runs,
+        max_concurrency=max_concurrency,
+        tmux_session=tmux_session,
+    )
+
+    # Create client
+    client = OpenAI(base_url=base_url, api_key=api_key)
+
+    # Progress display
+    total_tasks = len(prompts) * runs
+    save_images_dir = Path(save_images) if save_images else None
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total} images"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task_id = progress.add_task("  Warmup...", total=total_tasks)
+
+        def progress_callback(phase: str, run_num: int, completed: int) -> None:
+            if phase == "warmup":
+                progress.update(task_id, description="  Warmup...")
+            elif phase == "run":
+                progress.update(task_id, description=f"  Run {run_num}/{runs}")
+            elif phase == "progress":
+                progress.update(task_id, completed=completed)
+
+        t_start = time.perf_counter()
+        runs_raw, retries = run_imagegen_benchmark(
+            client=client,
+            model=model,
+            prompts=prompts,
+            size=size,
+            n=n,
+            seed=seed,
+            runs=runs,
+            max_concurrency=max_concurrency,
+            warmup=warmup,
+            save_images_dir=save_images_dir,
+            progress_callback=progress_callback,
+        )
+        t_end = time.perf_counter()
+
+    total_duration_s = round(t_end - t_start, 1)
+
+    # Compute statistics
+    successful_runs = [r for r in runs_raw if r.error is None]
+    error_count = len(runs_raw) - len(successful_runs)
+    latency_values = [r.latency_s for r in successful_runs]
+    images_generated = len(runs_raw)
+    images_per_min = round(len(successful_runs) / (total_duration_s / 60), 1) if total_duration_s > 0 else 0
+
+    # VRAM peak
+    vram_peak: Optional[int] = None
+    try:
+        if platform.system() == "Linux":
+            gpu_idx = _nvidia_gpu_index()
+            vram_result = subprocess.run(
+                ["nvidia-smi", f"--id={gpu_idx}", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if vram_result.returncode == 0:
+                vram_peak = int(float(vram_result.stdout.strip().split("\n")[0]))
+    except Exception:
+        pass
+
+    # Build result
+    run_id = secrets.token_hex(6)
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    result = ImageGenBenchmarkResult(
+        run_id=run_id,
+        timestamp=timestamp,
+        tag=tag,
+        model=ModelInfo(model_id=model),
+        environment=env,
+        config=ImageGenConfig(
+            num_prompts=len(prompts),
+            image_size=size,
+            n_per_prompt=n,
+            seed=seed,
+            runs=runs,
+            max_concurrency=max_concurrency,
+        ),
+        results=ImageGenResults(
+            s_per_image=compute_stats(latency_values),
+            images_per_min=images_per_min,
+            images_generated=images_generated,
+            image_size=size,
+            total_duration_s=total_duration_s,
+            errors=error_count,
+            retries=retries,
+            vram_peak_mib=vram_peak,
+        ),
+        runs_raw=runs_raw,
+    )
+
+    # Save results
+    save_dir = Path(save)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    model_slug = re.sub(r"[^a-zA-Z0-9]", "-", model.split("/")[-1]).strip("-").lower()
+    ts_str = datetime.now().strftime("%Y%m%dT%H%M%S")
+    filename = f"imagegen-{model_slug}-{ts_str}.json"
+    save_path = save_dir / filename
+
+    with open(save_path, "w") as f:
+        f.write(json.dumps(dataclasses.asdict(result), indent=2))
+
+    # Print results
+    print_imagegen_results(result, str(save_path))
+
+
+@app.command()
 def compare(
     files: list[str] = typer.Argument(..., help="JSON result files to compare"),
 ) -> None:
     """Compare benchmark results from multiple JSON files."""
-    results: list[BenchmarkResult] = []
-
-    for filepath in files:
-        path = Path(filepath)
-        if not path.exists():
-            console.print(f"[red]File not found: {filepath}[/red]")
-            raise typer.Exit(1)
-        with open(path) as f:
-            data = json.load(f)
-        results.append(_dc_from_dict(BenchmarkResult, data))
-
-    if not results:
+    if not files:
         console.print("[red]No result files provided.[/red]")
         raise typer.Exit(1)
 
-    # Sort by total tokens_per_sec (across workers) descending
-    results.sort(key=lambda r: r.results.tokens_per_sec * r.input.max_concurrency, reverse=True)
+    # Peek at first file to detect result type
+    first_path = Path(files[0])
+    if not first_path.exists():
+        console.print(f"[red]File not found: {files[0]}[/red]")
+        raise typer.Exit(1)
+    with open(first_path) as f:
+        first_data = json.load(f)
 
-    print_compare_table(results)
+    is_imagegen = first_data.get("type") == "imagegen"
+
+    if is_imagegen:
+        ig_results: list[ImageGenBenchmarkResult] = []
+        for filepath in files:
+            path = Path(filepath)
+            if not path.exists():
+                console.print(f"[red]File not found: {filepath}[/red]")
+                raise typer.Exit(1)
+            with open(path) as f:
+                data = json.load(f)
+            ig_results.append(_dc_from_dict(ImageGenBenchmarkResult, data))
+        print_imagegen_compare_table(ig_results)
+    else:
+        results: list[BenchmarkResult] = []
+        for filepath in files:
+            path = Path(filepath)
+            if not path.exists():
+                console.print(f"[red]File not found: {filepath}[/red]")
+                raise typer.Exit(1)
+            with open(path) as f:
+                data = json.load(f)
+            results.append(_dc_from_dict(BenchmarkResult, data))
+
+        # Sort by total tokens_per_sec (across workers) descending
+        results.sort(key=lambda r: r.results.tokens_per_sec * r.input.max_concurrency, reverse=True)
+        print_compare_table(results)
 
 
 def main() -> None:
@@ -1925,7 +2550,7 @@ def main() -> None:
 
     # If no subcommand given (first arg starts with --), insert "run"
     args = sys.argv[1:]
-    subcommands = {"compare"}
+    subcommands = {"compare", "imagegen"}
     if args and args[0] not in subcommands and not args[0].startswith("--help"):
         if args[0].startswith("--") or args[0].startswith("-"):
             sys.argv.insert(1, "run")
