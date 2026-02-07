@@ -1,4 +1,5 @@
 """Minimal end-to-end test for vlmbench CLI."""
+
 from __future__ import annotations
 
 import json
@@ -8,7 +9,6 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
-
 
 # Vision model candidates in preference order
 OLLAMA_VISION_KEYWORDS = ["vl", "vision", "llava"]
@@ -73,13 +73,20 @@ def test_cli_run(server: dict, test_image: Path, tmp_path: Path) -> None:
         [
             "vlmbench",
             "run",
-            "--model", server["model"],
-            "--input", str(test_image),
-            "--base-url", server["base_url"],
-            "--runs", "1",
-            "--warmup", "0",
-            "--max-tokens", "128",
-            "--save", str(save_dir),
+            "--model",
+            server["model"],
+            "--input",
+            str(test_image),
+            "--base-url",
+            server["base_url"],
+            "--runs",
+            "1",
+            "--warmup",
+            "0",
+            "--max-tokens",
+            "128",
+            "--save",
+            str(save_dir),
             "--no-serve",
         ],
         capture_output=True,
@@ -113,4 +120,5 @@ def test_version():
 def test_import():
     """Verify the package is importable."""
     from vlmbench import __version__
+
     assert __version__ == "0.1.0"

@@ -26,6 +26,7 @@
 vlmbench — Single-file, drop-in VLM benchmark CLI for your agents.
 built by VLM Run · https://vlm.run
 """
+
 from __future__ import annotations
 
 import base64
@@ -54,9 +55,8 @@ import typer
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 from rich import box
 from rich.console import Console
-from rich.live import Live
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from rich.text import Text
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -582,7 +582,9 @@ class DockerServerManager:
                 ["tmux", "select-pane", "-t", f"{self.session_name}:.0"],
                 check=True,
             )
-        console.print(f"  [cyan]Started [bold]{self.docker_image}[/bold] in tmux session '[bold]{self.session_name}[/bold]'[/cyan]")
+        console.print(
+            f"  [cyan]Started [bold]{self.docker_image}[/bold] in tmux session '[bold]{self.session_name}[/bold]'[/cyan]"
+        )
         console.print(f"  [dim]Attach with: tmux attach -t {self.session_name}[/dim]")
         console.print(f"  [dim]Container:   docker logs -f {self.container_name}[/dim]")
 
@@ -610,9 +612,7 @@ class OllamaServerManager:
 
     def is_running(self) -> bool:
         try:
-            req = urllib.request.Request(
-                f"http://localhost:{self.port}/api/version", method="GET"
-            )
+            req = urllib.request.Request(f"http://localhost:{self.port}/api/version", method="GET")
             with urllib.request.urlopen(req, timeout=2) as resp:
                 return resp.status == 200
         except Exception:
@@ -679,9 +679,7 @@ class NativeVllmServerManager:
 
     def is_running(self) -> bool:
         try:
-            req = urllib.request.Request(
-                f"http://localhost:{self.port}/v1/models", method="GET"
-            )
+            req = urllib.request.Request(f"http://localhost:{self.port}/v1/models", method="GET")
             with urllib.request.urlopen(req, timeout=2) as resp:
                 return resp.status == 200
         except Exception:
@@ -737,15 +735,9 @@ def _require_command(name: str) -> None:
     """Check that a CLI tool is available on PATH."""
     if shutil.which(name) is None:
         if name == "tmux":
-            console.print(
-                f"[red]tmux is required for --serve. "
-                f"Install with: brew install tmux / apt install tmux[/red]"
-            )
+            console.print("[red]tmux is required for --serve. Install with: brew install tmux / apt install tmux[/red]")
         elif name == "vllm":
-            console.print(
-                f"[red]'vllm' not found on PATH. "
-                f"Install with: uv pip install vllm[/red]"
-            )
+            console.print("[red]'vllm' not found on PATH. Install with: uv pip install vllm[/red]")
         else:
             console.print(f"[red]'{name}' not found on PATH. Please install it first.[/red]")
         raise typer.Exit(1)
@@ -800,7 +792,9 @@ def _find_docker_container(name_prefix: str = "vlmbench-") -> str | None:
     try:
         result = subprocess.run(
             ["docker", "ps", "--filter", f"name={name_prefix}", "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip().split("\n")[0]
@@ -855,7 +849,8 @@ def _start_monitor_session(backend: str) -> str | None:
         # Count existing panes
         pane_count = subprocess.run(
             ["tmux", "list-panes", "-t", session_name],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         num_panes = len(pane_count.stdout.strip().split("\n")) if pane_count.stdout.strip() else 0
         if num_panes < 2:
@@ -917,12 +912,12 @@ def resolve_server(
     console.print(f"  [cyan]Auto-starting {backend_label}...[/cyan]")
     manager.start(model, extra_args=serve_args)
 
-    console.print(f"  [dim]Waiting for server to be ready...[/dim]")
+    console.print("  [dim]Waiting for server to be ready...[/dim]")
     if not manager.wait_ready(timeout=600):
-        console.print(f"[red]Server failed to become ready within 600s.[/red]")
+        console.print("[red]Server failed to become ready within 600s.[/red]")
         raise typer.Exit(1)
 
-    console.print(f"  [green]Server ready.[/green]")
+    console.print("  [green]Server ready.[/green]")
 
     return manager.get_base_url(), getattr(manager, "session_name", None)
 
@@ -1000,9 +995,13 @@ def video_to_base64_frames(path: Path) -> list[str]:
     with tempfile.TemporaryDirectory() as tmpdir:
         subprocess.run(
             [
-                ffmpeg, "-i", str(path),
-                "-vf", "fps=1",
-                "-q:v", "2",
+                ffmpeg,
+                "-i",
+                str(path),
+                "-vf",
+                "fps=1",
+                "-q:v",
+                "2",
                 os.path.join(tmpdir, "frame_%04d.jpg"),
             ],
             capture_output=True,
@@ -1167,10 +1166,12 @@ def build_messages(prompt: str, image_uris: list[str]) -> list[dict]:
     """Build OpenAI-compatible messages with image content."""
     content: list[dict] = []
     for uri in image_uris:
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": uri},
-        })
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": uri},
+            }
+        )
     content.append({"type": "text", "text": prompt})
     return [{"role": "user", "content": content}]
 
@@ -1252,7 +1253,10 @@ def run_benchmark(
         except Exception as e:
             err_str = str(e).lower()
             # Fail fast on errors that will never self-resolve
-            if any(kw in err_str for kw in ("not found", "404", "does not exist", "invalid model", "401", "403", "unauthorized")):
+            if any(
+                kw in err_str
+                for kw in ("not found", "404", "does not exist", "invalid model", "401", "403", "unauthorized")
+            ):
                 console.print()
                 print_error("Warmup failed", str(e))
                 raise typer.Exit(1)
@@ -1289,7 +1293,7 @@ def run_benchmark(
                 error=str(e),
             )
 
-    total_tasks = len(inputs) * runs
+    len(inputs) * runs
     completed = 0
 
     for run_num in range(1, runs + 1):
@@ -1297,10 +1301,7 @@ def run_benchmark(
             progress_callback("run", run_num, completed)
 
         with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-            futures = {
-                executor.submit(execute_single, i, run_num): i
-                for i in range(len(inputs))
-            }
+            futures = {executor.submit(execute_single, i, run_num): i for i in range(len(inputs))}
             for future in as_completed(futures):
                 run_result = future.result()
                 runs_raw.append(run_result)
@@ -1317,6 +1318,7 @@ def run_benchmark(
 
 
 # ── Display ───────────────────────────────────────────────────────────────────
+
 
 def print_banner() -> None:
     """Print the vlmbench banner with a silver→blue gradient."""
@@ -1346,12 +1348,14 @@ def print_banner() -> None:
             b = int(s[2] + (e[2] - s[2]) * t)
             console.print(Text(f"{pad}{line}", style=f"#{r:02x}{g:02x}{b:02x}"))
 
-        console.print(f"  [bold {STEEL_BLUE}]vlmbench[/bold {STEEL_BLUE}] — Single-file, drop-in VLM benchmark CLI for your agents.")
-        console.print(f"  built by [link=https://vlm.run]VLM Run[/link] · https://vlm.run")
+        console.print(
+            f"  [bold {STEEL_BLUE}]vlmbench[/bold {STEEL_BLUE}] — Single-file, drop-in VLM benchmark CLI for your agents."
+        )
+        console.print("  built by [link=https://vlm.run]VLM Run[/link] · https://vlm.run")
         console.print(f"  [bold {STEEL_BLUE}]v{VERSION}[/bold {STEEL_BLUE}]")
     else:
         console.print(f"  [bold {STEEL_BLUE}]vlmbench[/bold {STEEL_BLUE}]  v{VERSION}")
-        console.print(f"  built by [link=https://vlm.run]VLM Run[/link]")
+        console.print("  built by [link=https://vlm.run]VLM Run[/link]")
     console.print()
 
 
@@ -1394,7 +1398,7 @@ def print_config(
             vram_gb = f"{env.gpu_vram_mib // 1024} GB unified" if env.gpu_vram_mib else ""
             lines.append(f"{env.gpu_name} ")
             lines.append("• ", style="dim")
-            lines.append(f"Metal ")
+            lines.append("Metal ")
             lines.append("• ", style="dim")
             lines.append(f"{vram_gb}\n")
         elif env.accelerator == "cuda":
@@ -1539,8 +1543,7 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
 
     sorted_results = sorted(results, key=lambda r: (r.model.model_id, -_total_tok_s(r)))
     groups: list[tuple[str, list[BenchmarkResult]]] = [
-        (model_id, list(runs))
-        for model_id, runs in groupby(sorted_results, key=lambda r: r.model.model_id)
+        (model_id, list(runs)) for model_id, runs in groupby(sorted_results, key=lambda r: r.model.model_id)
     ]
     groups.sort(key=lambda g: max(_total_tok_s(r) for r in g[1]), reverse=True)
 
@@ -1557,8 +1560,8 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
         all_backends.add(f"vLLM {be_ver}".strip() if be == "vllm" else f"{be.capitalize()} {be_ver}".strip())
 
     show_quant = len(all_quants) > 1
-    show_driver = len(all_drivers) > 1
-    show_backend = len(all_backends) > 1
+    len(all_drivers) > 1
+    len(all_backends) > 1
 
     table = Table(
         show_header=True,
@@ -1684,7 +1687,9 @@ def main_callback(ctx: typer.Context) -> None:
 
 @app.command()
 def run(
-    model: str = typer.Option(..., "--model", "-m", help="Model ID (vLLM: Qwen/Qwen3-VL-2B-Instruct, Ollama: qwen3-vl:2b)"),
+    model: str = typer.Option(
+        ..., "--model", "-m", help="Model ID (vLLM: Qwen/Qwen3-VL-2B-Instruct, Ollama: qwen3-vl:2b)"
+    ),
     input_path: str = typer.Option(..., "--input", "-i", help="File or directory (images, PDFs, videos)"),
     base_url: Optional[str] = typer.Option(None, "--base-url", help="OpenAI-compatible base URL"),
     api_key: str = typer.Option(DEFAULT_API_KEY, "--api-key", envvar="OPENAI_API_KEY", help="API key"),
@@ -1698,7 +1703,9 @@ def run(
     save: str = typer.Option(DEFAULT_SAVE_DIR, "--save", help="Output directory"),
     tag: Optional[str] = typer.Option(None, "--tag", help="Custom grouping label"),
     serve: bool = typer.Option(True, "--serve/--no-serve", help="Auto-start inference server if none detected"),
-    backend: str = typer.Option("auto", "--backend", help="Backend: auto, ollama, vllm (native), vllm-openai:<tag> (Docker), sglang:<tag>, etc."),
+    backend: str = typer.Option(
+        "auto", "--backend", help="Backend: auto, ollama, vllm (native), vllm-openai:<tag> (Docker), sglang:<tag>, etc."
+    ),
     serve_args: Optional[str] = typer.Option(None, "--serve-args", help="Extra CLI args for the server command"),
 ) -> None:
     """Run a VLM benchmark."""
