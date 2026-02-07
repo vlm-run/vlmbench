@@ -15,6 +15,8 @@ Benchmark any vision-language model on your own hardware with a single command. 
 - **Linux** — vLLM via Docker (`--gpus all`, auto-pulls) or native vLLM
 - **SGLang** — coming soon
 
+<img width="2468" height="1920" alt="image" src="https://github.com/user-attachments/assets/24f8ecca-6d46-49d4-80bc-df0a42a9c326" />
+
 ## Quick Start
 
 No install needed. Just run with `uvx`:
@@ -41,9 +43,9 @@ pip install vlmbench
 ```
 ╭─ Configuration ──────────────────────────────────────────────────────────────╮
 │                                                                              │
-│   Model      lightonai/LightOnOCR-2-1B @ main                               │
+│   Model      lightonai/LightOnOCR-2-1B @ main                                │
 │   Server     http://localhost:8000/v1 • vLLM 0.15.1                          │
-│   Hardware   NVIDIA RTX PRO 6000 • CUDA • 95.59 GB VRAM                     │
+│   Hardware   NVIDIA RTX PRO 6000 • CUDA • 95.59 GB VRAM                      │
 │   Input      ./docs/ -> 62 inputs (43 images, 19 PDF pages)                  │
 │   Config     max_tokens=2048 • runs=3 • concurrency=8                        │
 │   Tmux       vlmbench-vllm • tmux attach -t vlmbench-vllm                    │
@@ -56,7 +58,7 @@ pip install vlmbench
 │   TPOT           6.0 ms    (p95: 6.2 ms)                                     │
 │   Throughput   1664.8 tok/s   9.20 images/s                                  │
 │   Latency        0.87 s/img  (p95: 3.55 s)                                   │
-│   Tokens          270 prompt    181 completion (avg)                          │
+│   Tokens          270 prompt    181 completion (avg)                         │
 │   Reliability  186/186 ok, 0 retries                                         │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
