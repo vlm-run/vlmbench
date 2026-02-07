@@ -20,13 +20,13 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv pip install --system -e '.[test]'
+        run: uv sync --extra test --python 3.12
 
       - name: Lint
-        run: make lint
+        run: uv run pre-commit run --all-files
 
       - name: Test
-        run: make test
+        run: uv run pytest -sv tests
 
   publish:
     needs: test
