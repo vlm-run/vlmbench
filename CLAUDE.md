@@ -1,0 +1,52 @@
+# vlmbench
+
+Single-file, drop-in VLM benchmark CLI for your agents.
+
+## Project Structure
+
+```
+vlmbench/cli.py             # The entire CLI — single-file, all logic here
+pyproject.toml              # Package config, version, dependencies
+.claude/skills/vlmbench/MODELS.md  # Tested models and their vLLM --serve-args
+```
+
+## Key Architecture
+
+- **Single file**: All CLI logic lives in `vlmbench/cli.py`. This is intentional — the tool should remain a single file.
+- **Entry point**: `main()` function at the bottom of cli.py. Typer app is `app`.
+- **Subcommands**: `run` (default), `compare`. The `run` subcommand is implicit if flags start with `--`.
+- **Version**: Defined in `pyproject.toml` as `version = "X.Y.Z"`. Read at runtime via `importlib.metadata`.
+
+## Backend System
+
+- `auto`: Ollama on macOS, vLLM Docker on Linux
+- `ollama`: Native Ollama
+- `vllm`: Native vLLM (requires `pip install vllm`)
+- `vllm-openai:<tag>`: Docker-based vLLM (`docker run --gpus all`)
+- `sglang:<tag>`: Docker-based SGLang
+
+Servers run in tmux sessions (`vlmbench-vllm`, `vlmbench-ollama`, `vlmbench-sglang`) with GPU monitoring in a split pane.
+
+## Development
+
+```bash
+# Install dev dependencies
+uv pip install -e '.[test]'
+
+# Lint
+make lint
+
+# Test
+make test
+```
+
+## Guidelines
+
+- Keep cli.py as a single file. Do not split into modules.
+- The PEP 723 script metadata at the top of cli.py enables `uv run cli.py` without install. Keep it in sync with pyproject.toml dependencies.
+- Version is only in pyproject.toml. The code reads it via `importlib.metadata.version("vlmbench")`.
+- **Python 3.11+** — use modern features: `tomllib`, `StrEnum`, `ExceptionGroup`, `TaskGroup`, `type X = ...` aliases, `match/case`, `datetime.fromisoformat` improvements. Avoid legacy patterns and `from __future__ import annotations`.
+- Code should be elegant and minimal — no unnecessary abstractions, no over-engineering.
+- This is a developer tool. Prioritize clear output, fast iteration, and zero friction. Developers should be able to read the source and understand it immediately.
+- Stay focused on VLMs and inference performance. Every feature should serve benchmarking, comparison, or reproduction of results. Do not add unrelated functionality.
+- Terminal output matters. Use Rich tastefully — clean tables, readable panels, no visual clutter. Prefer data density over decoration.

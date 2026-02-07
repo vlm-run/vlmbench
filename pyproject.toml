@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vlmbench"
+version = "0.1.0"
+description = "Single-file, drop-in VLM benchmark CLI for your agents."
+authors = [{ name = "VLM Run", email = "support@vlm.run" }]
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+license = { text = "Apache-2.0" }
+dependencies = [
+    "typer>=0.9",
+    "rich>=13",
+    "openai>=1.0",
+    "tenacity>=8",
+    "Pillow>=10",
+    "pdf2image>=1.16",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pre-commit"]
+build = ["twine", "build"]
+
+[project.scripts]
+vlmbench = "vlmbench.cli:main"
+
+[project.urls]
+Homepage = "https://vlm.run"
+Repository = "https://github.com/vlm-run/vlmbench"
+Issues = "https://github.com/vlm-run/vlmbench/issues"
+
+[tool.setuptools.packages.find]
+include = ["vlmbench*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
