@@ -3,7 +3,7 @@
 [![PyPI version](https://badge.fury.io/py/vlmbench.svg)](https://pypi.org/project/vlmbench/)
 [![PyPI - Downloads](https://img.shields.io/pypi/dm/vlmbench)](https://pypi.org/project/vlmbench/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/vlm-run/vlmbench/blob/main/LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Discord](https://dcbadge.limes.pink/api/server/https://discord.gg/x3F6pBQZMY?style=flat)](https://discord.gg/x3F6pBQZMY)
 [![Twitter](https://img.shields.io/twitter/follow/vlaborai)](https://x.com/vlaborai)
 
@@ -198,7 +198,7 @@ Results saved as JSON to `./results/{model-slug}-{timestamp}.json` with model me
 
 ## Requirements
 
-- Python >= 3.10
+- Python >= 3.11
 - [uv](https://docs.astral.sh/uv/) (recommended)
 - Docker + NVIDIA GPU support (for `vllm-openai`/`sglang` Docker backends)
 - vLLM (`uv pip install vllm`) for native `--backend vllm`

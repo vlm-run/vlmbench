@@ -45,6 +45,7 @@ make test
 - Keep cli.py as a single file. Do not split into modules.
 - The PEP 723 script metadata at the top of cli.py enables `uv run cli.py` without install. Keep it in sync with pyproject.toml dependencies.
 - Version is only in pyproject.toml. The code reads it via `importlib.metadata.version("vlmbench")`.
+- **Python 3.11+** — use modern features: `tomllib`, `StrEnum`, `ExceptionGroup`, `TaskGroup`, `type X = ...` aliases, `match/case`, `datetime.fromisoformat` improvements. Avoid legacy patterns and `from __future__ import annotations`.
 - Code should be elegant and minimal — no unnecessary abstractions, no over-engineering.
 - This is a developer tool. Prioritize clear output, fast iteration, and zero friction. Developers should be able to read the source and understand it immediately.
 - Stay focused on VLMs and inference performance. Every feature should serve benchmarking, comparison, or reproduction of results. Do not add unrelated functionality.
