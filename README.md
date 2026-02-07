@@ -189,7 +189,7 @@ See [MODELS.md](.claude/skills/vlmbench/MODELS.md) for tested models and their r
 | Type | Extensions | Processing |
 |---|---|---|
 | Image | `.png`, `.jpg`, `.jpeg`, `.webp`, `.tiff`, `.bmp` | Base64 encode |
-| PDF | `.pdf` | `pdf2image` per-page -> base64 |
+| PDF | `.pdf` | `pypdfium2` per-page -> base64 |
 | Video | `.mp4`, `.mov`, `.avi`, `.mkv`, `.webm` | `ffmpeg` 1fps -> frames -> base64 |
 
 Directories processed recursively, sorted alphabetically.
@@ -206,4 +206,4 @@ Results saved as JSON to `./results/{model-slug}-{timestamp}.json` with model me
 - vLLM (`uv pip install vllm`) for native `--backend vllm`
 - tmux (for server management and monitoring)
 - macmon (`brew install macmon`) or nvitop (GPU monitoring)
-- ffmpeg (video input), poppler (PDF input) — optional
+- ffmpeg (video input) — optional
