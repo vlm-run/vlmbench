@@ -1,25 +1,31 @@
-# vlmbench
-
-[![PyPI version](https://badge.fury.io/py/vlmbench.svg)](https://pypi.org/project/vlmbench/)
-[![PyPI - Downloads](https://img.shields.io/pypi/dm/vlmbench)](https://pypi.org/project/vlmbench/)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/vlm-run/vlmbench/blob/main/LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Discord](https://dcbadge.limes.pink/api/server/https://discord.gg/x3F6pBQZMY?style=flat)](https://discord.gg/x3F6pBQZMY)
-[![Twitter](https://img.shields.io/twitter/follow/vlaborai)](https://x.com/vlaborai)
-
-Single-file, drop-in VLM benchmark CLI for your agents. One command, one JSON, stackable into a leaderboard.
+<div align="center">
+<p align="center" style="width: 100%;">
+    <img src="https://raw.githubusercontent.com/vlm-run/.github/refs/heads/main/profile/assets/vlm-black.svg" alt="VLM Run Logo" width="80" style="margin-bottom: -5px; color: #2e3138; vertical-align: middle; padding-right: 5px;"><br>
+</p>
+<h2>vlmbench</h2>
+<p><b>Single-file, drop-in VLM benchmark CLI for your agents.</b></p>
+<p>One command, one JSON, stackable into a leaderboard.</p>
+<p align="center"><a href="https://vlm.run"><b>Website</b></a> | <a href="https://docs.vlm.run"><b>Docs</b></a> | <a href="https://docs.vlm.run/blog"><b>Blog</b></a> | <a href="https://discord.gg/AMApC2UzVY"><b>Discord</b></a>
+</p>
+<p align="center">
+<a href="https://pypi.org/project/vlmbench/"><img alt="PyPI Version" src="https://badge.fury.io/py/vlmbench.svg"></a>
+<a href="https://pypi.org/project/vlmbench/"><img alt="Python Versions" src="https://img.shields.io/pypi/pyversions/vlmbench"></a>
+<a href="https://www.pepy.tech/projects/vlmbench"><img alt="PyPI Downloads" src="https://img.shields.io/pypi/dm/vlmbench"></a><br>
+<a href="https://github.com/vlm-run/vlmbench/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/vlm-run/vlmbench.svg"></a>
+<a href="https://discord.gg/AMApC2UzVY"><img alt="Discord" src="https://img.shields.io/badge/discord-chat-purple?color=%235765F2&label=discord&logo=discord"></a>
+<a href="https://twitter.com/vlmrun"><img alt="Twitter Follow" src="https://img.shields.io/twitter/follow/vlmrun.svg?style=social&logo=twitter"></a>
+</p>
+</div>
 
 Benchmark any vision-language model on your own hardware with a single command. vlmbench auto-detects your platform, starts the right backend, and gives you reproducible results as JSON.
 
-- **macOS** — Ollama (auto-starts, zero config)
-- **Linux** — vLLM via Docker (`--gpus all`, auto-pulls) or native vLLM
+- **macOS** — [Ollama](https://ollama.com) (auto-starts, zero config)
+- **Linux** — [vLLM](https://docs.vllm.ai) via Docker (`--gpus all`, auto-pulls) or native vLLM
 - **SGLang** — coming soon
-
-<img width="2468" height="1920" alt="image" src="https://github.com/user-attachments/assets/24f8ecca-6d46-49d4-80bc-df0a42a9c326" />
 
 ## Quick Start
 
-No install needed. Just run with `uvx`:
+No install needed — just run with [`uvx`](https://docs.astral.sh/uv/):
 
 ```bash
 # macOS (Ollama — auto-starts, auto-pulls the model)
@@ -43,9 +49,9 @@ pip install vlmbench
 ```
 ╭─ Configuration ──────────────────────────────────────────────────────────────╮
 │                                                                              │
-│   Model      lightonai/LightOnOCR-2-1B @ main                                │
+│   Model      lightonai/LightOnOCR-2-1B @ main                               │
 │   Server     http://localhost:8000/v1 • vLLM 0.15.1                          │
-│   Hardware   NVIDIA RTX PRO 6000 • CUDA • 95.59 GB VRAM                      │
+│   Hardware   NVIDIA RTX PRO 6000 • CUDA • 95.59 GB VRAM                     │
 │   Input      ./docs/ -> 62 inputs (43 images, 19 PDF pages)                  │
 │   Config     max_tokens=2048 • runs=3 • concurrency=8                        │
 │   Tmux       vlmbench-vllm • tmux attach -t vlmbench-vllm                    │
@@ -58,7 +64,7 @@ pip install vlmbench
 │   TPOT           6.0 ms    (p95: 6.2 ms)                                     │
 │   Throughput   1664.8 tok/s   9.20 images/s                                  │
 │   Latency        0.87 s/img  (p95: 3.55 s)                                   │
-│   Tokens          270 prompt    181 completion (avg)                         │
+│   Tokens          270 prompt    181 completion (avg)                          │
 │   Reliability  186/186 ok, 0 retries                                         │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
@@ -68,7 +74,7 @@ pip install vlmbench
 ## Compare
 
 ```bash
-vlmbench compare results/*.json
+uvx vlmbench compare results/*.json
 ```
 
 ```
@@ -97,7 +103,6 @@ vlmbench compare results/*.json
 ### Mac + Ollama
 
 ```bash
-# Auto-detects Ollama at localhost:11434 (lowercase model names)
 uvx vlmbench run -m qwen3-vl:2b -i ./images/
 uvx vlmbench run -m glm-ocr:latest -i ./images/
 ```
