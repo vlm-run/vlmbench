@@ -71,6 +71,68 @@ pip install vlmbench
   > Saved -> results/lightonocr-2-1b-20260207T104621.json
 ```
 
+## Behind the Scenes
+
+When you run `uvx vlmbench run`, here's what happens automatically:
+
+1. **Detects your platform** — macOS routes to Ollama, Linux to vLLM Docker
+2. **Pulls the Docker image** — `docker pull vllm/vllm-openai:latest` (cached after first run)
+3. **Starts the server in tmux** — `docker run --gpus all` in a named tmux session (`vlmbench-vllm`)
+4. **Launches a GPU monitor** — `nvitop` (Linux) or `macmon` (macOS) in a split pane
+5. **Waits for the server** — polls `/v1/models` until ready (up to 600s for large models)
+6. **Runs warmup requests** — fail-fast validation before timed runs
+7. **Benchmarks with concurrency** — streams completions via the OpenAI API, measures TTFT/TPOT/throughput
+8. **Saves results as JSON** — one file per run in `./results/`, ready for `vlmbench compare`
+
+Attach to the live session anytime with `tmux attach -t vlmbench-vllm`.
+
+<details>
+<summary><b>tmux session capture</b> — server logs + GPU monitor side by side</summary>
+
+**Top pane — vLLM server logs:**
+
+```
+(APIServer pid=1) INFO 02-07 15:44:24 non-default args: {
+  'model': 'lightonai/LightOnOCR-2-1B',
+  'enable_prefix_caching': False,
+  'limit_mm_per_prompt': {'image': 1},
+  'mm_processor_cache_gb': 0.0
+}
+(APIServer pid=1) INFO 02-07 15:44:34 Resolved architecture: LightOnOCRForConditionalGeneration
+(APIServer pid=1) INFO 02-07 15:44:34 Using max model len 16384
+(EngineCore pid=272) INFO 02-07 15:44:44 Initializing a V1 LLM engine (v0.15.1) with config:
+  model='lightonai/LightOnOCR-2-1B', dtype=torch.bfloat16, max_seq_len=16384,
+  tensor_parallel_size=1, quantization=None
+(EngineCore pid=272) INFO 02-07 15:45:41 Loading weights took 0.49 seconds
+(EngineCore pid=272) INFO 02-07 15:45:42 Model loading took 1.88 GiB memory and 22.15 seconds
+(EngineCore pid=272) INFO 02-07 15:46:11 Available KV cache memory: 77.94 GiB
+(EngineCore pid=272) INFO 02-07 15:46:11 Maximum concurrency for 16,384 tokens per request: 44.53x
+Capturing CUDA graphs (decode, FULL): 100% |██████████| 51/51
+(APIServer pid=1) INFO Started server process [1]
+(APIServer pid=1) INFO Application startup complete.
+(APIServer pid=1) INFO 172.17.0.1 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+```
+
+**Bottom pane — nvitop GPU monitor:**
+
+```
+NVITOP 1.6.2      Driver Version: 580.126.09      CUDA Driver Version: 13.0
+╒═══════════════════════════════╤══════════════════════╤══════════════════════╕
+│ GPU  Name        Persistence-M│ Bus-Id        Disp.A │ Volatile Uncorr. ECC │
+│ Fan  Temp  Perf  Pwr:Usage/Cap│         Memory-Usage │ GPU-Util  Compute M. │
+╞═══════════════════════════════╪══════════════════════╪══════════════════════╡
+│   0  GeForce RTX 2080 Ti  Off │ 00000000:21:00.0 Off │                  N/A │
+│ 27%   42C   P8     17W / 250W │  107.2MiB / 11264MiB │      0%      Default │
+├───────────────────────────────┼──────────────────────┼──────────────────────┤
+│   1  RTX PRO 6000         Off │ 00000000:4B:00.0 Off │                  N/A │
+│ 30%   33C   P1     66W / 600W │  86.54GiB / 95.59GiB │      0%      Default │
+╘═══════════════════════════════╧══════════════════════╧══════════════════════╛
+  MEM: ███████████████████████████████████████████████████████████▏ 90.5%
+  Load Average: 4.14  2.73  1.65
+```
+
+</details>
+
 ## Compare
 
 ```bash
