@@ -1687,6 +1687,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── run subcommand ──
     run_parser = subparsers.add_parser("run", help="Run a VLM benchmark.")
+
+    # Required
     run_parser.add_argument(
         "--model",
         "-m",
@@ -1696,31 +1698,39 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--input", "-i", required=True, dest="input_path", help="File or directory (images, PDFs, videos)"
     )
-    run_parser.add_argument("--base-url", default=None, help="OpenAI-compatible base URL")
-    run_parser.add_argument("--api-key", default=os.environ.get("OPENAI_API_KEY", DEFAULT_API_KEY), help="API key")
-    run_parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="Prompt sent with each input")
-    run_parser.add_argument("--revision", default="main", help="Model revision (metadata)")
+
+    # Server
     run_parser.add_argument(
-        "--quant", default="auto", help="Quantization: fp16, bf16, awq, gptq, fp8, q4_0, q4_K_M, etc."
+        "--backend",
+        default="auto",
+        help="Backend: auto, ollama, vllm (native), vllm-openai:<tag> (Docker), sglang:<tag>, etc.",
     )
-    run_parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Max completion tokens")
-    run_parser.add_argument("--runs", type=int, default=DEFAULT_RUNS, help="Timed runs per input")
-    run_parser.add_argument("--warmup", type=int, default=1, help="Number of warmup runs (not recorded)")
-    run_parser.add_argument("--max-concurrency", type=int, default=DEFAULT_CONCURRENCY, help="Max parallel requests")
-    run_parser.add_argument("--save", default=DEFAULT_SAVE_DIR, help="Output directory")
-    run_parser.add_argument("--tag", default=None, help="Custom grouping label")
     run_parser.add_argument(
         "--serve",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Auto-start inference server if none detected",
     )
-    run_parser.add_argument(
-        "--backend",
-        default="auto",
-        help="Backend: auto, ollama, vllm (native), vllm-openai:<tag> (Docker), sglang:<tag>, etc.",
-    )
     run_parser.add_argument("--serve-args", default=None, help="Extra CLI args for the server command")
+    run_parser.add_argument("--base-url", default=None, help="OpenAI-compatible base URL")
+    run_parser.add_argument("--api-key", default=os.environ.get("OPENAI_API_KEY", DEFAULT_API_KEY), help="API key")
+
+    # Model config
+    run_parser.add_argument("--revision", default="main", help="Model revision (metadata)")
+    run_parser.add_argument(
+        "--quant", default="auto", help="Quantization: fp16, bf16, awq, gptq, fp8, q4_0, q4_K_M, etc."
+    )
+    run_parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="Prompt sent with each input")
+    run_parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Max completion tokens")
+
+    # Benchmark
+    run_parser.add_argument("--runs", type=int, default=DEFAULT_RUNS, help="Timed runs per input")
+    run_parser.add_argument("--warmup", type=int, default=1, help="Number of warmup runs (not recorded)")
+    run_parser.add_argument("--max-concurrency", type=int, default=DEFAULT_CONCURRENCY, help="Max parallel requests")
+
+    # Output
+    run_parser.add_argument("--save", default=DEFAULT_SAVE_DIR, help="Output directory")
+    run_parser.add_argument("--tag", default=None, help="Custom grouping label")
 
     # ── compare subcommand ──
     compare_parser = subparsers.add_parser("compare", help="Compare benchmark results from multiple JSON files.")
