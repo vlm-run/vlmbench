@@ -15,7 +15,7 @@ Benchmark any vision-language model on your own hardware with a single command. 
 - **Linux** — vLLM via Docker (`--gpus all`, auto-pulls) or native vLLM
 - **SGLang** — coming soon
 
-<img width="2468" height="1920" alt="image" src="https://github.com/user-attachments/assets/24f8ecca-6d46-49d4-80bc-df0a42a9c326" />
+<img width="2468" height="1920" alt="image" src="https://raw.githubusercontent.com/vlm-run/vlmbench/main/assets/screenshot.png" />
 
 ## Quick Start
 

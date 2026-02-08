@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vlmbench"
-version = "0.1.0"
+version = "0.1.1"
 description = "Single-file, drop-in VLM benchmark CLI for your agents."
 authors = [{ name = "VLM Run", email = "support@vlm.run" }]
 readme = "README.md"
