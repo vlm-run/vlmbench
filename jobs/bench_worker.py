@@ -7,53 +7,52 @@
 # ///
 """vlmbench GPU benchmark worker — runs on HF Jobs.
 
-Starts a native vLLM server, runs vlmbench against it,
-and uploads the result JSON to a HF Hub dataset repo.
+Runs vlmbench with --serve --backend vllm (vlmbench starts vLLM
+implicitly), then optionally uploads the result JSON to HF Hub.
 
-Expected env vars (set by the orchestrator):
-    MODEL_ID        — HF model ID (e.g. Qwen/Qwen3-VL-2B-Instruct)
-    GPU_FLAVOR      — HF Jobs hardware flavor (e.g. t4-small, a10g-small)
-    HF_RESULTS_REPO — Dataset repo to upload results (e.g. vlm-run/vlmbench-gpu-results)
-    SERVE_ARGS      — Extra vLLM serve CLI args (optional)
-    HF_TOKEN        — HF token (passed as a secret)
+If --hf-repo and --hf-token are provided, the result JSON is uploaded
+to the dataset repo under results/<gpu-flavor>/<filename>.json.
+Otherwise results are saved locally only.
 
-Run locally for testing:
-    HF_TOKEN=... MODEL_ID=Qwen/Qwen3-VL-2B-Instruct GPU_FLAVOR=local \
-        uv run --with vllm,vlmbench jobs/bench_worker.py
+Usage:
+    # Local run (no upload)
+    uv run --with vllm,vlmbench jobs/bench_worker.py
+
+    # Upload results to HF Hub
+    uv run --with vllm,vlmbench jobs/bench_worker.py \
+        --hf-repo vlm-run/vlmbench-gpu-results \
+        --hf-token hf_...
+
+    # Custom model
+    uv run --with vllm,vlmbench jobs/bench_worker.py \
+        --model Qwen/Qwen3-VL-8B-Instruct \
+        --hf-repo vlm-run/vlmbench-gpu-results \
+        --hf-token hf_...
 """
 
+import argparse
 import json
 import os
-import shlex
+import shutil
 import subprocess
 import sys
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
-BASE_URL = "http://localhost:8000/v1"
-VLLM_STARTUP_TIMEOUT = 600  # 10 minutes for model download + load
-BENCHMARK_TIMEOUT = 600
+BENCHMARK_TIMEOUT = 1200  # 20 min for model download + load + benchmark
 
 
 def log(msg: str) -> None:
     print(f"[worker] {msg}", flush=True)
 
 
-def wait_for_server(timeout: int = VLLM_STARTUP_TIMEOUT) -> bool:
-    """Poll vLLM /v1/models until it responds 200."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            req = urllib.request.Request(f"{BASE_URL}/models", method="GET")
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                if resp.status == 200:
-                    return True
-        except Exception:
-            pass
-        time.sleep(5)
-    return False
+def ensure_tmux() -> None:
+    """Install tmux if not available (vlmbench --serve needs it)."""
+    if shutil.which("tmux"):
+        return
+    log("Installing tmux...")
+    subprocess.run(["apt-get", "update", "-qq"], check=False, capture_output=True)
+    subprocess.run(["apt-get", "install", "-y", "-qq", "tmux"], check=True, capture_output=True)
+    log("tmux installed.")
 
 
 def create_test_image(output_dir: Path) -> Path:
@@ -63,7 +62,7 @@ def create_test_image(output_dir: Path) -> Path:
     img = Image.new("RGB", (1024, 1024), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
 
-    # Draw some text-like content (lines of varying gray)
+    # Draw text-like gray bars to simulate a document
     y = 40
     for i in range(20):
         width = 200 + (i * 37) % 600
@@ -76,49 +75,59 @@ def create_test_image(output_dir: Path) -> Path:
     return path
 
 
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="vlmbench GPU benchmark worker")
+    p.add_argument(
+        "--model",
+        default=os.environ.get("MODEL_ID", "Qwen/Qwen3-VL-2B-Instruct"),
+        help="HF model ID (default: $MODEL_ID or Qwen/Qwen3-VL-2B-Instruct)",
+    )
+    p.add_argument(
+        "--gpu-flavor",
+        default=os.environ.get("GPU_FLAVOR", "unknown"),
+        help="GPU flavor label for tagging results (default: $GPU_FLAVOR)",
+    )
+    p.add_argument(
+        "--serve-args",
+        default=os.environ.get("SERVE_ARGS", ""),
+        help="Extra vLLM serve args (default: $SERVE_ARGS)",
+    )
+    p.add_argument(
+        "--hf-repo",
+        default=os.environ.get("HF_RESULTS_REPO", ""),
+        help="HF dataset repo to upload results (e.g. vlm-run/vlmbench-gpu-results). "
+        "If provided with --hf-token, results are uploaded.",
+    )
+    p.add_argument(
+        "--hf-token",
+        default=os.environ.get("HF_TOKEN", ""),
+        help="HF token for uploading results (default: $HF_TOKEN)",
+    )
+    return p.parse_args()
+
+
 def main() -> None:
-    model_id = os.environ.get("MODEL_ID", "Qwen/Qwen3-VL-2B-Instruct")
-    gpu_flavor = os.environ.get("GPU_FLAVOR", "unknown")
-    results_repo = os.environ.get("HF_RESULTS_REPO", "")
-    hf_token = os.environ.get("HF_TOKEN", "")
-    serve_args = os.environ.get("SERVE_ARGS", "")
+    args = parse_args()
 
-    log(f"Model:       {model_id}")
-    log(f"GPU flavor:  {gpu_flavor}")
-    log(f"Results repo: {results_repo or '(none — local only)'}")
+    log(f"Model:       {args.model}")
+    log(f"GPU flavor:  {args.gpu_flavor}")
+    if args.hf_repo and args.hf_token:
+        log(f"Upload to:   {args.hf_repo}")
+    else:
+        log("Upload:      disabled (pass --hf-repo and --hf-token to enable)")
 
-    # Print GPU info
-    log("--- GPU Info ---")
+    # GPU info
     subprocess.run(["nvidia-smi"], check=False)
-    log("----------------")
+
+    # vlmbench --serve --backend vllm needs tmux
+    ensure_tmux()
 
     # Create test input
     input_dir = Path("/tmp/vlmbench-input")
     input_dir.mkdir(parents=True, exist_ok=True)
-    img_path = create_test_image(input_dir)
-    log(f"Test image: {img_path}")
+    create_test_image(input_dir)
 
-    # Start vLLM serve in background
-    vllm_cmd = ["vllm", "serve", model_id]
-    if serve_args:
-        vllm_cmd.extend(shlex.split(serve_args))
-    log(f"Starting vLLM: {' '.join(vllm_cmd)}")
-
-    vllm_proc = subprocess.Popen(
-        vllm_cmd,
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-    )
-
-    # Wait for server
-    log(f"Waiting for vLLM (timeout {VLLM_STARTUP_TIMEOUT}s)...")
-    if not wait_for_server():
-        log("ERROR: vLLM failed to start.")
-        vllm_proc.terminate()
-        sys.exit(1)
-    log("vLLM server ready.")
-
-    # Run vlmbench
+    # Run vlmbench — it starts vLLM implicitly via --serve --backend vllm
     results_dir = Path("/tmp/vlmbench-results")
     results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -126,11 +135,12 @@ def main() -> None:
         "vlmbench",
         "run",
         "--model",
-        model_id,
+        args.model,
         "--input",
         str(input_dir),
-        "--base-url",
-        BASE_URL,
+        "--backend",
+        "vllm",
+        "--serve",
         "--runs",
         "3",
         "--warmup",
@@ -140,25 +150,19 @@ def main() -> None:
         "--save",
         str(results_dir),
         "--tag",
-        gpu_flavor,
-        "--no-serve",
+        args.gpu_flavor,
     ]
+    if args.serve_args:
+        bench_cmd.extend(["--serve-args", args.serve_args])
+
     log(f"Running: {' '.join(bench_cmd)}")
     result = subprocess.run(bench_cmd, timeout=BENCHMARK_TIMEOUT)
-
-    # Stop vLLM
-    log("Stopping vLLM...")
-    vllm_proc.terminate()
-    try:
-        vllm_proc.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        vllm_proc.kill()
 
     if result.returncode != 0:
         log(f"ERROR: vlmbench exited with code {result.returncode}")
         sys.exit(1)
 
-    # Collect result files
+    # Collect results
     json_files = sorted(results_dir.glob("*.json"))
     if not json_files:
         log("ERROR: No result JSON files found.")
@@ -166,40 +170,37 @@ def main() -> None:
 
     log(f"Found {len(json_files)} result file(s).")
 
-    # Enrich results with HF Job metadata
+    # Enrich with HF Job metadata
     for f in json_files:
         data = json.loads(f.read_text())
-        data["hf_job"] = {
-            "gpu_flavor": gpu_flavor,
-            "source": "hf_jobs",
-        }
+        data["hf_job"] = {"gpu_flavor": args.gpu_flavor, "source": "hf_jobs"}
         f.write_text(json.dumps(data, indent=2))
 
-    # Upload to HF Hub
-    if results_repo and hf_token:
+    # Upload to HF Hub if --hf-repo and --hf-token are both provided
+    if args.hf_repo and args.hf_token:
         from huggingface_hub import HfApi
 
-        api = HfApi(token=hf_token)
+        api = HfApi(token=args.hf_token)
 
         try:
-            api.create_repo(results_repo, repo_type="dataset", exist_ok=True)
+            api.create_repo(args.hf_repo, repo_type="dataset", exist_ok=True)
         except Exception as e:
             log(f"Warning: create_repo: {e}")
 
         for f in json_files:
-            remote_path = f"results/{gpu_flavor}/{f.name}"
-            log(f"Uploading {f.name} -> {results_repo}/{remote_path}")
+            remote_path = f"results/{args.gpu_flavor}/{f.name}"
+            log(f"Uploading {f.name} -> {args.hf_repo}/{remote_path}")
             api.upload_file(
                 path_or_fileobj=str(f),
                 path_in_repo=remote_path,
-                repo_id=results_repo,
+                repo_id=args.hf_repo,
                 repo_type="dataset",
             )
         log("Upload complete.")
     else:
-        log("No HF_RESULTS_REPO / HF_TOKEN — printing results locally:")
+        log("Results saved locally:")
         for f in json_files:
-            print(f.read_text())
+            log(f"  {f}")
 
     log("Done.")
 
