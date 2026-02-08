@@ -15,3 +15,12 @@ vlmbench run --serve --backend vllm --model <model-id> --serve-args '<args>' -i 
 | `Qwen/Qwen3-VL-8B-Instruct` | 9B | `--mm-encoder-tp-mode "data"` | |
 | `Qwen/Qwen3-VL-8B-Instruct-FP8` | 9B (FP8) | `--mm-encoder-tp-mode "data"` | |
 | `deepseek-ai/DeepSeek-OCR-2` | 3B | N/A | Not supported in upstream vLLM; requires [custom wheel](https://github.com/deepseek-ai/DeepSeek-OCR-2) |
+
+## Image Generation Models (vllm-omni)
+
+Use with `vlmbench imagegen --backend vllm-omni --model <model-id>`:
+
+| Model | Params | vLLM `--serve-args` | Notes |
+|---|---|---|---|
+| `Qwen/Qwen-Image` | - | `--omni` | Image generation (vllm-omni) |
+| `Tongyi-MAI/Z-Image-Turbo` | - | `--omni` | Image generation (vllm-omni) |
