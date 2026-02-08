@@ -264,6 +264,40 @@ Directories processed recursively, sorted alphabetically.
 
 Results saved as JSON to `./results/{model-slug}-{timestamp}.json` with model metadata, environment info, benchmark stats (TTFT, TPOT, throughput, latency percentiles), and raw per-run data.
 
+## HuggingFace Jobs
+
+Run benchmarks at scale on HuggingFace infrastructure. Requires a [HuggingFace Pro](https://huggingface.co/pro) account and `HF_TOKEN` exported (or in `.env`).
+
+```bash
+# Single GPU job
+make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1
+
+# Sweep across GPU types
+make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS="t4-small l4x1 a10g-small"
+
+# Run locally on a GPU machine (no HF Jobs, no upload)
+make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct
+```
+
+Results upload to [`vlm-run/vlmbench-results`](https://huggingface.co/datasets/vlm-run/vlmbench-results) under `results/<gpu-flavor>/`.
+
+<details>
+<summary><b>Available GPU flavors</b></summary>
+
+| Flavor | GPU | VRAM |
+|--------|-----|------|
+| `t4-small` | T4 | 16 GB |
+| `t4-medium` | T4 | 16 GB |
+| `l4x1` | L4 | 24 GB |
+| `l4x4` | 4x L4 | 96 GB |
+| `a10g-small` | A10G | 24 GB |
+| `a10g-large` | A10G | 24 GB |
+| `a10g-largex2` | 2x A10G | 48 GB |
+| `a10g-largex4` | 4x A10G | 96 GB |
+| `a100-large` | A100 | 80 GB |
+
+</details>
+
 ## Requirements
 
 **Core:**
