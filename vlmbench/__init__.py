@@ -1,6 +1,3 @@
-from importlib.metadata import PackageNotFoundError, version
+from vlmbench.cli import VERSION as __version__
 
-try:
-    __version__ = version("vlmbench")
-except PackageNotFoundError:
-    __version__ = "0.1.0"
+__all__ = ["__version__"]

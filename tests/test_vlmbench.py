@@ -108,8 +108,8 @@ def test_cli_run(server: dict, test_image: Path, tmp_path: Path) -> None:
     assert data["results"]["errors"] == 0
 
 
-def test_version():
-    """Verify vlmbench --help shows version."""
+def test_help():
+    """Verify vlmbench --help runs successfully."""
     result = subprocess.run(
         [VLMBENCH_BIN, "--help"],
         capture_output=True,
@@ -117,6 +117,10 @@ def test_version():
         timeout=10,
     )
     assert result.returncode == 0
-    from importlib.metadata import version
 
-    assert f"v{version('vlmbench')}" in result.stdout
+
+def test_import():
+    """Verify the package is importable."""
+    from vlmbench import __version__
+
+    assert isinstance(__version__, str)

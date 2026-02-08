@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vlmbench"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Single-file, drop-in VLM benchmark CLI for your agents."
 authors = [{ name = "VLM Run", email = "support@vlm.run" }]
 readme = "README.md"
@@ -26,7 +26,6 @@ classifiers = [
 ]
 license = { text = "Apache-2.0" }
 dependencies = [
-    "typer>=0.9",
     "rich>=13",
     "openai>=1.0",
     "tenacity>=8",
@@ -45,6 +44,9 @@ vlmbench = "vlmbench.cli:main"
 Homepage = "https://vlm.run"
 Repository = "https://github.com/vlm-run/vlmbench"
 Issues = "https://github.com/vlm-run/vlmbench/issues"
+
+[tool.setuptools.dynamic]
+version = {attr = "vlmbench.cli.VERSION"}
 
 [tool.setuptools.packages.find]
 include = ["vlmbench*"]

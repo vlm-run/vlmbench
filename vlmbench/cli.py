@@ -1,7 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "typer>=0.9",
 #   "rich>=13",
 #   "openai>=1.0",
 #   "tenacity>=8",
@@ -24,11 +23,12 @@
 ╚═════╝ ╚══════╝╚═╝  ╚═══╝ ╚═════╝╚═╝  ╚═╝
 
 vlmbench — Single-file, drop-in VLM benchmark CLI for your agents.
-built by VLM Run · https://vlm.run
+by VLM Run · https://vlm.run
 """
 
 from __future__ import annotations
 
+import argparse
 import base64
 import dataclasses
 import hashlib
@@ -42,6 +42,7 @@ import shlex
 import shutil
 import statistics
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -52,7 +53,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, Protocol, Union, get_args, get_origin, get_type_hints, runtime_checkable
 
-import typer
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 from rich import box
 from rich.console import Console
@@ -64,12 +64,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-try:
-    from importlib.metadata import version as _pkg_version
-
-    VERSION = _pkg_version("vlmbench")
-except Exception:
-    VERSION = "0.1.0"
+VERSION = "0.2.0"
 SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
 DEFAULT_MAX_TOKENS = 2048
@@ -79,7 +74,7 @@ DEFAULT_SAVE_DIR = "./results"
 DEFAULT_API_KEY = "no-key"
 
 DEFAULT_VLLM_IMAGE = "vllm-openai:latest"
-STEEL_BLUE = "#4A78B8"
+STEEL_BLUE = "#4682B4"
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".tiff", ".bmp"}
 PDF_EXTENSIONS = {".pdf"}
@@ -651,7 +646,7 @@ class OllamaServerManager:
             # Wait for Ollama to be responsive before pulling
             if not self.wait_ready(timeout=30):
                 console.print("[red]Ollama failed to start within 30s.[/red]")
-                raise typer.Exit(1)
+                sys.exit(1)
         # Ensure the model is available
         console.print(f"  [cyan]Pulling model '{model}' (if needed)...[/cyan]")
         subprocess.run(["ollama", "pull", model], check=True)
@@ -741,7 +736,7 @@ def _require_command(name: str) -> None:
             console.print("[red]'vllm' not found on PATH. Install with: uv pip install vllm[/red]")
         else:
             console.print(f"[red]'{name}' not found on PATH. Please install it first.[/red]")
-        raise typer.Exit(1)
+        sys.exit(1)
 
 
 def _gpu_monitor_cmd() -> str | None:
@@ -898,7 +893,7 @@ def resolve_server(
     # No server running
     if not serve:
         console.print("[red]No server found. Pass --base-url explicitly or use --serve.[/red]")
-        raise typer.Exit(1)
+        sys.exit(1)
 
     # Resolve which backend to use
     if backend == "auto":
@@ -916,7 +911,7 @@ def resolve_server(
     console.print("  [dim]Waiting for server to be ready...[/dim]")
     if not manager.wait_ready(timeout=600):
         console.print("[red]Server failed to become ready within 600s.[/red]")
-        raise typer.Exit(1)
+        sys.exit(1)
 
     console.print("  [green]Server ready.[/green]")
 
@@ -1042,7 +1037,7 @@ def load_inputs(input_path: str) -> tuple[list[list[str]], dict[str, int], str]:
         files = [path]
     else:
         console.print(f"[red]Input not found: {input_path}[/red]")
-        raise typer.Exit(1)
+        sys.exit(1)
 
     for f in files:
         ext = f.suffix.lower()
@@ -1071,7 +1066,7 @@ def load_inputs(input_path: str) -> tuple[list[list[str]], dict[str, int], str]:
 
     if not inputs:
         console.print("[red]No supported inputs found.[/red]")
-        raise typer.Exit(1)
+        sys.exit(1)
 
     input_hash = f"sha256:{hasher.hexdigest()}"
     return inputs, breakdown, input_hash
@@ -1264,7 +1259,7 @@ def run_benchmark(
             ):
                 console.print()
                 print_error("Warmup failed", str(e))
-                raise typer.Exit(1)
+                sys.exit(1)
             if w == 0:
                 # First warmup failed with a non-obvious error — warn but continue
                 console.print(f"  [yellow]Warmup warning: {e}[/yellow]")
@@ -1315,7 +1310,7 @@ def run_benchmark(
                 if run_result.error and completed == 1:
                     console.print()
                     print_error("Benchmark aborted", f"First request failed: {run_result.error}")
-                    raise typer.Exit(1)
+                    sys.exit(1)
                 if progress_callback:
                     progress_callback("progress", run_num, completed)
 
@@ -1342,9 +1337,9 @@ def print_banner() -> None:
         _VLM_PAD = "  "
         _BENCH_PAD = "  "
 
-        # Silver (#C0D0E8) → Steel blue (#4A78B8)
+        # Silver (#C0D0E8) → Steel blue (#4682B4)
         n = len(art_lines)
-        s, e = (0xC0, 0xD0, 0xE8), (0x4A, 0x78, 0xB8)
+        s, e = (0xC0, 0xD0, 0xE8), (0x46, 0x82, 0xB4)
         for i, line in enumerate(art_lines):
             pad = _VLM_PAD if i < 6 else _BENCH_PAD
             t = i / max(n - 1, 1)
@@ -1354,13 +1349,15 @@ def print_banner() -> None:
             console.print(Text(f"{pad}{line}", style=f"#{r:02x}{g:02x}{b:02x}"))
 
         console.print(
-            f"  [bold {STEEL_BLUE}]vlmbench[/bold {STEEL_BLUE}] — Single-file, drop-in VLM benchmark CLI for your agents."
+            f"  [bold {STEEL_BLUE}]vlmbench (v{VERSION})[/bold {STEEL_BLUE}]"
+            " — Single-file, drop-in VLM benchmark CLI for your agents."
         )
-        console.print("  built by [link=https://vlm.run]VLM Run[/link] · https://vlm.run")
-        console.print(f"  [bold {STEEL_BLUE}]v{VERSION}[/bold {STEEL_BLUE}]")
+        console.print(
+            f"  by [bold {STEEL_BLUE}][link=https://vlm.run]VLM Run[/link][/bold {STEEL_BLUE}] · https://vlm.run"
+        )
     else:
-        console.print(f"  [bold {STEEL_BLUE}]vlmbench[/bold {STEEL_BLUE}]  v{VERSION}")
-        console.print("  built by [link=https://vlm.run]VLM Run[/link]")
+        console.print(f"  [bold {STEEL_BLUE}]vlmbench (v{VERSION})[/bold {STEEL_BLUE}]")
+        console.print("  by [link=https://vlm.run]VLM Run[/link]")
     console.print()
 
 
@@ -1675,68 +1672,95 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-app = typer.Typer(
-    name="vlmbench",
-    help="Single-file, drop-in VLM benchmark CLI for your agents.",
-    add_completion=False,
-)
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser."""
+    parser = argparse.ArgumentParser(
+        prog="vlmbench",
+        description="Single-file, drop-in VLM benchmark CLI for your agents.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    # ── run subcommand ──
+    run_parser = subparsers.add_parser("run", help="Run a VLM benchmark.")
+
+    # Required
+    run_parser.add_argument(
+        "--model",
+        "-m",
+        required=True,
+        help="Model ID (vLLM: Qwen/Qwen3-VL-2B-Instruct, Ollama: qwen3-vl:2b)",
+    )
+    run_parser.add_argument(
+        "--input", "-i", required=True, dest="input_path", help="File or directory (images, PDFs, videos)"
+    )
+
+    # Server
+    run_parser.add_argument(
+        "--backend",
+        default="auto",
+        help="Backend: auto, ollama, vllm (native), vllm-openai:<tag> (Docker), sglang:<tag>, etc.",
+    )
+    run_parser.add_argument(
+        "--serve",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Auto-start inference server if none detected",
+    )
+    run_parser.add_argument("--serve-args", default=None, help="Extra CLI args for the server command")
+    run_parser.add_argument("--base-url", default=None, help="OpenAI-compatible base URL")
+    run_parser.add_argument("--api-key", default=os.environ.get("OPENAI_API_KEY", DEFAULT_API_KEY), help="API key")
+
+    # Model config
+    run_parser.add_argument("--revision", default="main", help="Model revision (metadata)")
+    run_parser.add_argument(
+        "--quant", default="auto", help="Quantization: fp16, bf16, awq, gptq, fp8, q4_0, q4_K_M, etc."
+    )
+    run_parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="Prompt sent with each input")
+    run_parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Max completion tokens")
+
+    # Benchmark
+    run_parser.add_argument("--runs", type=int, default=DEFAULT_RUNS, help="Timed runs per input")
+    run_parser.add_argument("--warmup", type=int, default=1, help="Number of warmup runs (not recorded)")
+    run_parser.add_argument("--max-concurrency", type=int, default=DEFAULT_CONCURRENCY, help="Max parallel requests")
+
+    # Output
+    run_parser.add_argument("--save", default=DEFAULT_SAVE_DIR, help="Output directory")
+    run_parser.add_argument("--tag", default=None, help="Custom grouping label")
+
+    # ── compare subcommand ──
+    compare_parser = subparsers.add_parser("compare", help="Compare benchmark results from multiple JSON files.")
+    compare_parser.add_argument("files", nargs="+", help="JSON result files to compare")
+
+    return parser
 
 
-@app.callback(invoke_without_command=True)
-def main_callback(ctx: typer.Context) -> None:
-    """vlmbench CLI."""
-    if ctx.invoked_subcommand is None:
-        console.print(ctx.get_help())
-        raise typer.Exit(0)
-
-
-@app.command()
-def run(
-    model: str = typer.Option(
-        ..., "--model", "-m", help="Model ID (vLLM: Qwen/Qwen3-VL-2B-Instruct, Ollama: qwen3-vl:2b)"
-    ),
-    input_path: str = typer.Option(..., "--input", "-i", help="File or directory (images, PDFs, videos)"),
-    base_url: Optional[str] = typer.Option(None, "--base-url", help="OpenAI-compatible base URL"),
-    api_key: str = typer.Option(DEFAULT_API_KEY, "--api-key", envvar="OPENAI_API_KEY", help="API key"),
-    prompt: str = typer.Option(DEFAULT_PROMPT, "--prompt", help="Prompt sent with each input"),
-    revision: str = typer.Option("main", "--revision", help="Model revision (metadata)"),
-    quant: str = typer.Option("auto", "--quant", help="Quantization: fp16, bf16, awq, gptq, fp8, q4_0, q4_K_M, etc."),
-    max_tokens: int = typer.Option(DEFAULT_MAX_TOKENS, "--max-tokens", help="Max completion tokens"),
-    runs: int = typer.Option(DEFAULT_RUNS, "--runs", help="Timed runs per input"),
-    warmup: int = typer.Option(1, "--warmup", help="Number of warmup runs (not recorded)"),
-    max_concurrency: int = typer.Option(DEFAULT_CONCURRENCY, "--max-concurrency", help="Max parallel requests"),
-    save: str = typer.Option(DEFAULT_SAVE_DIR, "--save", help="Output directory"),
-    tag: Optional[str] = typer.Option(None, "--tag", help="Custom grouping label"),
-    serve: bool = typer.Option(True, "--serve/--no-serve", help="Auto-start inference server if none detected"),
-    backend: str = typer.Option(
-        "auto", "--backend", help="Backend: auto, ollama, vllm (native), vllm-openai:<tag> (Docker), sglang:<tag>, etc."
-    ),
-    serve_args: Optional[str] = typer.Option(None, "--serve-args", help="Extra CLI args for the server command"),
-) -> None:
+def cmd_run(args: argparse.Namespace) -> None:
     """Run a VLM benchmark."""
     # Resolve base URL: auto-detect, or auto-start server
     base_url, tmux_session = resolve_server(
-        base_url=base_url,
-        serve=serve,
-        backend=backend,
-        model=model,
-        serve_args=serve_args,
+        base_url=args.base_url,
+        serve=args.serve,
+        backend=args.backend,
+        model=args.model,
+        serve_args=args.serve_args,
     )
 
     # Collect environment
     env = collect_environment(base_url)
 
     # Load inputs
-    inputs, breakdown, input_hash = load_inputs(input_path)
+    inputs, breakdown, input_hash = load_inputs(args.input_path)
     total_inputs = len(inputs)
 
     # Resolve quant
-    quant_resolved = quant if quant != "auto" else None
+    quant_resolved = args.quant if args.quant != "auto" else None
 
     # Print configuration
     print_config(
-        model_id=model,
-        revision=revision,
+        model_id=args.model,
+        revision=args.revision,
         quant=quant_resolved,
         base_url=base_url,
         backend=env.backend,
@@ -1744,18 +1768,18 @@ def run(
         env=env,
         total_inputs=total_inputs,
         breakdown=breakdown,
-        input_path=input_path,
-        max_tokens=max_tokens,
-        runs=runs,
-        max_concurrency=max_concurrency,
+        input_path=args.input_path,
+        max_tokens=args.max_tokens,
+        runs=args.runs,
+        max_concurrency=args.max_concurrency,
         tmux_session=tmux_session,
     )
 
     # Create client
-    client = OpenAI(base_url=base_url, api_key=api_key)
+    client = OpenAI(base_url=base_url, api_key=args.api_key)
 
     # Progress display
-    total_tasks = total_inputs * runs
+    total_tasks = total_inputs * args.runs
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -1770,20 +1794,20 @@ def run(
             if phase == "warmup":
                 progress.update(task_id, description="  Warmup...")
             elif phase == "run":
-                progress.update(task_id, description=f"  Run {run_num}/{runs}")
+                progress.update(task_id, description=f"  Run {run_num}/{args.runs}")
             elif phase == "progress":
                 progress.update(task_id, completed=completed)
 
         t_benchmark_start = time.perf_counter()
         runs_raw, retries = run_benchmark(
             client=client,
-            model=model,
+            model=args.model,
             inputs=inputs,
-            prompt=prompt,
-            max_tokens=max_tokens,
-            runs=runs,
-            max_concurrency=max_concurrency,
-            warmup=warmup,
+            prompt=args.prompt,
+            max_tokens=args.max_tokens,
+            runs=args.runs,
+            max_concurrency=args.max_concurrency,
+            warmup=args.warmup,
             progress_callback=progress_callback,
         )
         t_benchmark_end = time.perf_counter()
@@ -1839,10 +1863,10 @@ def run(
     result = BenchmarkResult(
         run_id=run_id,
         timestamp=timestamp,
-        tag=tag,
+        tag=args.tag,
         model=ModelInfo(
-            model_id=model,
-            revision=revision,
+            model_id=args.model,
+            revision=args.revision,
             quant=quant_resolved,
         ),
         environment=env,
@@ -1850,9 +1874,9 @@ def run(
             hash=input_hash,
             total_inputs=total_inputs,
             breakdown=breakdown,
-            prompt=prompt,
-            max_tokens=max_tokens,
-            max_concurrency=max_concurrency,
+            prompt=args.prompt,
+            max_tokens=args.max_tokens,
+            max_concurrency=args.max_concurrency,
         ),
         results=Results(
             ttft_ms=compute_stats(ttft_values),
@@ -1874,11 +1898,11 @@ def run(
     )
 
     # Save results
-    save_dir = Path(save)
+    save_dir = Path(args.save)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     # Model slug: take last part of model ID, replace non-alnum with dash
-    model_slug = re.sub(r"[^a-zA-Z0-9]", "-", model.split("/")[-1]).strip("-").lower()
+    model_slug = re.sub(r"[^a-zA-Z0-9]", "-", args.model.split("/")[-1]).strip("-").lower()
     ts_str = datetime.now().strftime("%Y%m%dT%H%M%S")
     filename = f"{model_slug}-{ts_str}.json"
     save_path = save_dir / filename
@@ -1890,25 +1914,22 @@ def run(
     print_results(result, str(save_path))
 
 
-@app.command()
-def compare(
-    files: list[str] = typer.Argument(..., help="JSON result files to compare"),
-) -> None:
+def cmd_compare(args: argparse.Namespace) -> None:
     """Compare benchmark results from multiple JSON files."""
     results: list[BenchmarkResult] = []
 
-    for filepath in files:
+    for filepath in args.files:
         path = Path(filepath)
         if not path.exists():
             console.print(f"[red]File not found: {filepath}[/red]")
-            raise typer.Exit(1)
+            sys.exit(1)
         with open(path) as f:
             data = json.load(f)
         results.append(_dc_from_dict(BenchmarkResult, data))
 
     if not results:
         console.print("[red]No result files provided.[/red]")
-        raise typer.Exit(1)
+        sys.exit(1)
 
     # Sort by total tokens_per_sec (across workers) descending
     results.sort(key=lambda r: r.results.tokens_per_sec * r.input.max_concurrency, reverse=True)
@@ -1918,21 +1939,29 @@ def compare(
 
 def main() -> None:
     """Entry point: default to 'run' subcommand if none specified."""
-    import sys
-
-    # Always show the banner first, before Typer processes anything
+    # Always show the banner first
     print_banner()
 
-    # If no subcommand given (first arg starts with --), insert "run"
-    args = sys.argv[1:]
+    # If no subcommand given (first arg starts with -- or -), insert "run"
+    argv = sys.argv[1:]
     subcommands = {"compare"}
-    if args and args[0] not in subcommands and not args[0].startswith("--help"):
-        if args[0].startswith("--") or args[0].startswith("-"):
-            sys.argv.insert(1, "run")
-    elif not args:
+    if argv and argv[0] not in subcommands and not argv[0].startswith("--help"):
+        if argv[0].startswith("--") or argv[0].startswith("-"):
+            argv = ["run"] + argv
+    elif not argv:
         # No args at all → show help
         pass
-    app()
+
+    parser = build_parser()
+    parsed = parser.parse_args(argv)
+
+    if parsed.command is None:
+        parser.print_help()
+        sys.exit(0)
+    elif parsed.command == "run":
+        cmd_run(parsed)
+    elif parsed.command == "compare":
+        cmd_compare(parsed)
 
 
 if __name__ == "__main__":
