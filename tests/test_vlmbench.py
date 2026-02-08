@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import urllib.request
 from pathlib import Path
 
 import pytest
 from PIL import Image
+
+VLMBENCH_BIN = str(Path(sys.executable).parent / "vlmbench")
 
 # Vision model candidates in preference order
 OLLAMA_VISION_KEYWORDS = ["vl", "vision", "llava"]
@@ -71,7 +74,7 @@ def test_cli_run(server: dict, test_image: Path, tmp_path: Path) -> None:
     save_dir = tmp_path / "results"
     result = subprocess.run(
         [
-            "vlmbench",
+            VLMBENCH_BIN,
             "run",
             "--model",
             server["model"],
@@ -108,7 +111,7 @@ def test_cli_run(server: dict, test_image: Path, tmp_path: Path) -> None:
 def test_help():
     """Verify vlmbench --help runs successfully."""
     result = subprocess.run(
-        ["vlmbench", "--help"],
+        [VLMBENCH_BIN, "--help"],
         capture_output=True,
         text=True,
         timeout=10,

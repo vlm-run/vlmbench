@@ -40,6 +40,14 @@ make lint
 make test
 ```
 
+## Versioning
+
+- **Every PR must bump the version** in `pyproject.toml`.
+- **Patch bump by default**: Increment the patch version (e.g., `0.1.1` → `0.1.2`) for all PRs — bug fixes, new features, refactors, docs, etc.
+- **Minor bump exception**: Only bump the minor version (e.g., `0.1.2` → `0.2.0`) when the PR explicitly states it is a minor release (e.g., breaking changes, large new capabilities). Reset patch to `0` on minor bumps.
+- Do **not** bump the major version without explicit instruction.
+- The version is defined **only** in `pyproject.toml` (`version = "X.Y.Z"`). Do not duplicate it elsewhere.
+
 ## Guidelines
 
 - Keep cli.py as a single file. Do not split into modules.
