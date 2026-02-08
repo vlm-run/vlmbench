@@ -1349,14 +1349,14 @@ def print_banner() -> None:
             console.print(Text(f"{pad}{line}", style=f"#{r:02x}{g:02x}{b:02x}"))
 
         console.print(
-            f"  [bold {STEEL_BLUE}]vlmbench[/bold {STEEL_BLUE}] (v{VERSION})"
+            f"  [bold {STEEL_BLUE}]vlmbench (v{VERSION})[/bold {STEEL_BLUE}]"
             " — Single-file, drop-in VLM benchmark CLI for your agents."
         )
         console.print(
-            f"  built by [bold {STEEL_BLUE}][link=https://vlm.run]VLM Run[/link][/bold {STEEL_BLUE}] · https://vlm.run"
+            f"  by [bold {STEEL_BLUE}][link=https://vlm.run]VLM Run[/link][/bold {STEEL_BLUE}] · https://vlm.run"
         )
     else:
-        console.print(f"  [bold {STEEL_BLUE}]vlmbench[/bold {STEEL_BLUE}] (v{VERSION})")
+        console.print(f"  [bold {STEEL_BLUE}]vlmbench (v{VERSION})[/bold {STEEL_BLUE}]")
         console.print("  built by [link=https://vlm.run]VLM Run[/link]")
     console.print()
 
