@@ -4,9 +4,6 @@
 </p>
 <h2>vlmbench</h2>
 <p><b>Single-file, drop-in VLM benchmark CLI for your agents.</b></p>
-<p>One command, one JSON, stackable into a leaderboard.</p>
-<p align="center"><a href="https://vlm.run"><b>Website</b></a> | <a href="https://docs.vlm.run"><b>Docs</b></a> | <a href="https://docs.vlm.run/blog"><b>Blog</b></a> | <a href="https://discord.gg/AMApC2UzVY"><b>Discord</b></a>
-</p>
 <p align="center">
 <a href="https://pypi.org/project/vlmbench/"><img alt="PyPI Version" src="https://badge.fury.io/py/vlmbench.svg"></a>
 <a href="https://pypi.org/project/vlmbench/"><img alt="Python Versions" src="https://img.shields.io/pypi/pyversions/vlmbench"></a>
@@ -22,6 +19,8 @@ Benchmark any vision-language model on your own hardware with a single command. 
 - **macOS** — [Ollama](https://ollama.com) (auto-starts, zero config)
 - **Linux** — [vLLM](https://docs.vllm.ai) via Docker (`--gpus all`, auto-pulls) or native vLLM
 - **SGLang** — coming soon
+
+<img width="2468" height="1920" alt="image" src="https://github.com/user-attachments/assets/24f8ecca-6d46-49d4-80bc-df0a42a9c326" />
 
 ## Quick Start
 
@@ -49,9 +48,9 @@ pip install vlmbench
 ```
 ╭─ Configuration ──────────────────────────────────────────────────────────────╮
 │                                                                              │
-│   Model      lightonai/LightOnOCR-2-1B @ main                               │
+│   Model      lightonai/LightOnOCR-2-1B @ main                                │
 │   Server     http://localhost:8000/v1 • vLLM 0.15.1                          │
-│   Hardware   NVIDIA RTX PRO 6000 • CUDA • 95.59 GB VRAM                     │
+│   Hardware   NVIDIA RTX PRO 6000 • CUDA • 95.59 GB VRAM                      │
 │   Input      ./docs/ -> 62 inputs (43 images, 19 PDF pages)                  │
 │   Config     max_tokens=2048 • runs=3 • concurrency=8                        │
 │   Tmux       vlmbench-vllm • tmux attach -t vlmbench-vllm                    │
@@ -64,7 +63,7 @@ pip install vlmbench
 │   TPOT           6.0 ms    (p95: 6.2 ms)                                     │
 │   Throughput   1664.8 tok/s   9.20 images/s                                  │
 │   Latency        0.87 s/img  (p95: 3.55 s)                                   │
-│   Tokens          270 prompt    181 completion (avg)                          │
+│   Tokens          270 prompt    181 completion (avg)                         │
 │   Reliability  186/186 ok, 0 retries                                         │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
@@ -144,13 +143,13 @@ uvx vlmbench compare results/*.json
 │                               │     TTFT │     TPOT │         │        │ Duration (s) │ num_workers │     VRAM │            │                                                      │
 │ Model                         │     (ms) │     (ms) │ Tok/s ↓ │  Img/s │              │             │          │ Backend    │ Hardware                                             │
 ├───────────────────────────────┼──────────┼──────────┼─────────┼────────┼──────────────┼─────────────┼──────────┼────────────┼──────────────────────────────────────────────────────┤
-│ lightonai/LightOnOCR-2-1B     │      467 │      6.0 │  1664.8 │   9.20 │        162.4 │           8 │  5.78 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition   │
+│ lightonai/LightOnOCR-2-1B     │      467 │      6.0 │  1664.8 │   9.20 │        162.4 │           8 │  5.78 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition    │
 ├───────────────────────────────┼──────────┼──────────┼─────────┼────────┼──────────────┼─────────────┼──────────┼────────────┼──────────────────────────────────────────────────────┤
-│ rednote-hilab/dots.ocr        │     1424 │     10.2 │   477.6 │   7.76 │        190.8 │           8 │  9.42 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition   │
+│ rednote-hilab/dots.ocr        │     1424 │     10.2 │   477.6 │   7.76 │        190.8 │           8 │  9.42 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition    │
 ├───────────────────────────────┼──────────┼──────────┼─────────┼────────┼──────────────┼─────────────┼──────────┼────────────┼──────────────────────────────────────────────────────┤
-│ Qwen/Qwen3-VL-8B-Instruct-FP8│      698 │     17.2 │   461.6 │   6.40 │        232.0 │           8 │ 11.75 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition   │
+│ Qwen/Qwen3-VL-8B-Instruct-FP8 │      698 │     17.2 │   461.6 │   6.40 │        232.0 │           8 │ 11.75 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition    │
 ├───────────────────────────────┼──────────┼──────────┼─────────┼────────┼──────────────┼─────────────┼──────────┼────────────┼──────────────────────────────────────────────────────┤
-│ Qwen/Qwen3-VL-8B-Instruct    │      638 │     17.9 │   448.0 │   6.40 │        233.6 │           8 │ 17.41 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition   │
+│ Qwen/Qwen3-VL-8B-Instruct     │      638 │     17.9 │   448.0 │   6.40 │        233.6 │           8 │ 17.41 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition    │
 ╰───────────────────────────────┴──────────┴──────────┴─────────┴────────┴──────────────┴─────────────┴──────────┴────────────┴──────────────────────────────────────────────────────╯
 
 ╭─ Summary ────────────────────────────────────────────────────────────────────╮
