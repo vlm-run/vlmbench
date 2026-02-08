@@ -114,11 +114,11 @@ def test_version():
         timeout=10,
     )
     assert result.returncode == 0
-    assert "v0.1.0" in result.stdout
+    assert "v0.2.0" in result.stdout
 
 
 def test_import():
     """Verify the package is importable."""
     from vlmbench import __version__
 
-    assert __version__ == "0.1.0"
+    assert __version__ == "0.2.0"
