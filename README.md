@@ -27,6 +27,9 @@ Benchmark any vision-language model on your own hardware with a single command. 
 No install needed — just run with [`uvx`](https://docs.astral.sh/uv/):
 
 ```bash
+# Zero-config — uses built-in stock images
+uvx vlmbench run -m qwen3-vl:2b
+
 # macOS (Ollama — auto-starts, auto-pulls the model)
 uvx vlmbench run -m qwen3-vl:2b -i ./images/
 
@@ -208,7 +211,7 @@ uvx vlmbench compare results/*.json
 | Flag | Default | Description |
 |---|---|---|
 | `--model` / `-m` | required | Model ID (vLLM: `Qwen/Qwen3-VL-2B-Instruct`, Ollama: `qwen3-vl:2b`) |
-| `--input` / `-i` | required | File or directory (images, PDFs, videos) |
+| `--input` / `-i` | stock images | File or directory (images, PDFs, videos). Omit to use built-in stock images. |
 | `--base-url` | auto-detect | OpenAI-compatible base URL |
 | `--api-key` | `no-key` | API key (also reads `OPENAI_API_KEY` env) |
 | `--prompt` | `"Extract all text..."` | Prompt sent with each input |

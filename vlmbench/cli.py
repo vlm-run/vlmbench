@@ -81,6 +81,17 @@ DEFAULT_API_KEY = "no-key"
 DEFAULT_VLLM_IMAGE = "vllm-openai:latest"
 STEEL_BLUE = "#4A78B8"
 
+STOCK_IMAGE_URLS: list[str] = [
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a7/Camponotus_flavomarginatus_ant.jpg/800px-Camponotus_flavomarginatus_ant.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/800px-PNG_transparency_demonstration_1.png",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg/800px-Mona_Lisa%2C_by_Leonardo_da_Vinci%2C_from_C2RMF_retouched.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1f/Oeschinen_Lake_Panorama.jpg/1280px-Oeschinen_Lake_Panorama.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4f/Felis_silvestris_catus_lying_on_rice_straw.jpg/800px-Felis_silvestris_catus_lying_on_rice_straw.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b6/Image_created_with_a_mobile_phone.png/800px-Image_created_with_a_mobile_phone.png",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/800px-Cat03.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Tsunami_by_hokusai_19th_century.jpg/800px-Tsunami_by_hokusai_19th_century.jpg",
+]
+
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".tiff", ".bmp"}
 PDF_EXTENSIONS = {".pdf"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
@@ -1077,6 +1088,14 @@ def load_inputs(input_path: str) -> tuple[list[list[str]], dict[str, int], str]:
     return inputs, breakdown, input_hash
 
 
+def load_stock_inputs() -> tuple[list[list[str]], dict[str, int], str]:
+    """Load built-in stock image URLs for zero-config benchmarking."""
+    inputs = [[url] for url in STOCK_IMAGE_URLS]
+    breakdown = {"images": len(STOCK_IMAGE_URLS), "pdf_pages": 0, "video_frames": 0}
+    input_hash = f"sha256:{hashlib.sha256(''.join(STOCK_IMAGE_URLS).encode()).hexdigest()}"
+    return inputs, breakdown, input_hash
+
+
 # ── Benchmark Core ────────────────────────────────────────────────────────────
 
 
@@ -1695,7 +1714,9 @@ def run(
     model: str = typer.Option(
         ..., "--model", "-m", help="Model ID (vLLM: Qwen/Qwen3-VL-2B-Instruct, Ollama: qwen3-vl:2b)"
     ),
-    input_path: str = typer.Option(..., "--input", "-i", help="File or directory (images, PDFs, videos)"),
+    input_path: Optional[str] = typer.Option(
+        None, "--input", "-i", help="File or directory (images, PDFs, videos). Omit to use built-in stock images."
+    ),
     base_url: Optional[str] = typer.Option(None, "--base-url", help="OpenAI-compatible base URL"),
     api_key: str = typer.Option(DEFAULT_API_KEY, "--api-key", envvar="OPENAI_API_KEY", help="API key"),
     prompt: str = typer.Option(DEFAULT_PROMPT, "--prompt", help="Prompt sent with each input"),
@@ -1727,7 +1748,11 @@ def run(
     env = collect_environment(base_url)
 
     # Load inputs
-    inputs, breakdown, input_hash = load_inputs(input_path)
+    if input_path is not None:
+        inputs, breakdown, input_hash = load_inputs(input_path)
+    else:
+        inputs, breakdown, input_hash = load_stock_inputs()
+        input_path = "stock (8 Wikimedia Commons images)"
     total_inputs = len(inputs)
 
     # Resolve quant
