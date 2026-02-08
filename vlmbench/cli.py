@@ -64,7 +64,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
 DEFAULT_MAX_TOKENS = 2048
@@ -533,7 +533,6 @@ class DockerServerManager:
             return False
 
     def start(self, model: str, extra_args: str | None = None) -> None:
-        _require_command("tmux")
         _require_command("docker")
 
         # Build docker run command (pull + run chained in tmux pane)
@@ -556,6 +555,9 @@ class DockerServerManager:
             run_cmd += f" {shlex.join(shlex.split(extra_args))}"
         pull_cmd = f"docker pull {shlex.quote(self.docker_image)}"
         server_cmd = f"{pull_cmd} && {run_cmd}"
+
+        if not shutil.which("tmux"):
+            raise TmuxNotAvailable(server_cmd, self._base_url)
 
         # Kill any stale session with the same stable name
         subprocess.run(
@@ -615,12 +617,15 @@ class OllamaServerManager:
             return False
 
     def start(self, model: str, extra_args: str | None = None) -> None:
-        _require_command("tmux")
         if not self.is_running():
             _require_command("ollama")
             server_cmd = "ollama serve"
             if extra_args:
                 server_cmd += f" {shlex.join(shlex.split(extra_args))}"
+
+            if not shutil.which("tmux"):
+                raise TmuxNotAvailable(server_cmd, self._base_url, post_cmd=f"ollama pull {shlex.quote(model)}")
+
             # Kill any stale session with the same stable name
             subprocess.run(
                 ["tmux", "kill-session", "-t", self.session_name],
@@ -682,7 +687,6 @@ class NativeVllmServerManager:
             return False
 
     def start(self, model: str, extra_args: str | None = None) -> None:
-        _require_command("tmux")
         _require_command("vllm")
 
         server_cmd = f"vllm serve {shlex.quote(model)}"
@@ -690,6 +694,9 @@ class NativeVllmServerManager:
             server_cmd += f" --port {self.port}"
         if extra_args:
             server_cmd += f" {shlex.join(shlex.split(extra_args))}"
+
+        if not shutil.which("tmux"):
+            raise TmuxNotAvailable(server_cmd, self._base_url)
 
         # Kill any stale session with the same stable name
         subprocess.run(
@@ -730,13 +737,108 @@ class NativeVllmServerManager:
 def _require_command(name: str) -> None:
     """Check that a CLI tool is available on PATH."""
     if shutil.which(name) is None:
-        if name == "tmux":
-            console.print("[red]tmux is required for --serve. Install with: brew install tmux / apt install tmux[/red]")
-        elif name == "vllm":
+        if name == "vllm":
             console.print("[red]'vllm' not found on PATH. Install with: uv pip install vllm[/red]")
         else:
             console.print(f"[red]'{name}' not found on PATH. Please install it first.[/red]")
         sys.exit(1)
+
+
+class TmuxNotAvailable(Exception):
+    """Raised when tmux is needed but not installed. Carries the server command."""
+
+    def __init__(self, server_cmd: str, base_url: str, post_cmd: str | None = None) -> None:
+        self.server_cmd = server_cmd
+        self.base_url = base_url
+        self.post_cmd = post_cmd
+
+
+def _build_server_cmd(backend: str, model: str, serve_args: str | None = None) -> tuple[str, str]:
+    """Build the server command string and base_url for display purposes (without starting anything)."""
+    if backend == "auto":
+        backend = _auto_detect_backend()
+    category = _backend_category(backend)
+    if backend == "ollama":
+        cmd = "ollama serve"
+        base_url = f"http://localhost:{OllamaServerManager.DEFAULT_PORT}/v1"
+    elif backend == "vllm":
+        cmd = f"vllm serve {shlex.quote(model)}"
+        base_url = f"http://localhost:{NativeVllmServerManager.DEFAULT_PORT}/v1"
+    else:
+        # Docker-based (vllm-openai, sglang)
+        image, _container = _parse_docker_backend(backend)
+        cache_dir = Path.home() / ".vlmbench" / category
+        cmd = (
+            f"docker run --rm --gpus all"
+            f" -p {DockerServerManager.DEFAULT_PORT}:8000 --ipc=host"
+            f" -v {shlex.quote(str(cache_dir))}:/root/.cache/huggingface"
+            f" {shlex.quote(image)}"
+            f" --model {shlex.quote(model)}"
+        )
+        base_url = f"http://localhost:{DockerServerManager.DEFAULT_PORT}/v1"
+    if serve_args:
+        cmd += f" {shlex.join(shlex.split(serve_args))}"
+    return cmd, base_url
+
+
+def _build_rerun_args(base_url: str) -> list[str]:
+    """Reconstruct vlmbench CLI args for re-run, swapping --serve for --base-url."""
+    rerun_args: list[str] = []
+    skip_next = False
+    for arg in sys.argv[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in ("--serve", "--no-serve"):
+            continue
+        if arg in ("--backend", "--serve-args"):
+            skip_next = True
+            continue
+        if arg.startswith("--backend=") or arg.startswith("--serve-args="):
+            continue
+        rerun_args.append(arg)
+    rerun_args.extend(["--base-url", base_url])
+    return rerun_args
+
+
+def _print_server_instructions(
+    server_cmd: str,
+    base_url: str,
+    *,
+    reason: str,
+    post_cmd: str | None = None,
+    tip: str | None = None,
+) -> None:
+    """Print a Rich panel with server start command and vlmbench re-run command."""
+    lines = Text()
+    lines.append(f"  {reason}\n")
+    lines.append("  Start the server manually, then re-run the benchmark.\n")
+
+    step = 1
+    lines.append(f"\n  {step}. Start the server in a separate terminal:\n\n")
+    lines.append(f"     {server_cmd}\n", style="bold green")
+    step += 1
+
+    if post_cmd:
+        lines.append(f"\n  {step}. Once the server is ready, run:\n\n")
+        lines.append(f"     {post_cmd}\n", style="bold green")
+        step += 1
+
+    rerun_cmd = "vlmbench " + shlex.join(_build_rerun_args(base_url))
+    lines.append(f"\n  {step}. Re-run the benchmark:\n\n")
+    lines.append(f"     {rerun_cmd}\n", style="bold green")
+
+    panel = Panel(
+        lines,
+        title="[bold]Server Setup[/bold]",
+        title_align="left",
+        border_style="yellow",
+        box=box.ROUNDED,
+        padding=(1, 1),
+    )
+    console.print(panel)
+    if tip:
+        console.print(f"  [dim]{tip}[/dim]\n")
 
 
 def _gpu_monitor_cmd() -> str | None:
@@ -887,15 +989,25 @@ def resolve_server(
     # Try to auto-detect an already-running server
     detected_url, detected_backend = _try_detect_running_server()
     if detected_url is not None:
+        if serve:
+            console.print(f"  [green]Server already running at {detected_url}[/green]")
         session = _start_monitor_session(detected_backend)
         return detected_url, session
 
-    # No server running
+    # No server running and --serve not requested → show setup instructions
     if not serve:
-        console.print("[red]No server found. Pass --base-url explicitly or use --serve.[/red]")
+        server_cmd, server_url = _build_server_cmd(backend, model, serve_args)
+        resolved_backend = backend if backend != "auto" else _auto_detect_backend()
+        post_cmd = f"ollama pull {shlex.quote(model)}" if _backend_category(resolved_backend) == "ollama" else None
+        _print_server_instructions(
+            server_cmd,
+            server_url,
+            reason="No running inference server detected.",
+            post_cmd=post_cmd,
+        )
         sys.exit(1)
 
-    # Resolve which backend to use
+    # --serve requested, no server found → start one
     if backend == "auto":
         backend = _auto_detect_backend()
 
@@ -906,7 +1018,17 @@ def resolve_server(
     else:
         backend_label = getattr(manager, "docker_image", backend)
     console.print(f"  [cyan]Auto-starting {backend_label}...[/cyan]")
-    manager.start(model, extra_args=serve_args)
+    try:
+        manager.start(model, extra_args=serve_args)
+    except TmuxNotAvailable as exc:
+        _print_server_instructions(
+            exc.server_cmd,
+            exc.base_url,
+            reason="tmux is not installed, so vlmbench cannot background the server.",
+            post_cmd=exc.post_cmd,
+            tip="Install tmux for automatic server management: brew install tmux / apt install tmux",
+        )
+        sys.exit(0)
 
     console.print("  [dim]Waiting for server to be ready...[/dim]")
     if not manager.wait_ready(timeout=600):
@@ -1437,10 +1559,10 @@ def print_config(
     lines.append("• ", style="dim")
     lines.append(f"concurrency={max_concurrency}")
 
-    # Tmux session line
+    # Monitor session line
     if tmux_session:
         lines.append("\n")
-        lines.append("  Tmux       ", style="bold cyan")
+        lines.append("  Monitor    ", style="bold cyan")
         lines.append(f"{tmux_session} ", style="bold")
         lines.append("• ", style="dim")
         lines.append("tmux attach -t ", style="dim")
@@ -1487,8 +1609,7 @@ def print_results(result: BenchmarkResult, save_path: str) -> None:
 
     # Throughput
     lines.append("  Throughput   ", style=_metric_color("throughput"))
-    lines.append(f"{r.tokens_per_sec:>6.1f} tok/s", style=_value_color_throughput(r.tokens_per_sec))
-    lines.append(f"   {r.inputs_per_sec:.2f} images/s\n")
+    lines.append(f"{r.tokens_per_sec:>6.1f} tok/s\n", style=_value_color_throughput(r.tokens_per_sec))
 
     # Latency
     lines.append("  Latency      ", style=_metric_color("latency"))
@@ -1677,7 +1798,6 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(
         prog="vlmbench",
-        description="Single-file, drop-in VLM benchmark CLI for your agents.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command")
@@ -1705,7 +1825,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--serve",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help="Auto-start inference server if none detected",
     )
     run_parser.add_argument("--serve-args", default=None, help="Extra CLI args for the server command")
