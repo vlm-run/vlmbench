@@ -1342,9 +1342,9 @@ def print_banner() -> None:
         _VLM_PAD = "  "
         _BENCH_PAD = "  "
 
-        # Silver (#C0D0E8) → Steel blue (#4A78B8)
+        # Silver (#C0D0E8) → Steel blue (#4682B4)
         n = len(art_lines)
-        s, e = (0xC0, 0xD0, 0xE8), (0x4A, 0x78, 0xB8)
+        s, e = (0xC0, 0xD0, 0xE8), (0x46, 0x82, 0xB4)
         for i, line in enumerate(art_lines):
             pad = _VLM_PAD if i < 6 else _BENCH_PAD
             t = i / max(n - 1, 1)
@@ -1356,7 +1356,9 @@ def print_banner() -> None:
         console.print(
             f"  [bold {STEEL_BLUE}]vlmbench[/bold {STEEL_BLUE}] — Single-file, drop-in VLM benchmark CLI for your agents."
         )
-        console.print("  built by [link=https://vlm.run]VLM Run[/link] · https://vlm.run")
+        console.print(
+            f"  built by [bold {STEEL_BLUE}][link=https://vlm.run]VLM Run[/link][/bold {STEEL_BLUE}] · https://vlm.run"
+        )
         console.print(f"  [bold {STEEL_BLUE}]v{VERSION}[/bold {STEEL_BLUE}]")
     else:
         console.print(f"  [bold {STEEL_BLUE}]vlmbench[/bold {STEEL_BLUE}]  v{VERSION}")
