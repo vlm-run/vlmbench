@@ -1,25 +1,30 @@
-# vlmbench
-
-[![PyPI version](https://badge.fury.io/py/vlmbench.svg)](https://pypi.org/project/vlmbench/)
-[![PyPI - Downloads](https://img.shields.io/pypi/dm/vlmbench)](https://pypi.org/project/vlmbench/)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/vlm-run/vlmbench/blob/main/LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Discord](https://dcbadge.limes.pink/api/server/https://discord.gg/x3F6pBQZMY?style=flat)](https://discord.gg/x3F6pBQZMY)
-[![Twitter](https://img.shields.io/twitter/follow/vlaborai)](https://x.com/vlaborai)
-
-Single-file, drop-in VLM benchmark CLI for your agents. One command, one JSON, stackable into a leaderboard.
+<div align="center">
+<p align="center" style="width: 100%;">
+    <img src="https://raw.githubusercontent.com/vlm-run/.github/refs/heads/main/profile/assets/vlm-black.svg" alt="VLM Run Logo" width="80" style="margin-bottom: -5px; color: #2e3138; vertical-align: middle; padding-right: 5px;"><br>
+</p>
+<h2>vlmbench</h2>
+<p><b>Single-file, drop-in VLM benchmark CLI for your agents.</b></p>
+<p align="center">
+<a href="https://pypi.org/project/vlmbench/"><img alt="PyPI Version" src="https://badge.fury.io/py/vlmbench.svg"></a>
+<a href="https://pypi.org/project/vlmbench/"><img alt="Python Versions" src="https://img.shields.io/pypi/pyversions/vlmbench"></a>
+<a href="https://www.pepy.tech/projects/vlmbench"><img alt="PyPI Downloads" src="https://img.shields.io/pypi/dm/vlmbench"></a><br>
+<a href="https://github.com/vlm-run/vlmbench/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/vlm-run/vlmbench.svg"></a>
+<a href="https://discord.gg/AMApC2UzVY"><img alt="Discord" src="https://img.shields.io/badge/discord-chat-purple?color=%235765F2&label=discord&logo=discord"></a>
+<a href="https://twitter.com/vlmrun"><img alt="Twitter Follow" src="https://img.shields.io/twitter/follow/vlmrun.svg?style=social&logo=twitter"></a>
+</p>
+</div>
 
 Benchmark any vision-language model on your own hardware with a single command. vlmbench auto-detects your platform, starts the right backend, and gives you reproducible results as JSON.
 
-- **macOS** — Ollama (auto-starts, zero config)
-- **Linux** — vLLM via Docker (`--gpus all`, auto-pulls) or native vLLM
+- **macOS** — [Ollama](https://ollama.com) (auto-starts, zero config)
+- **Linux** — [vLLM](https://docs.vllm.ai) via Docker (`--gpus all`, auto-pulls) or native vLLM
 - **SGLang** — coming soon
 
 <img width="2468" height="1920" alt="image" src="https://github.com/user-attachments/assets/24f8ecca-6d46-49d4-80bc-df0a42a9c326" />
 
 ## Quick Start
 
-No install needed. Just run with `uvx`:
+No install needed — just run with [`uvx`](https://docs.astral.sh/uv/):
 
 ```bash
 # macOS (Ollama — auto-starts, auto-pulls the model)
@@ -65,10 +70,72 @@ pip install vlmbench
   > Saved -> results/lightonocr-2-1b-20260207T104621.json
 ```
 
+## Behind the Scenes
+
+When you run `uvx vlmbench run`, here's what happens automatically:
+
+1. **Detects your platform** — macOS routes to Ollama, Linux to vLLM Docker
+2. **Pulls the Docker image** — `docker pull vllm/vllm-openai:latest` (cached after first run)
+3. **Starts the server in tmux** — `docker run --gpus all` in a named tmux session (`vlmbench-vllm`)
+4. **Launches a GPU monitor** — `nvitop` (Linux) or `macmon` (macOS) in a split pane
+5. **Waits for the server** — polls `/v1/models` until ready (up to 600s for large models)
+6. **Runs warmup requests** — fail-fast validation before timed runs
+7. **Benchmarks with concurrency** — streams completions via the OpenAI API, measures TTFT/TPOT/throughput
+8. **Saves results as JSON** — one file per run in `./results/`, ready for `vlmbench compare`
+
+Attach to the live session anytime with `tmux attach -t vlmbench-vllm`.
+
+<details>
+<summary><b>tmux session capture</b> — server logs + GPU monitor side by side</summary>
+
+**Top pane — vLLM server logs:**
+
+```
+(APIServer pid=1) INFO 02-07 15:44:24 non-default args: {
+  'model': 'lightonai/LightOnOCR-2-1B',
+  'enable_prefix_caching': False,
+  'limit_mm_per_prompt': {'image': 1},
+  'mm_processor_cache_gb': 0.0
+}
+(APIServer pid=1) INFO 02-07 15:44:34 Resolved architecture: LightOnOCRForConditionalGeneration
+(APIServer pid=1) INFO 02-07 15:44:34 Using max model len 16384
+(EngineCore pid=272) INFO 02-07 15:44:44 Initializing a V1 LLM engine (v0.15.1) with config:
+  model='lightonai/LightOnOCR-2-1B', dtype=torch.bfloat16, max_seq_len=16384,
+  tensor_parallel_size=1, quantization=None
+(EngineCore pid=272) INFO 02-07 15:45:41 Loading weights took 0.49 seconds
+(EngineCore pid=272) INFO 02-07 15:45:42 Model loading took 1.88 GiB memory and 22.15 seconds
+(EngineCore pid=272) INFO 02-07 15:46:11 Available KV cache memory: 77.94 GiB
+(EngineCore pid=272) INFO 02-07 15:46:11 Maximum concurrency for 16,384 tokens per request: 44.53x
+Capturing CUDA graphs (decode, FULL): 100% |██████████| 51/51
+(APIServer pid=1) INFO Started server process [1]
+(APIServer pid=1) INFO Application startup complete.
+(APIServer pid=1) INFO 172.17.0.1 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+```
+
+**Bottom pane — nvitop GPU monitor:**
+
+```
+NVITOP 1.6.2      Driver Version: 580.126.09      CUDA Driver Version: 13.0
+╒═══════════════════════════════╤══════════════════════╤══════════════════════╕
+│ GPU  Name        Persistence-M│ Bus-Id        Disp.A │ Volatile Uncorr. ECC │
+│ Fan  Temp  Perf  Pwr:Usage/Cap│         Memory-Usage │ GPU-Util  Compute M. │
+╞═══════════════════════════════╪══════════════════════╪══════════════════════╡
+│   0  GeForce RTX 2080 Ti  Off │ 00000000:21:00.0 Off │                  N/A │
+│ 27%   42C   P8     17W / 250W │  107.2MiB / 11264MiB │      0%      Default │
+├───────────────────────────────┼──────────────────────┼──────────────────────┤
+│   1  RTX PRO 6000         Off │ 00000000:4B:00.0 Off │                  N/A │
+│ 30%   33C   P1     66W / 600W │  86.54GiB / 95.59GiB │      0%      Default │
+╘═══════════════════════════════╧══════════════════════╧══════════════════════╛
+  MEM: ███████████████████████████████████████████████████████████▏ 90.5%
+  Load Average: 4.14  2.73  1.65
+```
+
+</details>
+
 ## Compare
 
 ```bash
-vlmbench compare results/*.json
+uvx vlmbench compare results/*.json
 ```
 
 ```
@@ -76,13 +143,13 @@ vlmbench compare results/*.json
 │                               │     TTFT │     TPOT │         │        │ Duration (s) │ num_workers │     VRAM │            │                                                      │
 │ Model                         │     (ms) │     (ms) │ Tok/s ↓ │  Img/s │              │             │          │ Backend    │ Hardware                                             │
 ├───────────────────────────────┼──────────┼──────────┼─────────┼────────┼──────────────┼─────────────┼──────────┼────────────┼──────────────────────────────────────────────────────┤
-│ lightonai/LightOnOCR-2-1B     │      467 │      6.0 │  1664.8 │   9.20 │        162.4 │           8 │  5.78 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition   │
+│ lightonai/LightOnOCR-2-1B     │      467 │      6.0 │  1664.8 │   9.20 │        162.4 │           8 │  5.78 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition    │
 ├───────────────────────────────┼──────────┼──────────┼─────────┼────────┼──────────────┼─────────────┼──────────┼────────────┼──────────────────────────────────────────────────────┤
-│ rednote-hilab/dots.ocr        │     1424 │     10.2 │   477.6 │   7.76 │        190.8 │           8 │  9.42 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition   │
+│ rednote-hilab/dots.ocr        │     1424 │     10.2 │   477.6 │   7.76 │        190.8 │           8 │  9.42 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition    │
 ├───────────────────────────────┼──────────┼──────────┼─────────┼────────┼──────────────┼─────────────┼──────────┼────────────┼──────────────────────────────────────────────────────┤
-│ Qwen/Qwen3-VL-8B-Instruct-FP8│      698 │     17.2 │   461.6 │   6.40 │        232.0 │           8 │ 11.75 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition   │
+│ Qwen/Qwen3-VL-8B-Instruct-FP8 │      698 │     17.2 │   461.6 │   6.40 │        232.0 │           8 │ 11.75 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition    │
 ├───────────────────────────────┼──────────┼──────────┼─────────┼────────┼──────────────┼─────────────┼──────────┼────────────┼──────────────────────────────────────────────────────┤
-│ Qwen/Qwen3-VL-8B-Instruct    │      638 │     17.9 │   448.0 │   6.40 │        233.6 │           8 │ 17.41 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition   │
+│ Qwen/Qwen3-VL-8B-Instruct     │      638 │     17.9 │   448.0 │   6.40 │        233.6 │           8 │ 17.41 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition    │
 ╰───────────────────────────────┴──────────┴──────────┴─────────┴────────┴──────────────┴─────────────┴──────────┴────────────┴──────────────────────────────────────────────────────╯
 
 ╭─ Summary ────────────────────────────────────────────────────────────────────╮
@@ -97,7 +164,6 @@ vlmbench compare results/*.json
 ### Mac + Ollama
 
 ```bash
-# Auto-detects Ollama at localhost:11434 (lowercase model names)
 uvx vlmbench run -m qwen3-vl:2b -i ./images/
 uvx vlmbench run -m glm-ocr:latest -i ./images/
 ```
