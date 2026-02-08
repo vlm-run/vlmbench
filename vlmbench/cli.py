@@ -23,7 +23,7 @@
 ╚═════╝ ╚══════╝╚═╝  ╚═══╝ ╚═════╝╚═╝  ╚═╝
 
 vlmbench — Single-file, drop-in VLM benchmark CLI for your agents.
-built by VLM Run · https://vlm.run
+by VLM Run · https://vlm.run
 """
 
 from __future__ import annotations
@@ -1357,7 +1357,7 @@ def print_banner() -> None:
         )
     else:
         console.print(f"  [bold {STEEL_BLUE}]vlmbench (v{VERSION})[/bold {STEEL_BLUE}]")
-        console.print("  built by [link=https://vlm.run]VLM Run[/link]")
+        console.print("  by [link=https://vlm.run]VLM Run[/link]")
     console.print()
 
 
