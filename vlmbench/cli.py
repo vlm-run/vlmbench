@@ -64,12 +64,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-try:
-    from importlib.metadata import version as _pkg_version
-
-    VERSION = _pkg_version("vlmbench")
-except Exception:
-    VERSION = "0.2.0"
+VERSION = "0.2.0"
 SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
 DEFAULT_MAX_TOKENS = 2048
