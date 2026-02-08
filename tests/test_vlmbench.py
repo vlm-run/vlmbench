@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import urllib.request
 from pathlib import Path
 
 import pytest
 from PIL import Image
+
+VLMBENCH_BIN = str(Path(sys.executable).parent / "vlmbench")
 
 # Vision model candidates in preference order
 OLLAMA_VISION_KEYWORDS = ["vl", "vision", "llava"]
@@ -71,7 +74,7 @@ def test_cli_run(server: dict, test_image: Path, tmp_path: Path) -> None:
     save_dir = tmp_path / "results"
     result = subprocess.run(
         [
-            "vlmbench",
+            VLMBENCH_BIN,
             "run",
             "--model",
             server["model"],
@@ -108,17 +111,12 @@ def test_cli_run(server: dict, test_image: Path, tmp_path: Path) -> None:
 def test_version():
     """Verify vlmbench --help shows version."""
     result = subprocess.run(
-        ["vlmbench", "--help"],
+        [VLMBENCH_BIN, "--help"],
         capture_output=True,
         text=True,
         timeout=10,
     )
     assert result.returncode == 0
-    assert "v0.1.0" in result.stdout
+    from importlib.metadata import version
 
-
-def test_import():
-    """Verify the package is importable."""
-    from vlmbench import __version__
-
-    assert __version__ == "0.1.0"
+    assert f"v{version('vlmbench')}" in result.stdout
