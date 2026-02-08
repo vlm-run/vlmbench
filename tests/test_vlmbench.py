@@ -120,5 +120,3 @@ def test_version():
     from importlib.metadata import version
 
     assert f"v{version('vlmbench')}" in result.stdout
-
-
