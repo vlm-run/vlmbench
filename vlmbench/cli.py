@@ -962,7 +962,9 @@ def resolve_server(
     # Try to auto-detect an already-running server
     detected_url, detected_backend = _try_detect_running_server()
     if detected_url is not None:
-        session = _start_monitor_session(detected_backend)
+        # Use caller's backend for monitor session name when explicitly set
+        monitor_backend = _resolve_backend_for_monitor(backend if backend != "auto" else detected_backend)
+        session = _start_monitor_session(monitor_backend)
         return detected_url, session
 
     # No server running
