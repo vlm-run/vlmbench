@@ -13,9 +13,9 @@ pyproject.toml              # Package config, version, dependencies
 ## Key Architecture
 
 - **Single file**: All CLI logic lives in `vlmbench/cli.py`. This is intentional — the tool should remain a single file.
-- **Entry point**: `main()` function at the bottom of cli.py. Typer app is `app`.
+- **Entry point**: `main()` function at the bottom of cli.py. Uses `argparse` (stdlib).
 - **Subcommands**: `run` (default), `compare`. The `run` subcommand is implicit if flags start with `--`.
-- **Version**: Defined in `pyproject.toml` as `version = "X.Y.Z"`. Read at runtime via `importlib.metadata`.
+- **Version**: Defined as `VERSION` in `vlmbench/cli.py`. `pyproject.toml` reads it dynamically via `setuptools.dynamic` attr.
 
 ## Backend System
 
@@ -52,7 +52,8 @@ make test
 
 - Keep cli.py as a single file. Do not split into modules.
 - The PEP 723 script metadata at the top of cli.py enables `uv run cli.py` without install. Keep it in sync with pyproject.toml dependencies.
-- Version is only in pyproject.toml. The code reads it via `importlib.metadata.version("vlmbench")`.
+- Version is defined as `VERSION` in `vlmbench/cli.py`. `pyproject.toml` reads it dynamically. Update it in one place only.
+- **Always run `make lint` before pushing commits.** Fix any errors before pushing.
 - **Python 3.11+** — use modern features: `tomllib`, `StrEnum`, `ExceptionGroup`, `TaskGroup`, `type X = ...` aliases, `match/case`, `datetime.fromisoformat` improvements. Avoid legacy patterns and `from __future__ import annotations`.
 - Code should be elegant and minimal — no unnecessary abstractions, no over-engineering.
 - This is a developer tool. Prioritize clear output, fast iteration, and zero friction. Developers should be able to read the source and understand it immediately.
