@@ -34,6 +34,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+hf = ["datasets>=2.0"]
 test = ["pytest", "pre-commit"]
 build = ["twine", "build"]
 
