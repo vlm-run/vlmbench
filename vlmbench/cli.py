@@ -1096,8 +1096,9 @@ def downscale_image(img: Image.Image, max_size: int = DEFAULT_MAX_IMAGE_SIZE) ->
     return img.resize((W, H), Image.LANCZOS)
 
 
-def pil_to_base64(img: Image.Image, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> str:
-    """Convert a PIL Image to a base64 data URI (JPEG, quality=98, downscaled)."""
+def image_to_base64(image: Image.Image | Path, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> str:
+    """Convert a PIL Image or image file to a base64 data URI (JPEG, quality=98, downscaled)."""
+    img = Image.open(image) if isinstance(image, Path) else image
     img = downscale_image(img, max_size)
     if img.mode in ("RGBA", "P", "LA"):
         img = img.convert("RGB")
@@ -1105,12 +1106,6 @@ def pil_to_base64(img: Image.Image, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> s
     img.save(buf, format="JPEG", quality=98)
     b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
     return f"data:image/jpeg;base64,{b64}"
-
-
-def image_to_base64(path: Path, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> str:
-    """Convert an image file to a base64 data URI."""
-    img = Image.open(path)
-    return pil_to_base64(img, max_size)
 
 
 def pdf_to_base64(
@@ -1129,7 +1124,7 @@ def pdf_to_base64(
         page = doc[idx]
         bitmap = page.render(scale=dpi / 72)
         img = bitmap.to_pil()
-        results.append(pil_to_base64(img, max_size))
+        results.append(image_to_base64(img, max_size))
     doc.close()
     return results
 
@@ -1259,7 +1254,7 @@ def load_hf_dataset(
             img.save(buf, format="PNG")
             img_bytes = buf.getvalue()
             hasher.update(img_bytes)
-            row_uris.append(pil_to_base64(img, max_size))
+            row_uris.append(image_to_base64(img, max_size))
             breakdown["images"] += 1
         if row_uris:
             inputs.append(row_uris)
