@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Any, Optional, Protocol, Union, get_args, get_origin, get_type_hints, runtime_checkable
 
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
+from PIL import Image
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
@@ -64,7 +65,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
 DEFAULT_MAX_TOKENS = 2048
@@ -74,6 +75,10 @@ DEFAULT_SAVE_DIR = "./results"
 DEFAULT_API_KEY = "no-key"
 
 DEFAULT_VLLM_IMAGE = "vllm-openai:latest"
+DEFAULT_MAX_IMAGE_SIZE = 2048
+DEFAULT_HF_DATASET = "vlm-run/FineVision-vlmbench-mini"
+HF_DATASETS_API = "https://datasets-server.huggingface.co"
+DATASET_CACHE_DIR = Path.home() / ".cache" / "vlmbench" / "datasets"
 STEEL_BLUE = "#4682B4"
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".tiff", ".bmp"}
@@ -1069,27 +1074,47 @@ def _try_detect_running_server() -> tuple[str | None, str]:
 # ── Input Loading ─────────────────────────────────────────────────────────────
 
 
-def image_to_base64(path: Path) -> str:
+def downscale_size(size: tuple[int, int], max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> tuple[int, int]:
+    """Downscale a size if it is larger than max_size (in pixels) on either width or height dimension."""
+    w, h = size
+    if w <= max_size and h <= max_size:
+        return size
+    if w > h:
+        W = min(w, max_size)
+        H = int(h * W / w)
+    else:
+        H = min(h, max_size)
+        W = int(w * H / h)
+    return (W, H)
+
+
+def downscale_image(img: Image.Image, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> Image.Image:
+    """Downscale an image if it is larger than max_size (in pixels) on either width or height dimension."""
+    w, h = img.size
+    if w <= max_size and h <= max_size:
+        return img
+    W, H = downscale_size((w, h), max_size)
+    return img.resize((W, H), Image.LANCZOS)
+
+
+def pil_to_base64(img: Image.Image, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> str:
+    """Convert a PIL Image to a base64 data URI (JPEG, quality=98, downscaled)."""
+    img = downscale_image(img, max_size)
+    if img.mode in ("RGBA", "P", "LA"):
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=98)
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return f"data:image/jpeg;base64,{b64}"
+
+
+def image_to_base64(path: Path, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> str:
     """Convert an image file to a base64 data URI."""
-    with open(path, "rb") as f:
-        data = f.read()
-
-    # Determine MIME type from extension
-    ext = path.suffix.lower()
-    mime_map = {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".webp": "image/webp",
-        ".tiff": "image/tiff",
-        ".bmp": "image/bmp",
-    }
-    mime = mime_map.get(ext, "image/png")
-    b64 = base64.b64encode(data).decode("utf-8")
-    return f"data:{mime};base64,{b64}"
+    img = Image.open(path)
+    return pil_to_base64(img, max_size)
 
 
-def pdf_to_base64_images(path: Path, dpi: int = 150) -> list[str]:
+def pdf_to_base64_images(path: Path, dpi: int = 150, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> list[str]:
     """Convert PDF pages to base64 data URIs using pypdfium2."""
     import pypdfium2 as pdfium
 
@@ -1099,10 +1124,7 @@ def pdf_to_base64_images(path: Path, dpi: int = 150) -> list[str]:
         page = doc[idx]
         bitmap = page.render(scale=dpi / 72)
         img = bitmap.to_pil()
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-        results.append(f"data:image/png;base64,{b64}")
+        results.append(pil_to_base64(img, max_size))
     doc.close()
     return results
 
@@ -1138,7 +1160,7 @@ def video_to_base64_frames(path: Path) -> list[str]:
         return results
 
 
-def load_inputs(input_path: str) -> tuple[list[list[str]], dict[str, int], str]:
+def load_inputs(input_path: str, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> tuple[list[list[str]], dict[str, int], str]:
     """Load inputs from a file or directory.
 
     Returns:
@@ -1169,11 +1191,11 @@ def load_inputs(input_path: str) -> tuple[list[list[str]], dict[str, int], str]:
             hasher.update(fh.read())
 
         if ext in IMAGE_EXTENSIONS:
-            b64 = image_to_base64(f)
+            b64 = image_to_base64(f, max_size)
             inputs.append([b64])
             breakdown["images"] += 1
         elif ext in PDF_EXTENSIONS:
-            pages = pdf_to_base64_images(f)
+            pages = pdf_to_base64_images(f, max_size=max_size)
             # Each page is a separate input
             for page in pages:
                 inputs.append([page])
@@ -1192,6 +1214,125 @@ def load_inputs(input_path: str) -> tuple[list[list[str]], dict[str, int], str]:
 
     input_hash = f"sha256:{hasher.hexdigest()}"
     return inputs, breakdown, input_hash
+
+
+def load_hf_dataset(
+    dataset: str = DEFAULT_HF_DATASET,
+    max_size: int = DEFAULT_MAX_IMAGE_SIZE,
+) -> tuple[list[list[str]], dict[str, int], str, list[str]]:
+    """Load inputs from a HuggingFace dataset via the Datasets Server API.
+
+    Downloads images on first use and caches them locally. Subsequent calls
+    load from cache. Returns the same tuple as ``load_inputs`` plus a list
+    of per-row prompts.
+    """
+    cache_dir = DATASET_CACHE_DIR / dataset.replace("/", "--")
+    manifest_path = cache_dir / "manifest.json"
+    images_dir = cache_dir / "images"
+
+    # ── Download & cache if needed ────────────────────────────────────────
+    if not manifest_path.exists():
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        images_dir.mkdir(exist_ok=True)
+
+        rows: list[dict] = []
+        offset = 0
+        page_size = 100
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task(f"  Downloading {dataset}...", total=None)
+
+            # Fetch rows from the HF Datasets Server API
+            while True:
+                url = (
+                    f"{HF_DATASETS_API}/rows"
+                    f"?dataset={urllib.request.quote(dataset, safe='')}"
+                    f"&config=default&split=train"
+                    f"&offset={offset}&length={page_size}"
+                )
+                try:
+                    with urllib.request.urlopen(url, timeout=30) as resp:
+                        data = json.loads(resp.read().decode())
+                except Exception as e:
+                    print_error("Dataset download failed", f"Could not fetch {dataset}: {e}")
+                    sys.exit(1)
+
+                page_rows = data.get("rows", [])
+                if not page_rows:
+                    break
+                rows.extend(page_rows)
+                offset += len(page_rows)
+                progress.update(task, description=f"  Downloading {dataset}... ({len(rows)} rows)")
+
+                num_total = data.get("num_rows_total", 0)
+                if num_total and offset >= num_total:
+                    break
+
+            # Download images for each row
+            progress.update(task, description=f"  Downloading images for {len(rows)} rows...")
+            manifest: list[dict] = []
+
+            for i, row_data in enumerate(rows):
+                row = row_data["row"]
+                images_meta = row.get("images", [])
+                if not isinstance(images_meta, list):
+                    images_meta = [images_meta]
+
+                row_filenames: list[str] = []
+                for j, img_info in enumerate(images_meta):
+                    src = img_info.get("src") if isinstance(img_info, dict) else None
+                    if not src:
+                        continue
+                    img_filename = f"row_{i:04d}_{j}.jpg"
+                    img_path = images_dir / img_filename
+                    try:
+                        with urllib.request.urlopen(src, timeout=60) as img_resp:
+                            img_path.write_bytes(img_resp.read())
+                        row_filenames.append(img_filename)
+                    except Exception:
+                        continue  # skip failed images
+
+                if row_filenames:
+                    manifest.append(
+                        {
+                            "images": row_filenames,
+                            "prompt": row.get("prompt", DEFAULT_PROMPT),
+                        }
+                    )
+                progress.update(task, description=f"  Downloading images... ({i + 1}/{len(rows)} rows)")
+
+        manifest_path.write_text(json.dumps(manifest, indent=2))
+
+    # ── Load from cache ───────────────────────────────────────────────────
+    manifest = json.loads(manifest_path.read_text())
+    inputs: list[list[str]] = []
+    prompts: list[str] = []
+    breakdown = {"images": 0, "pdf_pages": 0, "video_frames": 0}
+    hasher = hashlib.sha256()
+
+    for entry in manifest:
+        row_uris: list[str] = []
+        for img_filename in entry["images"]:
+            img_path = images_dir / img_filename
+            img = Image.open(img_path)
+            hasher.update(img_path.read_bytes())
+            row_uris.append(pil_to_base64(img, max_size))
+            breakdown["images"] += 1
+        if row_uris:
+            inputs.append(row_uris)
+            prompts.append(entry.get("prompt", DEFAULT_PROMPT))
+
+    if not inputs:
+        print_error("No inputs", f"No images could be loaded from {dataset}")
+        sys.exit(1)
+
+    input_hash = f"sha256:{hasher.hexdigest()}"
+    return inputs, breakdown, input_hash, prompts
 
 
 # ── Benchmark Core ────────────────────────────────────────────────────────────
@@ -1350,7 +1491,7 @@ def run_benchmark(
     client: OpenAI,
     model: str,
     inputs: list[list[str]],
-    prompt: str,
+    prompt: str | list[str],
     max_tokens: int,
     runs: int,
     max_concurrency: int,
@@ -1370,7 +1511,8 @@ def run_benchmark(
         if progress_callback:
             progress_callback("warmup", w + 1, 0)
         try:
-            messages = build_messages(prompt, inputs[0])
+            warmup_prompt = prompt[0] if isinstance(prompt, list) else prompt
+            messages = build_messages(warmup_prompt, inputs[0])
             call_completion(client, model, messages, max_tokens)
         except Exception as e:
             err_str = str(e).lower()
@@ -1389,7 +1531,8 @@ def run_benchmark(
     # Timed runs
     def execute_single(input_idx: int, run_num: int) -> RunRaw:
         nonlocal retries
-        messages = build_messages(prompt, inputs[input_idx])
+        input_prompt = prompt[input_idx] if isinstance(prompt, list) else prompt
+        messages = build_messages(input_prompt, inputs[input_idx])
         try:
             result, retry_count = _call_with_retry_count(client, model, messages, max_tokens)
             retries += retry_count
@@ -1813,7 +1956,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Model ID (vLLM: Qwen/Qwen3-VL-2B-Instruct, Ollama: qwen3-vl:2b)",
     )
     run_parser.add_argument(
-        "--input", "-i", required=True, dest="input_path", help="File or directory (images, PDFs, videos)"
+        "--input",
+        "-i",
+        default=None,
+        dest="input_path",
+        help="File or directory of images/PDFs/videos (default: HF dataset vlm-run/FineVision-vlmbench-mini)",
     )
 
     # Server
@@ -1839,6 +1986,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="Prompt sent with each input")
     run_parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Max completion tokens")
+    run_parser.add_argument(
+        "--max-size",
+        type=int,
+        default=DEFAULT_MAX_IMAGE_SIZE,
+        help=f"Max image dimension in pixels; larger images are downscaled (default: {DEFAULT_MAX_IMAGE_SIZE})",
+    )
 
     # Benchmark
     run_parser.add_argument("--runs", type=int, default=DEFAULT_RUNS, help="Timed runs per input")
@@ -1871,7 +2024,14 @@ def cmd_run(args: argparse.Namespace) -> None:
     env = collect_environment(base_url)
 
     # Load inputs
-    inputs, breakdown, input_hash = load_inputs(args.input_path)
+    if args.input_path:
+        inputs, breakdown, input_hash = load_inputs(args.input_path, max_size=args.max_size)
+        prompt = args.prompt
+        input_display = args.input_path
+    else:
+        inputs, breakdown, input_hash, dataset_prompts = load_hf_dataset(max_size=args.max_size)
+        prompt = dataset_prompts if args.prompt == DEFAULT_PROMPT else args.prompt
+        input_display = f"hf://{DEFAULT_HF_DATASET}"
     total_inputs = len(inputs)
 
     # Resolve quant
@@ -1888,7 +2048,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         env=env,
         total_inputs=total_inputs,
         breakdown=breakdown,
-        input_path=args.input_path,
+        input_path=input_display,
         max_tokens=args.max_tokens,
         runs=args.runs,
         max_concurrency=args.max_concurrency,
@@ -1923,7 +2083,7 @@ def cmd_run(args: argparse.Namespace) -> None:
             client=client,
             model=args.model,
             inputs=inputs,
-            prompt=args.prompt,
+            prompt=prompt,
             max_tokens=args.max_tokens,
             runs=args.runs,
             max_concurrency=args.max_concurrency,
@@ -1994,7 +2154,7 @@ def cmd_run(args: argparse.Namespace) -> None:
             hash=input_hash,
             total_inputs=total_inputs,
             breakdown=breakdown,
-            prompt=args.prompt,
+            prompt=args.prompt if isinstance(prompt, str) else "[per-input]",
             max_tokens=args.max_tokens,
             max_concurrency=args.max_concurrency,
         ),
