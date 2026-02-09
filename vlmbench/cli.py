@@ -76,9 +76,8 @@ DEFAULT_API_KEY = "no-key"
 
 DEFAULT_VLLM_IMAGE = "vllm-openai:latest"
 DEFAULT_MAX_IMAGE_SIZE = 2048
-DEFAULT_HF_DATASET = "vlm-run/FineVision-vlmbench-mini"
-HF_DATASETS_API = "https://datasets-server.huggingface.co"
-DATASET_CACHE_DIR = Path.home() / ".cache" / "vlmbench" / "datasets"
+DEFAULT_MAX_PDF_PAGES = 8
+HF_DATASET_PREFIX = "hf://datasets/"
 STEEL_BLUE = "#4682B4"
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".tiff", ".bmp"}
@@ -1114,13 +1113,19 @@ def image_to_base64(path: Path, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> str:
     return pil_to_base64(img, max_size)
 
 
-def pdf_to_base64_images(path: Path, dpi: int = 150, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> list[str]:
+def pdf_to_base64(
+    path: Path,
+    dpi: int = 150,
+    max_size: int = DEFAULT_MAX_IMAGE_SIZE,
+    max_pages: int = DEFAULT_MAX_PDF_PAGES,
+) -> list[str]:
     """Convert PDF pages to base64 data URIs using pypdfium2."""
     import pypdfium2 as pdfium
 
     doc = pdfium.PdfDocument(str(path))
+    n_pages = min(len(doc), max_pages)
     results = []
-    for idx in range(len(doc)):
+    for idx in range(n_pages):
         page = doc[idx]
         bitmap = page.render(scale=dpi / 72)
         img = bitmap.to_pil()
@@ -1195,7 +1200,7 @@ def load_inputs(input_path: str, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> tupl
             inputs.append([b64])
             breakdown["images"] += 1
         elif ext in PDF_EXTENSIONS:
-            pages = pdf_to_base64_images(f, max_size=max_size)
+            pages = pdf_to_base64(f, max_size=max_size)
             # Each page is a separate input
             for page in pages:
                 inputs.append([page])
@@ -1217,115 +1222,48 @@ def load_inputs(input_path: str, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> tupl
 
 
 def load_hf_dataset(
-    dataset: str = DEFAULT_HF_DATASET,
+    dataset: str,
     max_size: int = DEFAULT_MAX_IMAGE_SIZE,
 ) -> tuple[list[list[str]], dict[str, int], str, list[str]]:
-    """Load inputs from a HuggingFace dataset via the Datasets Server API.
+    """Load inputs from a HuggingFace dataset using the ``datasets`` library.
 
-    Downloads images on first use and caches them locally. Subsequent calls
-    load from cache. Returns the same tuple as ``load_inputs`` plus a list
-    of per-row prompts.
+    Requires ``pip install 'vlmbench[hf]'`` (or ``pip install datasets``).
+    Returns the same tuple as ``load_inputs`` plus a list of per-row prompts.
     """
-    cache_dir = DATASET_CACHE_DIR / dataset.replace("/", "--")
-    manifest_path = cache_dir / "manifest.json"
-    images_dir = cache_dir / "images"
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        print_error(
+            "Missing dependency",
+            "The 'datasets' package is required for HuggingFace datasets.\n"
+            "Install it with:  pip install 'vlmbench[hf]'  or  pip install datasets",
+        )
+        sys.exit(1)
 
-    # ── Download & cache if needed ────────────────────────────────────────
-    if not manifest_path.exists():
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        images_dir.mkdir(exist_ok=True)
+    with console.status(f"  Loading [bold]{dataset}[/bold]..."):
+        ds = load_dataset(dataset, split="train")
 
-        rows: list[dict] = []
-        offset = 0
-        page_size = 100
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-            transient=True,
-        ) as progress:
-            task = progress.add_task(f"  Downloading {dataset}...", total=None)
-
-            # Fetch rows from the HF Datasets Server API
-            while True:
-                url = (
-                    f"{HF_DATASETS_API}/rows"
-                    f"?dataset={urllib.request.quote(dataset, safe='')}"
-                    f"&config=default&split=train"
-                    f"&offset={offset}&length={page_size}"
-                )
-                try:
-                    with urllib.request.urlopen(url, timeout=30) as resp:
-                        data = json.loads(resp.read().decode())
-                except Exception as e:
-                    print_error("Dataset download failed", f"Could not fetch {dataset}: {e}")
-                    sys.exit(1)
-
-                page_rows = data.get("rows", [])
-                if not page_rows:
-                    break
-                rows.extend(page_rows)
-                offset += len(page_rows)
-                progress.update(task, description=f"  Downloading {dataset}... ({len(rows)} rows)")
-
-                num_total = data.get("num_rows_total", 0)
-                if num_total and offset >= num_total:
-                    break
-
-            # Download images for each row
-            progress.update(task, description=f"  Downloading images for {len(rows)} rows...")
-            manifest: list[dict] = []
-
-            for i, row_data in enumerate(rows):
-                row = row_data["row"]
-                images_meta = row.get("images", [])
-                if not isinstance(images_meta, list):
-                    images_meta = [images_meta]
-
-                row_filenames: list[str] = []
-                for j, img_info in enumerate(images_meta):
-                    src = img_info.get("src") if isinstance(img_info, dict) else None
-                    if not src:
-                        continue
-                    img_filename = f"row_{i:04d}_{j}.jpg"
-                    img_path = images_dir / img_filename
-                    try:
-                        with urllib.request.urlopen(src, timeout=60) as img_resp:
-                            img_path.write_bytes(img_resp.read())
-                        row_filenames.append(img_filename)
-                    except Exception:
-                        continue  # skip failed images
-
-                if row_filenames:
-                    manifest.append(
-                        {
-                            "images": row_filenames,
-                            "prompt": row.get("prompt", DEFAULT_PROMPT),
-                        }
-                    )
-                progress.update(task, description=f"  Downloading images... ({i + 1}/{len(rows)} rows)")
-
-        manifest_path.write_text(json.dumps(manifest, indent=2))
-
-    # ── Load from cache ───────────────────────────────────────────────────
-    manifest = json.loads(manifest_path.read_text())
     inputs: list[list[str]] = []
     prompts: list[str] = []
     breakdown = {"images": 0, "pdf_pages": 0, "video_frames": 0}
     hasher = hashlib.sha256()
 
-    for entry in manifest:
+    for row in ds:
+        images = row.get("images", [])
+        if not isinstance(images, list):
+            images = [images]
+
         row_uris: list[str] = []
-        for img_filename in entry["images"]:
-            img_path = images_dir / img_filename
-            img = Image.open(img_path)
-            hasher.update(img_path.read_bytes())
+        for img in images:
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            img_bytes = buf.getvalue()
+            hasher.update(img_bytes)
             row_uris.append(pil_to_base64(img, max_size))
             breakdown["images"] += 1
         if row_uris:
             inputs.append(row_uris)
-            prompts.append(entry.get("prompt", DEFAULT_PROMPT))
+            prompts.append(row.get("prompt", DEFAULT_PROMPT))
 
     if not inputs:
         print_error("No inputs", f"No images could be loaded from {dataset}")
@@ -1958,9 +1896,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--input",
         "-i",
-        default=None,
+        required=True,
         dest="input_path",
-        help="File or directory of images/PDFs/videos (default: HF dataset vlm-run/FineVision-vlmbench-mini)",
+        help="File/directory of images/PDFs/videos, or hf://datasets/<org>/<name>",
     )
 
     # Server
@@ -2024,14 +1962,15 @@ def cmd_run(args: argparse.Namespace) -> None:
     env = collect_environment(base_url)
 
     # Load inputs
-    if args.input_path:
+    if args.input_path.startswith(HF_DATASET_PREFIX):
+        dataset_id = args.input_path[len(HF_DATASET_PREFIX) :]
+        inputs, breakdown, input_hash, dataset_prompts = load_hf_dataset(dataset_id, max_size=args.max_size)
+        prompt = dataset_prompts if args.prompt == DEFAULT_PROMPT else args.prompt
+        input_display = args.input_path
+    else:
         inputs, breakdown, input_hash = load_inputs(args.input_path, max_size=args.max_size)
         prompt = args.prompt
         input_display = args.input_path
-    else:
-        inputs, breakdown, input_hash, dataset_prompts = load_hf_dataset(max_size=args.max_size)
-        prompt = dataset_prompts if args.prompt == DEFAULT_PROMPT else args.prompt
-        input_display = f"hf://{DEFAULT_HF_DATASET}"
     total_inputs = len(inputs)
 
     # Resolve quant
