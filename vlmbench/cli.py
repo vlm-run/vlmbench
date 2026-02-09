@@ -58,7 +58,7 @@ from PIL import Image
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 from rich.table import Table
 from rich.text import Text
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -2065,6 +2065,9 @@ def cmd_run(args: argparse.Namespace) -> None:
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TextColumn("{task.completed}/{task.total} images"),
+        TimeElapsedColumn(),
+        TextColumn("eta"),
+        TimeRemainingColumn(),
         console=console,
         transient=True,
     ) as progress:
