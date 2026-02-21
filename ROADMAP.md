@@ -44,6 +44,21 @@
 - [ ] `vlmbench models` — pretty-print the matrix with filters (`--backend vllm`, `--capability multi-image`)
 - [ ] `vlmbench models --json` — dump for programmatic use
 
+## OCR / markdown profiling
+
+- [ ] `--profile ocr` and `--profile markdown` modes — evaluate output quality, not just speed
+- [ ] Token-level output metrics: total output tokens, tokens per image, output tok/s
+- [ ] Character-level accuracy — CER/WER against ground-truth when `--reference` provided
+- [ ] Markdown structure fidelity — heading, table, list, and LaTeX preservation scores
+- [ ] Side-by-side output diff in `vlmbench compare` for qualitative inspection
+
+## Max image resolution support
+
+- [ ] Per-model max resolution detection — query model config or `models.toml` for native resolution cap
+- [ ] `--resolution max` flag — skip downscaling entirely, send at model's native max
+- [ ] Resolution metadata in results JSON — actual input resolution per image after any resizing
+- [ ] Warn when input exceeds model's max resolution (risk of silent truncation or OOM)
+
 ## Benchmarking features
 
 - [ ] Multi-image benchmarks — send N images per request, measure scaling
