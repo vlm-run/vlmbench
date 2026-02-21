@@ -203,6 +203,221 @@ uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ \
 uvx vlmbench compare results/*.json
 ```
 
+## Experiments
+
+Benchmarking recipes that answer real questions about your VLM setup. Mix and match these patterns to build the experiment you need.
+
+### Model shootout — which model is fastest?
+
+```bash
+# Same inputs, same concurrency, different models
+vlmbench run -m lightonai/LightOnOCR-2-1B    -i ./docs/ --max-concurrency 8 --runs 3
+vlmbench run -m rednote-hilab/dots.ocr        -i ./docs/ --max-concurrency 8 --runs 3
+vlmbench run -m Qwen/Qwen3-VL-8B-Instruct    -i ./docs/ --max-concurrency 8 --runs 3
+vlmbench run -m allenai/olmOCR-2-7B-1025-FP8  -i ./docs/ --max-concurrency 8 --runs 3
+
+# Compare — sorted by tok/s
+vlmbench compare results/*.json
+```
+
+### OCR quality profiling — fast, but is the output correct?
+
+Use `--profile ocr` to measure **output token volume** alongside speed. Add `--reference` with ground-truth text files to score accuracy (CER / WER).
+
+```bash
+# Token-level output profiling (output tok/s, tokens per image, total output tokens)
+vlmbench run -m lightonai/LightOnOCR-2-1B -i ./docs/ \
+  --profile ocr --max-concurrency 8 --save-outputs
+
+# Score against ground truth — filenames must match (invoice_001.png → invoice_001.txt)
+vlmbench run -m lightonai/LightOnOCR-2-1B -i ./docs/ \
+  --profile ocr --reference ./ground-truth/ --save-outputs
+
+# Quality shootout — which model produces the best OCR?
+vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ \
+  --profile ocr --reference ./ground-truth/ --save-outputs
+vlmbench run -m rednote-hilab/dots.ocr -i ./docs/ \
+  --profile ocr --reference ./ground-truth/ --save-outputs
+vlmbench compare results/*ocr*.json
+```
+
+### Markdown extraction — does it preserve table structure?
+
+```bash
+vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./financial-reports/ \
+  --profile markdown --reference ./ground-truth/ --save-outputs \
+  --prompt "Convert this document to markdown. Preserve all tables, headings, and formatting."
+
+vlmbench run -m lightonai/LightOnOCR-2-1B -i ./financial-reports/ \
+  --profile markdown --reference ./ground-truth/ --save-outputs
+
+# Compare — output quality metrics side-by-side (CER, WER, structure fidelity)
+vlmbench compare results/*markdown*.json
+```
+
+### Concurrency sweep — what's the optimal batch size?
+
+Auto-ramp concurrency (1, 2, 4, 8, ...) until throughput plateaus:
+
+```bash
+vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ --sweep concurrency
+
+# Expected output:
+#   concurrency=1   →   58.2 tok/s   TTFT p95:  312 ms
+#   concurrency=2   →  112.4 tok/s   TTFT p95:  345 ms
+#   concurrency=4   →  210.8 tok/s   TTFT p95:  489 ms
+#   concurrency=8   →  398.1 tok/s   TTFT p95:  721 ms
+#   concurrency=16  →  448.0 tok/s   TTFT p95: 1842 ms   ← saturation
+#   concurrency=32  →  451.2 tok/s   TTFT p95: 3901 ms   ← diminishing returns
+#
+#   ✓ Optimal: concurrency=8 (89% of peak tok/s, 2.6× lower p95 TTFT)
+```
+
+### Resolution impact — does 4K input actually help?
+
+Sweep input resolution to find the quality/speed sweet spot:
+
+```bash
+# Speed-only sweep
+vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ --sweep resolution
+
+# Quality + speed (with ground truth scoring)
+vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ \
+  --sweep resolution --profile ocr --reference ./ground-truth/
+
+# Expected output:
+#    512 px  →  892.1 tok/s   CER: 8.2%   WER: 14.1%
+#   1024 px  →  461.3 tok/s   CER: 3.1%   WER:  6.8%
+#   2048 px  →  198.7 tok/s   CER: 1.9%   WER:  4.2%
+#   4096 px  →   62.4 tok/s   CER: 1.8%   WER:  4.0%   ← diminishing returns
+
+# Or test the model's native max resolution (no downscaling)
+vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./highres-scans/ \
+  --max-size 4096 --tag 4k
+vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./highres-scans/ \
+  --resolution max --tag native-max
+```
+
+### Quantization comparison — FP16 vs FP8, what do I actually lose?
+
+```bash
+vlmbench run -m Qwen/Qwen3-VL-8B-Instruct     -i ./docs/ --max-concurrency 8 --quant fp16
+vlmbench run -m Qwen/Qwen3-VL-8B-Instruct-FP8 -i ./docs/ --max-concurrency 8 --quant fp8
+
+vlmbench compare results/*qwen3-vl-8b*.json
+# Look at: tok/s difference, VRAM savings, TTFT delta
+```
+
+### Backend comparison — vLLM vs Ollama on the same model
+
+```bash
+vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./docs/ \
+  --backend vllm-openai:latest --max-concurrency 4
+
+vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./docs/ \
+  --backend vllm --max-concurrency 4
+
+vlmbench run -m qwen3-vl:2b -i ./docs/ \
+  --backend ollama --max-concurrency 4
+
+vlmbench compare results/*qwen3-vl-2b*.json
+```
+
+### Multi-GPU scaling — does tensor parallel actually help?
+
+```bash
+CUDA_VISIBLE_DEVICES=0 \
+  vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ \
+  --max-concurrency 8 --tag 1gpu
+
+CUDA_VISIBLE_DEVICES=0,1 \
+  vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ \
+  --max-concurrency 8 --serve-args "--tensor-parallel-size 2" --tag 2gpu
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+  vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ \
+  --max-concurrency 8 --serve-args "--tensor-parallel-size 4" --tag 4gpu
+
+vlmbench compare results/*qwen3-vl-8b*.json
+```
+
+### Cloud vs local — is the API faster than self-hosting?
+
+```bash
+# Local vLLM
+vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ \
+  --max-concurrency 8 --tag local
+
+# Together AI
+vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ \
+  --max-concurrency 8 --tag together \
+  --base-url https://api.together.xyz/v1 --api-key $TOGETHER_API_KEY
+
+vlmbench compare results/*qwen3-vl-8b*.json
+```
+
+### PDF pipeline — how does page count affect throughput?
+
+```bash
+vlmbench run -m lightonai/LightOnOCR-2-1B -i ./invoices-1page/ \
+  --max-concurrency 8 --tag 1page
+vlmbench run -m lightonai/LightOnOCR-2-1B -i ./contracts-10page/ \
+  --max-concurrency 8 --tag 10page
+vlmbench run -m lightonai/LightOnOCR-2-1B -i ./reports-50page/ \
+  --max-concurrency 8 --tag 50page
+
+vlmbench compare results/*lightonocr*.json
+# Look at: images/s scaling, VRAM growth, TTFT vs page count
+```
+
+### HuggingFace dataset evaluation — standard benchmarks
+
+```bash
+vlmbench run -m Qwen/Qwen3-VL-8B-Instruct \
+  -i hf://datasets/vidore/docvqa_test_subsampled \
+  --max-concurrency 4 --runs 1
+```
+
+### Full matrix — answer everything at once
+
+Define a benchmark matrix in TOML — model × backend × concurrency — and run it all with one command:
+
+```bash
+vlmbench init --preset ocr-shootout > bench.toml
+```
+
+```toml
+# bench.toml
+[matrix]
+models = [
+  "lightonai/LightOnOCR-2-1B",
+  "Qwen/Qwen3-VL-8B-Instruct",
+  "Qwen/Qwen3-VL-8B-Instruct-FP8",
+  "rednote-hilab/dots.ocr",
+]
+concurrency = [1, 4, 8]
+backends = ["vllm-openai:latest"]
+
+[inputs]
+path = "./docs/"
+profile = "ocr"
+reference = "./ground-truth/"
+runs = 3
+
+[output]
+save = "./results/"
+format = "json"
+```
+
+```bash
+vlmbench matrix bench.toml
+
+# Runs 4 models × 3 concurrency levels = 12 benchmark runs
+# Generates comparison table + saves all results as JSON
+vlmbench compare results/*.json
+vlmbench dashboard results/ --open
+```
+
 ## CLI Flags
 
 | Flag | Default | Description |

@@ -7,9 +7,11 @@
 - [ ] Backend-specific tuning presets — auto-apply known-good `--serve-args` per model/backend pair
 - [ ] TensorRT-LLM backend via Triton Inference Server
 
-## Saturated throughput
+## Sweep mode
 
-- [ ] `--sweep-concurrency` — auto-ramp concurrency (1, 2, 4, 8, …) until throughput plateaus
+- [ ] `--sweep concurrency` — auto-ramp concurrency (1, 2, 4, 8, …) until throughput plateaus
+- [ ] `--sweep resolution` — benchmark same model at 512, 1024, 2048, 4096px in one run
+- [ ] `--sweep max-tokens` — vary output length (256, 512, 1024, 2048, 4096) to measure scaling
 - [ ] Report saturation point: max tok/s, concurrency at saturation, latency-at-saturation
 - [ ] Goodput metric — throughput excluding errored / timed-out requests
 - [ ] Queue-depth vs latency curve in results JSON
@@ -48,9 +50,11 @@
 
 - [ ] `--profile ocr` and `--profile markdown` modes — evaluate output quality, not just speed
 - [ ] Token-level output metrics: total output tokens, tokens per image, output tok/s
+- [ ] `--save-outputs` — persist raw model output text alongside metrics JSON
 - [ ] Character-level accuracy — CER/WER against ground-truth when `--reference` provided
 - [ ] Markdown structure fidelity — heading, table, list, and LaTeX preservation scores
 - [ ] Side-by-side output diff in `vlmbench compare` for qualitative inspection
+- [ ] Combined sweep + profile: `--sweep resolution --profile ocr --reference ./gt/` to find the quality/speed sweet spot
 
 ## Max image resolution support
 
@@ -62,7 +66,6 @@
 ## Benchmarking features
 
 - [ ] Multi-image benchmarks — send N images per request, measure scaling
-- [ ] Resolution sweep — benchmark same model at 512, 1024, 2048, 4096px
 - [ ] PDF page-count sweep — measure throughput vs document length
 - [ ] Prompt-length sensitivity — vary system/user prompt size, measure impact on TTFT
 - [ ] Structured output benchmarks — JSON mode / guided decoding throughput
@@ -73,7 +76,9 @@
 ## Developer experience
 
 - [ ] `vlmbench init` — scaffold a `bench.toml` config for repeatable benchmark suites
-- [ ] Config file support — define model × backend × concurrency matrix in TOML, run all at once
+- [ ] `vlmbench init --preset ocr-shootout` — pre-built presets for common experiment types
+- [ ] `vlmbench matrix bench.toml` — run full model × backend × concurrency matrix from TOML config
 - [ ] `vlmbench diff <a.json> <b.json>` — side-by-side delta with % change and significance
 - [ ] Machine-readable output — `--format csv` and `--format jsonl` for pipeline integration
+- [ ] `--tag` enrichment — auto-tag with GPU name, quant, concurrency for easier filtering
 - [ ] GitHub Actions template for PR-gated perf regression checks
