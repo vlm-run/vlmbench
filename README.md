@@ -27,14 +27,14 @@ Benchmark any vision-language model on your own hardware with a single command. 
 No install needed — just run with [`uvx`](https://docs.astral.sh/uv/):
 
 ```bash
-# macOS (Ollama — auto-starts, auto-pulls the model)
+# Local images/PDFs
 uvx vlmbench run -m qwen3-vl:2b -i ./images/
 
-# Linux (vLLM Docker — auto-starts with --gpus all)
-uvx vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./images/
+# HuggingFace dataset
+uvx vlmbench run -m qwen3-vl:2b -d hf://vlm-run/FineVision-vlmbench-mini
 
-# Linux (native vLLM — requires vllm installed)
-uvx vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./images/ --backend vllm
+# Dry-run with limited samples (uses streaming, no full download)
+uvx vlmbench run -m qwen3-vl:2b -d hf://vlm-run/FineVision-vlmbench-mini --max-samples 5
 ```
 
 Or install it:

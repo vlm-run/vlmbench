@@ -44,6 +44,7 @@ dist: clean
 HF_TIMEOUT ?= 45m
 HF_IMAGE   ?= vllm/vllm-openai:latest
 REPO_ID    ?= vlm-run/vlmbench-results
+INPUT      ?= https://storage.googleapis.com/vlm-data-public-prod/hub/examples/image.caption/car.jpg
 SERVE_ARGS ?=
 FLAVORS    ?= t4-small l4x1 a10g-small
 
@@ -57,7 +58,8 @@ endif
 		--model $(MODEL) \
 		--no-upload \
 		$(if $(SERVE_ARGS),--serve-args '$(SERVE_ARGS)',) \
-		$(if $(INPUT),--input $(INPUT),)
+		$(if $(INPUT),--input $(INPUT),) \
+		$(if $(DATASET),--dataset $(DATASET),)
 
 # Submit single benchmark to HF Jobs
 # Usage: make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1
@@ -69,12 +71,13 @@ ifndef FLAVOR
 	$(error FLAVOR is required. Example: make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1)
 endif
 	$(eval SCRIPT_B64 := $(shell base64 < scripts/run_benchmark.sh | tr -d '\n'))
+	HF_TOKEN=$$(grep -E '^HF_TOKEN=' .env | cut -d= -f2) && \
 	uvx hf jobs run \
 		--flavor $(FLAVOR) \
-		--secrets HF_TOKEN \
+		--env HF_TOKEN=$$HF_TOKEN \
 		--timeout $(HF_TIMEOUT) \
 		$(HF_IMAGE) \
-		bash -c 'echo $(SCRIPT_B64) | base64 -d | bash -s -- --model $(MODEL) --gpu-flavor $(FLAVOR) --repo-id $(REPO_ID) $(if $(SERVE_ARGS),--serve-args "$(SERVE_ARGS)",)'
+		bash -c 'echo $(SCRIPT_B64) | base64 -d | bash -s -- --model $(MODEL) --input $(INPUT) --upload --repo-id $(REPO_ID) $(if $(SERVE_ARGS),--serve-args "$(SERVE_ARGS)",)'
 
 # Sweep across multiple GPU flavors
 # Usage: make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS="t4-small l4x1 a10g-small"

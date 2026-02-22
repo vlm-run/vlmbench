@@ -14,7 +14,10 @@ from PIL import Image
 VLMBENCH_BIN = str(Path(sys.executable).parent / "vlmbench")
 
 # Vision model candidates in preference order
-OLLAMA_VISION_KEYWORDS = ["vl", "vision", "llava"]
+OLLAMA_VISION_KEYWORDS = [
+    "vl",
+    "vision",
+]
 
 
 def _fetch_json(url: str) -> dict | None:
@@ -70,7 +73,8 @@ def test_image(tmp_path: Path) -> Path:
     return img_path
 
 
-def test_cli_run(server: dict, test_image: Path, tmp_path: Path) -> None:
+def test_cli_run_local_input(server: dict, test_image: Path, tmp_path: Path) -> None:
+    """Test benchmark with local file input."""
     save_dir = tmp_path / "results"
     result = subprocess.run(
         [
@@ -106,6 +110,162 @@ def test_cli_run(server: dict, test_image: Path, tmp_path: Path) -> None:
     assert data["model"]["model_id"] == server["model"]
     assert data["results"]["total_inputs_processed"] == 1
     assert data["results"]["errors"] == 0
+
+
+def test_cli_run_local_directory(server: dict, tmp_path: Path) -> None:
+    """Test benchmark with local directory input and --max-samples."""
+    img_dir = tmp_path / "images"
+    img_dir.mkdir()
+    for i in range(5):
+        Image.new("RGB", (64, 64), color=(i * 50, i * 50, i * 50)).save(img_dir / f"img_{i}.png")
+
+    save_dir = tmp_path / "results"
+    result = subprocess.run(
+        [
+            VLMBENCH_BIN,
+            "run",
+            "--model",
+            server["model"],
+            "--input",
+            str(img_dir),
+            "--base-url",
+            server["base_url"],
+            "--runs",
+            "1",
+            "--warmup",
+            "0",
+            "--max-tokens",
+            "128",
+            "--max-samples",
+            "2",
+            "--save",
+            str(save_dir),
+            "--no-serve",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, f"CLI failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+
+    json_files = list(save_dir.glob("*.json"))
+    assert len(json_files) == 1, f"Expected 1 result file, found {len(json_files)}"
+
+    data = json.loads(json_files[0].read_text())
+    assert data["results"]["total_inputs_processed"] == 2
+
+
+def _has_datasets_library() -> bool:
+    """Check if datasets library is available."""
+    try:
+        import datasets  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+@pytest.mark.skipif(not _has_datasets_library(), reason="datasets library not installed")
+def test_cli_run_hf_dataset(server: dict, tmp_path: Path) -> None:
+    """Test benchmark with HuggingFace dataset input and --max-samples."""
+    save_dir = tmp_path / "results"
+    result = subprocess.run(
+        [
+            VLMBENCH_BIN,
+            "run",
+            "--model",
+            server["model"],
+            "--dataset",
+            "vlm-run/FineVision-vlmbench-mini",
+            "--dataset-split",
+            "train",
+            "--base-url",
+            server["base_url"],
+            "--runs",
+            "1",
+            "--warmup",
+            "0",
+            "--max-tokens",
+            "128",
+            "--max-samples",
+            "2",
+            "--save",
+            str(save_dir),
+            "--no-serve",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, f"CLI failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+
+    json_files = list(save_dir.glob("*.json"))
+    assert len(json_files) == 1, f"Expected 1 result file, found {len(json_files)}"
+
+    data = json.loads(json_files[0].read_text())
+    assert data["results"]["total_inputs_processed"] == 2
+
+
+@pytest.mark.skipif(not _has_datasets_library(), reason="datasets library not installed")
+def test_cli_run_hf_dataset_with_image_col(server: dict, tmp_path: Path) -> None:
+    """Test benchmark with HuggingFace dataset and explicit --image-col."""
+    save_dir = tmp_path / "results"
+    result = subprocess.run(
+        [
+            VLMBENCH_BIN,
+            "run",
+            "--model",
+            server["model"],
+            "--dataset",
+            "vlm-run/FineVision-vlmbench-mini",
+            "--dataset-image-col",
+            "images",
+            "--base-url",
+            server["base_url"],
+            "--runs",
+            "1",
+            "--warmup",
+            "0",
+            "--max-tokens",
+            "128",
+            "--max-samples",
+            "2",
+            "--save",
+            str(save_dir),
+            "--no-serve",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, f"CLI failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+
+    json_files = list(save_dir.glob("*.json"))
+    assert len(json_files) == 1, f"Expected 1 result file, found {len(json_files)}"
+
+    data = json.loads(json_files[0].read_text())
+    assert data["results"]["total_inputs_processed"] == 2
+
+
+def test_cli_input_mutual_exclusivity() -> None:
+    """Verify --input and --dataset are mutually exclusive."""
+    result = subprocess.run(
+        [
+            VLMBENCH_BIN,
+            "run",
+            "--model",
+            "test-model",
+            "--input",
+            "/tmp/test.png",
+            "--dataset",
+            "some/dataset",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 2
+    assert "not allowed with argument" in result.stderr
 
 
 def test_help():

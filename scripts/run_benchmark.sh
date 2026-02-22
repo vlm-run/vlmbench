@@ -2,7 +2,7 @@
 # Run vlmbench on a GPU and optionally upload results.
 #
 # Local:    ./scripts/run_benchmark.sh --model Qwen/Qwen3-VL-2B-Instruct --input ./images
-# Upload:   ./scripts/run_benchmark.sh --model Qwen/Qwen3-VL-2B-Instruct --input ./images --upload
+# Dataset:  ./scripts/run_benchmark.sh --model Qwen/Qwen3-VL-2B-Instruct --dataset hf://vlm-run/FineVision-vlmbench-mini
 # HF Jobs:  make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1
 set -euo pipefail
 
@@ -16,6 +16,7 @@ BENCH_ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --upload)       UPLOAD=true;     shift   ;;
+        --no-upload)    UPLOAD=false;    shift   ;;
         --repo-id)      REPO_ID="$2";    shift 2 ;;
         --save)         SAVE_DIR="$2";   BENCH_ARGS+=(--save "$SAVE_DIR"); shift 2 ;;
         --help|-h)
@@ -23,6 +24,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Wrapper options:"
             echo "  --upload       Upload results to HF dataset repo"
+            echo "  --no-upload    Don't upload results (default)"
             echo "  --repo-id      HF dataset repo for upload (default: vlm-run/vlmbench-results)"
             echo "  --save         Output directory (default: /tmp/vlmbench-results)"
             echo ""
@@ -41,8 +43,8 @@ if [[ ! " ${BENCH_ARGS[*]} " =~ " --save " ]]; then
     BENCH_ARGS+=(--save "$SAVE_DIR")
 fi
 
-echo "Running: vlmbench run ${BENCH_ARGS[*]}"
-vlmbench run "${BENCH_ARGS[@]}"
+echo "Running: uvx vlmbench run ${BENCH_ARGS[*]}"
+uvx vlmbench run "${BENCH_ARGS[@]}"
 
 # ── Upload results ───────────────────────────────────────────────────
 if [[ "$UPLOAD" == true ]]; then
