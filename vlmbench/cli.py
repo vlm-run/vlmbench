@@ -2128,44 +2128,47 @@ def print_config(
     tmux_session: str | None = None,
 ) -> None:
     """Print the configuration block in a Rich Panel."""
-    lines = Text()
+    tbl = Table(
+        show_header=False,
+        box=None,
+        padding=(0, 1),
+        show_edge=False,
+    )
+    tbl.add_column("key", style="bold cyan", no_wrap=True, width=12)
+    tbl.add_column("val")
 
-    # Model line
+    # Model
     quant_str = f" ({quant})" if quant and quant != "auto" else ""
-    lines.append("  Model      ", style="bold cyan")
-    lines.append(f"{model_id} @ {revision}{quant_str}\n")
+    tbl.add_row("model", f"{model_id}{quant_str}")
+    tbl.add_row("revision", revision)
 
-    # Server line
-    version_str = f" {backend_version}" if backend_version else ""
+    # Backend
     backend_display = backend.capitalize() if backend != "vllm" else "vLLM"
-    lines.append("  Server     ", style="bold cyan")
-    lines.append(f"{base_url} ")
-    lines.append("• ", style="dim")
-    lines.append(f"{backend_display}{version_str}\n")
+    version_str = f" {backend_version}" if backend_version else ""
+    tbl.add_row("backend", f"{backend_display}{version_str}")
+    tbl.add_row("endpoint", base_url)
 
-    # Hardware line
+    # Blank separator
+    tbl.add_row("", "")
+
+    # Hardware
     if env.gpu_name:
-        lines.append("  Hardware   ", style="bold cyan")
-        if env.accelerator == "metal":
-            vram_gb = f"{env.gpu_vram_mib // 1024} GB unified" if env.gpu_vram_mib else ""
-            lines.append(f"{env.gpu_name} ")
-            lines.append("• ", style="dim")
-            lines.append("Metal ")
-            lines.append("• ", style="dim")
-            lines.append(f"{vram_gb}\n")
-        elif env.accelerator == "cuda":
-            vram_str = f"({env.gpu_vram_mib} MiB)" if env.gpu_vram_mib else ""
-            driver_str = f" • Driver {env.gpu_driver}" if env.gpu_driver else ""
-            lines.append(f"{env.gpu_name} {vram_str} ")
-            lines.append("• ", style="dim")
-            lines.append(f"CUDA{driver_str}\n")
-        else:
-            lines.append(f"{env.gpu_name}\n")
+        tbl.add_row("gpu", env.gpu_name)
+        if env.gpu_vram_mib:
+            if env.accelerator == "metal":
+                tbl.add_row("vram", f"{env.gpu_vram_mib:,} MiB ({env.gpu_vram_mib // 1024} GB unified)")
+            else:
+                tbl.add_row("vram", f"{env.gpu_vram_mib:,} MiB")
+        if env.gpu_driver:
+            tbl.add_row("driver", env.gpu_driver)
     elif env.cpu:
-        lines.append("  Hardware   ", style="bold cyan")
-        lines.append(f"{env.cpu}\n")
+        tbl.add_row("cpu", env.cpu)
 
-    # Input line
+    # Blank separator
+    tbl.add_row("", "")
+
+    # Dataset / inputs
+    tbl.add_row("dataset", input_path)
     parts = []
     if breakdown.get("images"):
         parts.append(f"{breakdown['images']} images")
@@ -2174,30 +2177,23 @@ def print_config(
     if breakdown.get("video_frames"):
         parts.append(f"{breakdown['video_frames']} video frames")
     breakdown_str = ", ".join(parts) if parts else "mixed"
-    lines.append("  Input      ", style="bold cyan")
-    lines.append(f"{input_path} ")
-    lines.append("-> ", style="dim")
-    lines.append(f"{total_inputs} images ({breakdown_str})\n")
+    tbl.add_row("images", f"{total_inputs} ({breakdown_str})")
 
-    # Config line
-    lines.append("  Config     ", style="bold cyan")
-    lines.append(f"max_tokens={max_tokens} ")
-    lines.append("• ", style="dim")
-    lines.append(f"runs={runs} ")
-    lines.append("• ", style="dim")
-    lines.append(f"concurrency={max_concurrency}")
+    # Blank separator
+    tbl.add_row("", "")
 
-    # Monitor session line
+    # Config
+    tbl.add_row("max_tokens", str(max_tokens))
+    tbl.add_row("runs", str(runs))
+    tbl.add_row("concurrency", str(max_concurrency))
+
+    # Monitor
     if tmux_session:
-        lines.append("\n")
-        lines.append("  Monitor    ", style="bold cyan")
-        lines.append(f"{tmux_session} ", style="bold")
-        lines.append("• ", style="dim")
-        lines.append("tmux attach -t ", style="dim")
-        lines.append(tmux_session, style="dim")
+        tbl.add_row("", "")
+        tbl.add_row("monitor", f"tmux attach -t {tmux_session}")
 
     panel = Panel(
-        lines,
+        tbl,
         title="[bold]Configuration[/bold]",
         title_align="left",
         border_style="bright_magenta",
