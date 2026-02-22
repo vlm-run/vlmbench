@@ -222,54 +222,52 @@ vlmbench run -m allenai/olmOCR-2-7B-1025-FP8  -i ./docs/ --max-concurrency 8 --r
 vlmbench compare results/*.json
 ```
 
-When all runs used `--profile ocr --reference`, compare includes quality columns:
-
 ```
   compare (4 runs)
 
-╭────────────────────────────────┬────────┬────────┬─────────┬────────┬─────────┬───────┬───────┬──────────┬────────────╮
-│                                │   TTFT │   TPOT │         │        │   Tok/  │       │       │          │            │
-│ Model                          │   (ms) │   (ms) │ Tok/s ↓ │  Img/s │   img   │  CER  │  WER  │     VRAM │ Backend    │
-├────────────────────────────────┼────────┼────────┼─────────┼────────┼─────────┼───────┼───────┼──────────┼────────────┤
-│ lightonai/LightOnOCR-2-1B      │    467 │    6.0 │  1664.8 │   9.20 │     181 │  2.1% │  4.8% │  5.78 GB │ vLLM 0.15  │
-│ rednote-hilab/dots.ocr         │   1424 │   10.2 │   477.6 │   7.76 │     203 │  2.4% │  5.1% │  9.42 GB │ vLLM 0.15  │
-│ Qwen/Qwen3-VL-8B-Instruct     │    698 │   17.2 │   461.6 │   6.40 │     289 │  1.4% │  3.2% │ 17.41 GB │ vLLM 0.15  │
-│ allenai/olmOCR-2-7B-1025-FP8   │    812 │   14.8 │   412.3 │   5.74 │     312 │  1.6% │  3.5% │ 10.22 GB │ vLLM 0.15  │
-╰────────────────────────────────┴────────┴────────┴─────────┴────────┴─────────┴───────┴───────┴──────────┴────────────╯
+╭────────────────────────────────┬────────┬────────┬─────────┬────────┬─────────┬──────────┬────────────╮
+│                                │   TTFT │   TPOT │         │        │   Tok/  │          │            │
+│ Model                          │   (ms) │   (ms) │ Tok/s ↓ │  Img/s │   img   │     VRAM │ Backend    │
+├────────────────────────────────┼────────┼────────┼─────────┼────────┼─────────┼──────────┼────────────┤
+│ lightonai/LightOnOCR-2-1B      │    467 │    6.0 │  1664.8 │   9.20 │     181 │  5.78 GB │ vLLM 0.15  │
+│ rednote-hilab/dots.ocr         │   1424 │   10.2 │   477.6 │   7.76 │     203 │  9.42 GB │ vLLM 0.15  │
+│ Qwen/Qwen3-VL-8B-Instruct     │    698 │   17.2 │   461.6 │   6.40 │     289 │ 17.41 GB │ vLLM 0.15  │
+│ allenai/olmOCR-2-7B-1025-FP8   │    812 │   14.8 │   412.3 │   5.74 │     312 │ 10.22 GB │ vLLM 0.15  │
+╰────────────────────────────────┴────────┴────────┴─────────┴────────┴─────────┴──────────┴────────────╯
 
 ╭─ Summary ────────────────────────────────────────────────────────────────────╮
 │  Runs       4 across 4 model(s)  total duration 818.8s                       │
 │  Tok/s      1664.8 best   412.3 worst   754.1 avg                            │
-│  Quality    1.4% best CER (Qwen3-VL-8B)   2.4% worst CER (dots.ocr)         │
 │  Errors     0                                                                │
-╰──────────────────────────────────────────────────────────── vlmbench v0.2.5 ─╯
+╰──────────────────────────────────────────────────────────── vlmbench v0.2.6 ─╯
 ```
 
-### OCR quality profiling — fast, but is the output correct?
+### OCR / markdown output profiling — how much text does each model produce?
 
-Use `--profile ocr` to measure **output token volume** alongside speed. Add `--reference` with ground-truth text files to score accuracy (CER / WER).
+Use `--profile ocr` or `--profile markdown` to focus on **output token throughput** — total tokens generated, tokens per image, and output tok/s. Use `--save-outputs` to capture the raw model output for manual inspection.
 
 ```bash
-# Token-level output profiling (output tok/s, tokens per image, total output tokens)
+# OCR profile — measure output token volume and throughput
 vlmbench run -m lightonai/LightOnOCR-2-1B -i ./docs/ \
   --profile ocr --max-concurrency 8 --save-outputs
 
-# Score against ground truth — filenames must match (invoice_001.png → invoice_001.txt)
-vlmbench run -m lightonai/LightOnOCR-2-1B -i ./docs/ \
-  --profile ocr --reference ./ground-truth/ --save-outputs
+# Markdown profile — same metrics, markdown-oriented prompt
+vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./financial-reports/ \
+  --profile markdown --max-concurrency 8 --save-outputs \
+  --prompt "Convert this document to markdown. Preserve all tables, headings, and formatting."
 
-# Quality shootout — which model produces the best OCR?
+# Compare output throughput across models
 vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ \
-  --profile ocr --reference ./ground-truth/ --save-outputs
+  --profile ocr --max-concurrency 8 --save-outputs
 vlmbench run -m rednote-hilab/dots.ocr -i ./docs/ \
-  --profile ocr --reference ./ground-truth/ --save-outputs
+  --profile ocr --max-concurrency 8 --save-outputs
 vlmbench compare results/*ocr*.json
 ```
 
-The Results panel is followed by a quality panel when `--profile ocr --reference` is used:
+The `--profile ocr` Results panel surfaces output token metrics:
 
 ```
-╭─ Results ────────────────────────────────────────────────────────────────────╮
+╭─ Results ── profile: ocr ───────────────────────────────────────────────────╮
 │                                                                              │
 │   TTFT           467 ms    (p95: 1975 ms)                                    │
 │   TPOT           6.0 ms    (p95: 6.2 ms)                                     │
@@ -281,58 +279,8 @@ The Results panel is followed by a quality panel when `--profile ocr --reference
 │   Reliability  186/186 ok, 0 retries                                         │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-
-╭─ OCR Quality (vs ground truth) ─────────────────────────────────────────────╮
-│                                                                              │
-│   CER            2.1%      (best: 0.4%, worst: 8.7%)                         │
-│   WER            4.8%      (best: 1.2%, worst: 16.3%)                        │
-│   Exact match   12/62      19.4%                                             │
-│                                                                              │
-│   Worst inputs                                                               │
-│     scan_047.jpg     CER: 8.7%   WER: 16.3%   (handwritten, low contrast)   │
-│     receipt_019.png  CER: 7.2%   WER: 14.8%   (crumpled, skewed)            │
-│     form_003.tiff    CER: 6.1%   WER: 11.9%   (multi-column layout)         │
-│                                                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
   > Saved → results/lightonocr-2-1b-ocr-20260222T143012.json
   > Outputs → results/lightonocr-2-1b-ocr-20260222T143012-outputs/
-```
-
-### Markdown extraction — does it preserve table structure?
-
-```bash
-vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./financial-reports/ \
-  --profile markdown --reference ./ground-truth/ --save-outputs \
-  --prompt "Convert this document to markdown. Preserve all tables, headings, and formatting."
-
-vlmbench run -m lightonai/LightOnOCR-2-1B -i ./financial-reports/ \
-  --profile markdown --reference ./ground-truth/ --save-outputs
-
-# Compare — output quality metrics side-by-side (CER, WER, structure fidelity)
-vlmbench compare results/*markdown*.json
-```
-
-The `--profile markdown` panel scores structural element preservation:
-
-```
-╭─ Markdown Quality (vs ground truth) ────────────────────────────────────────╮
-│                                                                              │
-│   CER            1.8%      (best: 0.2%, worst: 6.1%)                         │
-│   WER            3.9%      (best: 0.8%, worst: 12.4%)                        │
-│                                                                              │
-│   Structure                                                                  │
-│     Headings     94.2%     preserved   (49/52)                               │
-│     Tables       87.1%     preserved   (27/31)                               │
-│     Lists        91.8%     preserved   (56/61)                               │
-│     LaTeX        78.4%     preserved   (29/37)                               │
-│                                                                              │
-│   Worst inputs                                                               │
-│     10k_page3.pdf    Tables: 2/5 preserved   (nested multi-level headers)    │
-│     balance.pdf      LaTeX:  0/4 preserved   (inline equations dropped)      │
-│                                                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
-  > Saved → results/qwen3-vl-8b-markdown-20260222T151230.json
-  > Outputs → results/qwen3-vl-8b-markdown-20260222T151230-outputs/
 ```
 
 ### Concurrency sweep — what's the optimal batch size?
@@ -364,35 +312,28 @@ vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ --sweep concurrency
 
 ### Resolution impact — does 4K input actually help?
 
-Sweep input resolution to find the quality/speed sweet spot:
+Sweep input resolution to measure how throughput and latency scale with image size:
 
 ```bash
-# Speed-only sweep
 vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ --sweep resolution
-
-# Quality + speed (with ground truth scoring)
-vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ \
-  --sweep resolution --profile ocr --reference ./ground-truth/
 
 # Or test the model's native max resolution (no downscaling)
 vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./highres-scans/ \
   --resolution max --tag native-max
 ```
 
-Combined `--sweep resolution --profile ocr --reference` renders both speed and quality:
-
 ```
 ╭─ Sweep: resolution ─── Qwen/Qwen3-VL-8B-Instruct ──────────────────────────────────────╮
 │                                                                                          │
-│   Max size   Tok/s         Img/s   TTFT p50   Tok/img   CER     WER                     │
-│   ────────────────────────────────────────────────────────────────────                    │
-│     512 px   892.1 █▊       12.40      89 ms       72    8.2%   14.1%                    │
-│    1024 px   461.3 █         6.42     198 ms      181    3.1%    6.8%                    │
-│  ★ 2048 px   198.7 ▍        2.76     412 ms      342    1.9%    4.2%                    │
-│    4096 px    62.4 ▏        0.87    1204 ms      891    1.8%    4.0%                    │
+│   Max size   Tok/s         Img/s   TTFT p50   Tok/img   Latency p50   VRAM               │
+│   ────────────────────────────────────────────────────────────────────────────            │
+│     512 px   892.1 █▊       12.40      89 ms       72       0.08 s    5.4 GB             │
+│    1024 px   461.3 █         6.42     198 ms      181       0.39 s    5.9 GB             │
+│  ★ 2048 px   198.7 ▍        2.76     412 ms      342       1.72 s    6.8 GB             │
+│    4096 px    62.4 ▏        0.87    1204 ms      891       14.3 s    9.2 GB             │
 │                                                                                          │
-│   ★ Sweet spot   2048px — best quality/speed ratio (1.9% CER at 198.7 tok/s)            │
-│   ↓ Diminishing  4096px — 3.2× slower for only 0.1% CER improvement                    │
+│   ★ Best ratio   2048px — 3.2× more tok/img than 1024px for 2.3× slower throughput      │
+│   ↓ Diminishing  4096px — 14.3× slower, 2.6× more tok/img vs 2048px                    │
 │                                                                                          │
 ╰──────────────────────────────────────────────────────────────────────────────────────────╯
   > Saved → results/qwen3-vl-8b-sweep-resolution-20260222T162130.json
