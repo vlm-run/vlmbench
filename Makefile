@@ -61,23 +61,17 @@ endif
 		$(if $(INPUT),--input $(INPUT),) \
 		$(if $(DATASET),--dataset $(DATASET),)
 
-# Submit single benchmark to HF Jobs
-# Usage: make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1
+# Submit simple benchmark to HF Jobs (uses inline uv script)
+# Usage: make hf-benchmark FLAVOR=l4x1
 hf-benchmark:
-ifndef MODEL
-	$(error MODEL is required. Example: make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1)
-endif
 ifndef FLAVOR
-	$(error FLAVOR is required. Example: make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1)
+	$(error FLAVOR is required. Example: make hf-benchmark FLAVOR=l4x1)
 endif
-	$(eval SCRIPT_B64 := $(shell base64 < scripts/run_benchmark.sh | tr -d '\n'))
-	HF_TOKEN=$$(grep -E '^HF_TOKEN=' .env | cut -d= -f2) && \
 	uvx hf jobs run \
 		--flavor $(FLAVOR) \
-		--env HF_TOKEN=$$HF_TOKEN \
+		--secrets HF_TOKEN \
 		--timeout $(HF_TIMEOUT) \
-		$(HF_IMAGE) \
-		bash -c 'echo $(SCRIPT_B64) | base64 -d | bash -s -- --model $(MODEL) --input $(INPUT) --upload --repo-id $(REPO_ID) $(if $(SERVE_ARGS),--serve-args "$(SERVE_ARGS)",)'
+		uv run scripts/simple_benchmark.py
 
 # Sweep across multiple GPU flavors
 # Usage: make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS="t4-small l4x1 a10g-small"
