@@ -27,6 +27,7 @@ by VLM Run · https://vlm.run
 """
 
 import argparse
+import asyncio
 import base64
 import dataclasses
 import hashlib
@@ -45,7 +46,6 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import groupby
@@ -53,7 +53,7 @@ from pathlib import Path
 from types import UnionType
 from typing import Any, Protocol, get_args, get_origin, get_type_hints, runtime_checkable
 
-from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
+from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
 from PIL import Image
 from rich import box
 from rich.console import Console
@@ -61,7 +61,7 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 from rich.table import Table
 from rich.text import Text
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential  # noqa: F401
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -70,7 +70,7 @@ SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
 DEFAULT_MAX_TOKENS = 2048
 DEFAULT_RUNS = 3
-DEFAULT_CONCURRENCY = 4
+DEFAULT_CONCURRENCY = 8
 DEFAULT_SAVE_DIR = "./results"
 DEFAULT_API_KEY = "no-key"
 DEFAULT_IMAGE_URL = "https://storage.googleapis.com/vlm-data-public-prod/hub/examples/image.caption/car.jpg"
@@ -133,10 +133,28 @@ class EnvironmentInfo:
 
 
 @dataclass
+class ImageStats:
+    count: int = 0
+    avg_width: int = 0
+    avg_height: int = 0
+    min_width: int = 0
+    min_height: int = 0
+    max_width: int = 0
+    max_height: int = 0
+    median_width: int = 0
+    median_height: int = 0
+    avg_pixels: int = 0
+    min_pixels: int = 0
+    max_pixels: int = 0
+    median_pixels: int = 0
+
+
+@dataclass
 class InputInfo:
     hash: str = ""
     total_inputs: int = 0
     breakdown: dict[str, int] = field(default_factory=dict)
+    image_stats: ImageStats | None = None
     prompt: str = ""
     max_tokens: int = 0
     max_concurrency: int = 1
@@ -284,10 +302,102 @@ def _nvidia_gpu_index() -> int:
     return 0
 
 
-def get_nvidia_gpu_info() -> dict[str, Any]:
-    """Linux: parse nvidia-smi for GPU info."""
+def get_gpu_for_server_port(port: int = 8000) -> int | None:
+    """Find which GPU is being used by the server on the given port.
+
+    Uses nvidia-smi to query compute apps and lsof to find the server PID.
+    Also checks child processes since GPU workers are often forked.
+    Returns the GPU index, or None if not found.
+    """
     try:
-        gpu_idx = _nvidia_gpu_index()
+        # Find the PID listening on the port
+        lsof_result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if lsof_result.returncode != 0 or not lsof_result.stdout.strip():
+            return None
+
+        server_pids = {int(p) for p in lsof_result.stdout.strip().split("\n") if p.isdigit()}
+        if not server_pids:
+            return None
+
+        # Expand to include child processes (GPU workers are often children)
+        all_pids = set(server_pids)
+        for pid in server_pids:
+            try:
+                children_result = subprocess.run(
+                    ["pgrep", "-P", str(pid)],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if children_result.returncode == 0:
+                    for child in children_result.stdout.strip().split("\n"):
+                        if child.isdigit():
+                            all_pids.add(int(child))
+            except Exception:
+                pass
+
+        # Query nvidia-smi for compute apps
+        smi_result = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid,gpu_bus_id", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if smi_result.returncode != 0:
+            return None
+
+        # Find the GPU bus ID for our server PID or its children
+        gpu_bus_id = None
+        for line in smi_result.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 2:
+                try:
+                    pid = int(parts[0])
+                    if pid in all_pids:
+                        gpu_bus_id = parts[1]
+                        break
+                except ValueError:
+                    continue
+
+        if not gpu_bus_id:
+            return None
+
+        # Map bus ID to GPU index
+        idx_result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,gpu_bus_id", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if idx_result.returncode != 0:
+            return None
+
+        for line in idx_result.stdout.strip().split("\n"):
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 2 and parts[1] == gpu_bus_id:
+                return int(parts[0])
+
+    except Exception:
+        pass
+    return None
+
+
+def get_nvidia_gpu_info(gpu_idx: int | None = None) -> dict[str, Any]:
+    """Linux: parse nvidia-smi for GPU info.
+
+    Args:
+        gpu_idx: Specific GPU index to query. If None, uses CUDA_VISIBLE_DEVICES or 0.
+    """
+    try:
+        if gpu_idx is None:
+            gpu_idx = _nvidia_gpu_index()
         result = subprocess.run(
             [
                 "nvidia-smi",
@@ -437,7 +547,16 @@ def collect_environment(base_url: str) -> EnvironmentInfo:
         case (_, "Darwin"):
             env_data.update(get_apple_gpu_info())
         case (_, "Linux"):
-            env_data.update(get_nvidia_gpu_info())
+            # Try to detect which GPU the server is using
+            try:
+                from urllib.parse import urlparse
+
+                parsed = urlparse(base_url)
+                port = parsed.port or 8000
+                server_gpu_idx = get_gpu_for_server_port(port)
+            except Exception:
+                server_gpu_idx = None
+            env_data.update(get_nvidia_gpu_info(server_gpu_idx))
 
     return EnvironmentInfo(**env_data)
 
@@ -1113,6 +1232,43 @@ def _try_detect_running_server() -> tuple[str | None, str]:
 # ── Input Loading ─────────────────────────────────────────────────────────────
 
 
+def compute_image_stats(inputs: list[list[str]]) -> ImageStats | None:
+    """Compute image dimension statistics from base64 data URI inputs."""
+    widths: list[int] = []
+    heights: list[int] = []
+    for group in inputs:
+        for uri in group:
+            try:
+                if uri.startswith("data:image/"):
+                    b64_data = uri.split(",", 1)[1]
+                    img = Image.open(io.BytesIO(base64.b64decode(b64_data)))
+                    w, h = img.size
+                    widths.append(w)
+                    heights.append(h)
+            except Exception:
+                continue
+    if not widths:
+        return None
+    pixels = [w * h for w, h in zip(widths, heights)]
+    sw, sh, sp = sorted(widths), sorted(heights), sorted(pixels)
+    n = len(widths)
+    return ImageStats(
+        count=n,
+        avg_width=round(statistics.mean(widths)),
+        avg_height=round(statistics.mean(heights)),
+        min_width=min(widths),
+        min_height=min(heights),
+        max_width=max(widths),
+        max_height=max(heights),
+        median_width=round(statistics.median(sw)),
+        median_height=round(statistics.median(sh)),
+        avg_pixels=round(statistics.mean(pixels)),
+        min_pixels=min(pixels),
+        max_pixels=max(pixels),
+        median_pixels=round(statistics.median(sp)),
+    )
+
+
 def downscale_size(size: tuple[int, int], max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> tuple[int, int]:
     """Downscale a size if it is larger than max_size (in pixels) on either width or height dimension."""
     w, h = size
@@ -1601,13 +1757,13 @@ def load_local_inputs(
 _stream_options_supported: bool | None = None
 
 
-def call_completion(
-    client: OpenAI,
+async def call_completion_async(
+    client: AsyncOpenAI,
     model: str,
     messages: list[dict],
     max_tokens: int,
 ) -> dict[str, Any]:
-    """Call the completion API with streaming and measure timing.
+    """Call the completion API with async streaming and measure timing.
 
     Returns dict with keys: ttft_ms, latency_s, prompt_tokens, completion_tokens,
     cached_tokens, reasoning_tokens, error
@@ -1622,7 +1778,80 @@ def call_completion(
     reasoning_tokens = 0
     full_content = ""
 
-    # Try with stream_options first, fall back if unsupported
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "stream": True,
+    }
+    if _stream_options_supported is not False:
+        kwargs["stream_options"] = {"include_usage": True}
+
+    try:
+        stream = await client.chat.completions.create(**kwargs)
+    except Exception:
+        if _stream_options_supported is None:
+            _stream_options_supported = False
+            kwargs.pop("stream_options", None)
+            t_start = time.perf_counter()
+            stream = await client.chat.completions.create(**kwargs)
+        else:
+            raise
+
+    if _stream_options_supported is None:
+        _stream_options_supported = True
+
+    async for chunk in stream:
+        if ttft is None and chunk.choices and chunk.choices[0].delta.content:
+            ttft = (time.perf_counter() - t_start) * 1000
+
+        if chunk.choices and chunk.choices[0].delta.content:
+            full_content += chunk.choices[0].delta.content
+
+        if hasattr(chunk, "usage") and chunk.usage is not None:
+            prompt_tokens = chunk.usage.prompt_tokens
+            completion_tokens = chunk.usage.completion_tokens
+            pd = getattr(chunk.usage, "prompt_tokens_details", None)
+            if pd is not None:
+                cached_tokens = getattr(pd, "cached_tokens", 0) or 0
+            cd = getattr(chunk.usage, "completion_tokens_details", None)
+            if cd is not None:
+                reasoning_tokens = getattr(cd, "reasoning_tokens", 0) or 0
+
+    t_end = time.perf_counter()
+    latency_s = t_end - t_start
+
+    if completion_tokens == 0 and full_content:
+        completion_tokens = len(full_content.split())
+
+    return {
+        "ttft_ms": ttft if ttft is not None else latency_s * 1000,
+        "latency_s": latency_s,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "cached_tokens": cached_tokens,
+        "reasoning_tokens": reasoning_tokens,
+        "error": None,
+    }
+
+
+def call_completion(
+    client: OpenAI,
+    model: str,
+    messages: list[dict],
+    max_tokens: int,
+) -> dict[str, Any]:
+    """Synchronous call_completion for warmup only."""
+    global _stream_options_supported
+
+    t_start = time.perf_counter()
+    ttft: float | None = None
+    completion_tokens = 0
+    prompt_tokens = 0
+    cached_tokens = 0
+    reasoning_tokens = 0
+    full_content = ""
+
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -1636,7 +1865,6 @@ def call_completion(
         stream = client.chat.completions.create(**kwargs)
     except Exception:
         if _stream_options_supported is None:
-            # First call failed — retry without stream_options
             _stream_options_supported = False
             kwargs.pop("stream_options", None)
             t_start = time.perf_counter()
@@ -1649,16 +1877,14 @@ def call_completion(
 
     for chunk in stream:
         if ttft is None and chunk.choices and chunk.choices[0].delta.content:
-            ttft = (time.perf_counter() - t_start) * 1000  # ms
+            ttft = (time.perf_counter() - t_start) * 1000
 
         if chunk.choices and chunk.choices[0].delta.content:
             full_content += chunk.choices[0].delta.content
 
-        # Final chunk with usage
         if hasattr(chunk, "usage") and chunk.usage is not None:
             prompt_tokens = chunk.usage.prompt_tokens
             completion_tokens = chunk.usage.completion_tokens
-            # Extract detailed token breakdown if available
             pd = getattr(chunk.usage, "prompt_tokens_details", None)
             if pd is not None:
                 cached_tokens = getattr(pd, "cached_tokens", 0) or 0
@@ -1669,7 +1895,6 @@ def call_completion(
     t_end = time.perf_counter()
     latency_s = t_end - t_start
 
-    # Fallback: estimate completion tokens from content if usage not provided
     if completion_tokens == 0 and full_content:
         completion_tokens = len(full_content.split())
 
@@ -1723,31 +1948,27 @@ def compute_token_stat(values: list[int]) -> TokenStat:
     )
 
 
-def _call_with_retry_count(
-    client: OpenAI,
+async def _call_with_retry_async(
+    client: AsyncOpenAI,
     model: str,
     messages: list[dict],
     max_tokens: int,
+    max_attempts: int = 5,
 ) -> tuple[dict[str, Any], int]:
-    """Call completion with retry, return (result, retry_count)."""
-    attempt = 0
-
-    @retry(
-        retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError)),
-        wait=wait_exponential(multiplier=1, min=1, max=60),
-        stop=stop_after_attempt(5),
-    )
-    def _inner() -> dict[str, Any]:
-        nonlocal attempt
-        attempt += 1
-        return call_completion(client, model, messages, max_tokens)
-
-    result = _inner()
-    return result, max(0, attempt - 1)
+    """Call completion with exponential-backoff retry, return (result, retry_count)."""
+    for attempt in range(max_attempts):
+        try:
+            result = await call_completion_async(client, model, messages, max_tokens)
+            return result, attempt
+        except (RateLimitError, APITimeoutError, APIConnectionError):
+            if attempt == max_attempts - 1:
+                raise
+            await asyncio.sleep(min(2**attempt, 60))
+    raise RuntimeError("unreachable")
 
 
-def run_benchmark(
-    client: OpenAI,
+async def run_benchmark(
+    client: AsyncOpenAI,
     model: str,
     inputs: list[list[str]],
     prompt: str | list[str],
@@ -1757,25 +1978,27 @@ def run_benchmark(
     warmup: int = 1,
     progress_callback: Any = None,
 ) -> tuple[list[RunRaw], int]:
-    """Run the benchmark: warmup + N timed runs per input.
+    """Run the benchmark with true async concurrency: warmup + N timed runs.
 
+    Uses an asyncio.Semaphore to cap in-flight requests at max_concurrency,
+    keeping the GPU pipeline saturated without overwhelming the server.
     Returns (runs_raw, retries_count).
     """
     runs_raw: list[RunRaw] = []
     retries = 0
+    retries_lock = asyncio.Lock()
 
-    # Warmup runs on first input (not recorded)
-    # First warmup is a validation pass — fail fast on obvious errors
+    # Synchronous warmup via a temporary sync client
+    sync_client = OpenAI(base_url=str(client.base_url), api_key=client.api_key)
     for w in range(warmup):
         if progress_callback:
             progress_callback("warmup", w + 1, 0)
         try:
             warmup_prompt = prompt[0] if isinstance(prompt, list) else prompt
             messages = build_messages(warmup_prompt, inputs[0])
-            call_completion(client, model, messages, max_tokens)
+            call_completion(sync_client, model, messages, max_tokens)
         except Exception as e:
             err_str = str(e).lower()
-            # Fail fast on errors that will never self-resolve
             if any(
                 kw in err_str
                 for kw in ("not found", "404", "does not exist", "invalid model", "401", "403", "unauthorized")
@@ -1784,59 +2007,62 @@ def run_benchmark(
                 print_error("Warmup failed", str(e))
                 sys.exit(1)
             if w == 0:
-                # First warmup failed with a non-obvious error — warn but continue
                 console.print(f"  [yellow]Warmup warning: {e}[/yellow]")
 
-    # Timed runs
-    def execute_single(input_idx: int, run_num: int) -> RunRaw:
+    sem = asyncio.Semaphore(max_concurrency)
+
+    async def execute_single(input_idx: int, run_num: int) -> RunRaw:
         nonlocal retries
         input_prompt = prompt[input_idx] if isinstance(prompt, list) else prompt
         messages = build_messages(input_prompt, inputs[input_idx])
-        try:
-            result, retry_count = _call_with_retry_count(client, model, messages, max_tokens)
-            retries += retry_count
-            return RunRaw(
-                input_idx=input_idx,
-                run=run_num,
-                ttft_ms=round(result["ttft_ms"], 1),
-                latency_s=round(result["latency_s"], 3),
-                prompt_tokens=result["prompt_tokens"],
-                completion_tokens=result["completion_tokens"],
-                cached_tokens=result["cached_tokens"],
-                reasoning_tokens=result["reasoning_tokens"],
-                error=result["error"],
-            )
-        except Exception as e:
-            return RunRaw(
-                input_idx=input_idx,
-                run=run_num,
-                ttft_ms=None,
-                latency_s=0,
-                prompt_tokens=0,
-                completion_tokens=0,
-                error=str(e),
-            )
+        async with sem:
+            try:
+                result, retry_count = await _call_with_retry_async(client, model, messages, max_tokens)
+                if retry_count:
+                    async with retries_lock:
+                        retries += retry_count
+                return RunRaw(
+                    input_idx=input_idx,
+                    run=run_num,
+                    ttft_ms=round(result["ttft_ms"], 1),
+                    latency_s=round(result["latency_s"], 3),
+                    prompt_tokens=result["prompt_tokens"],
+                    completion_tokens=result["completion_tokens"],
+                    cached_tokens=result["cached_tokens"],
+                    reasoning_tokens=result["reasoning_tokens"],
+                    error=result["error"],
+                )
+            except Exception as e:
+                return RunRaw(
+                    input_idx=input_idx,
+                    run=run_num,
+                    ttft_ms=None,
+                    latency_s=0,
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    error=str(e),
+                )
 
-    len(inputs) * runs
     completed = 0
 
     for run_num in range(1, runs + 1):
         if progress_callback:
             progress_callback("run", run_num, completed)
 
-        with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-            futures = {executor.submit(execute_single, i, run_num): i for i in range(len(inputs))}
-            for future in as_completed(futures):
-                run_result = future.result()
-                runs_raw.append(run_result)
-                completed += 1
-                # Fail fast: if first completed request errors, abort
-                if run_result.error and completed == 1:
-                    console.print()
-                    print_error("Benchmark aborted", f"First request failed: {run_result.error}")
-                    sys.exit(1)
-                if progress_callback:
-                    progress_callback("progress", run_num, completed)
+        tasks = [asyncio.create_task(execute_single(i, run_num)) for i in range(len(inputs))]
+
+        for coro in asyncio.as_completed(tasks):
+            run_result = await coro
+            runs_raw.append(run_result)
+            completed += 1
+            if run_result.error and completed == 1:
+                for t in tasks:
+                    t.cancel()
+                console.print()
+                print_error("Benchmark aborted", f"First request failed: {run_result.error}")
+                sys.exit(1)
+            if progress_callback:
+                progress_callback("progress", run_num, completed)
 
     return runs_raw, retries
 
@@ -1981,69 +2207,119 @@ def print_config(
     console.print(panel)
 
 
+def _format_mpixels(pixels: int) -> str:
+    """Format pixel count as megapixels."""
+    mp = pixels / 1_000_000
+    return f"{mp:.2f} MP" if mp >= 0.01 else f"{pixels:,} px"
+
+
 def print_results(result: BenchmarkResult, save_path: str) -> None:
-    """Print the results card in a styled Rich Panel."""
+    """Print the results card as a clean tabular Rich Panel."""
     r = result.results
-    lines = Text()
+    concurrency = result.input.max_concurrency
+    img_stats = result.input.image_stats
+    _H = "dim"
 
-    def _metric_color(label: str) -> str:
-        """Pick color based on metric type."""
-        return "bold cyan"
-
-    def _value_color_throughput(val: float) -> str:
+    def _tok_style(val: float) -> str:
         if val >= 50:
             return "bold green"
-        elif val >= 20:
+        if val >= 20:
             return "green"
-        elif val >= 10:
+        if val >= 10:
             return "yellow"
         return "red"
 
-    # TTFT
-    lines.append("  TTFT         ", style=_metric_color("ttft"))
-    lines.append(f"{r.ttft_ms.mean:>6.0f} ms", style="bold")
-    lines.append(f"    (p95: {r.ttft_ms.p95:.0f} ms)\n", style="dim")
+    # Upper table: metrics with percentile columns
+    upper = Table(
+        show_header=True,
+        header_style="dim",
+        box=None,
+        padding=(0, 1),
+        show_edge=False,
+    )
+    upper.add_column("Metric", style="bold cyan", no_wrap=True, width=20)
+    upper.add_column("Value", style="bold", no_wrap=True, width=16)
+    upper.add_column("p50", style=_H, justify="right", width=10)
+    upper.add_column("p95", style=_H, justify="right", width=10)
+    upper.add_column("p99", style=_H, justify="right", width=10)
 
-    # TPOT
-    lines.append("  TPOT         ", style=_metric_color("tpot"))
-    lines.append(f"{r.tpot_ms.mean:>6.1f} ms", style="bold")
-    lines.append(f"    (p95: {r.tpot_ms.p95:.1f} ms)\n", style="dim")
+    upper.add_row("Throughput", f"{r.inputs_per_sec:.2f} img/s", "—", "—", "—")
+    upper.add_row(
+        "Tokens/sec",
+        Text(f"{r.tokens_per_sec:.0f} tok/s", style=_tok_style(r.tokens_per_sec)),
+        "—", "—", "—",
+    )
+    upper.add_row("Workers", str(concurrency), "—", "—", "—")
+    upper.add_row(
+        "TTFT",
+        f"{r.ttft_ms.mean:.0f} ms",
+        f"{r.ttft_ms.p50:.0f} ms",
+        f"{r.ttft_ms.p95:.0f} ms",
+        f"{r.ttft_ms.p99:.0f} ms",
+    )
+    upper.add_row(
+        "TPOT",
+        f"{r.tpot_ms.mean:.1f} ms",
+        f"{r.tpot_ms.p50:.1f} ms",
+        f"{r.tpot_ms.p95:.1f} ms",
+        f"{r.tpot_ms.p99:.1f} ms",
+    )
+    upper.add_row(
+        "Latency (per worker)",
+        f"{r.latency_s_per_input.mean:.2f} s/img",
+        f"{r.latency_s_per_input.p50:.2f} s",
+        f"{r.latency_s_per_input.p95:.2f} s",
+        f"{r.latency_s_per_input.p99:.2f} s",
+    )
 
-    # Throughput
-    lines.append("  Throughput   ", style=_metric_color("throughput"))
-    lines.append(f"{r.tokens_per_sec:>6.1f} tok/s\n", style=_value_color_throughput(r.tokens_per_sec))
+    # Lower table: detail rows (no percentile columns, full width for values)
+    lower = Table(
+        show_header=False,
+        box=None,
+        padding=(0, 1),
+        show_edge=False,
+    )
+    lower.add_column("Metric", style="bold cyan", no_wrap=True, width=20)
+    lower.add_column("Value", style="bold", no_wrap=True)
 
-    # Latency
-    lines.append("  Latency      ", style=_metric_color("latency"))
-    lines.append(f"{r.latency_s_per_input.mean:>6.2f} s/img", style="bold")
-    lines.append(f"  (p95: {r.latency_s_per_input.p95:.2f} s)\n", style="dim")
+    tok_val = f"prompt {r.prompt_tokens.mean:,}  •  completion {r.completion_tokens.mean:,}"
+    lower.add_row("Tokens (avg)", tok_val)
 
-    # Tokens
-    lines.append("  Tokens       ", style=_metric_color("tokens"))
-    lines.append(f"{r.prompt_tokens.mean:>6d} prompt", style="bold")
-    lines.append(f"   {r.completion_tokens.mean:>4d} completion (avg)")
+    tok_range = f"prompt {r.prompt_tokens.min:,}–{r.prompt_tokens.max:,}  •  completion {r.completion_tokens.min:,}–{r.completion_tokens.max:,}"
     if r.cached_tokens is not None and r.cached_tokens.mean > 0:
-        lines.append(f"   {r.cached_tokens.mean:>4d} cached", style="dim")
+        tok_range += f"  •  {r.cached_tokens.mean:,} cached"
     if r.reasoning_tokens is not None and r.reasoning_tokens.mean > 0:
-        lines.append(f"   {r.reasoning_tokens.mean:>4d} reasoning", style="dim")
-    lines.append("\n")
+        tok_range += f"  •  {r.reasoning_tokens.mean:,} reasoning"
+    lower.add_row("Token ranges", tok_range)
 
-    # VRAM
+    if img_stats and img_stats.count > 0:
+        img_val = f"{img_stats.count:,}  •  avg {img_stats.avg_width}×{img_stats.avg_height} ({_format_mpixels(img_stats.avg_pixels)})"
+        lower.add_row("Images", img_val)
+        res_val = f"min {img_stats.min_width}×{img_stats.min_height}  •  median {img_stats.median_width}×{img_stats.median_height}  •  max {img_stats.max_width}×{img_stats.max_height}"
+        lower.add_row("Resolution", res_val)
+
     if r.vram_peak_mib is not None:
-        lines.append("  VRAM         ", style=_metric_color("vram"))
-        lines.append(f"{r.vram_peak_mib:>6d} MiB peak\n", style="bold")
+        vram_gb = r.vram_peak_mib / 1024
+        lower.add_row("VRAM peak", f"{vram_gb:.1f} GB")
 
-    # Reliability
     total_ok = r.total_inputs_processed - r.errors
-    lines.append("  Reliability  ", style=_metric_color("reliability"))
     if r.errors == 0:
-        lines.append(f"{total_ok}/{r.total_inputs_processed} ok", style="bold green")
+        rel_text = Text(f"{total_ok}/{r.total_inputs_processed} ok", style="bold green")
     else:
-        lines.append(f"{total_ok}/{r.total_inputs_processed} ok", style="bold yellow")
-    lines.append(f", {r.retries} retries", style="dim" if r.retries == 0 else "yellow")
+        rel_text = Text()
+        rel_text.append(f"{total_ok}/{r.total_inputs_processed} ok", style="bold yellow")
+        rel_text.append(f", {r.errors} errors", style="red")
+    if r.retries > 0:
+        rel_text.append(f", {r.retries} retries", style="yellow")
+    rel_text.append(f"  •  {r.total_duration_s:.1f}s total", style="dim")
+    lower.add_row("Reliability", rel_text)
+
+    # Compose both tables into a single renderables group
+    from rich.console import Group as RenderGroup
+    body = RenderGroup(upper, Text(), lower)
 
     panel = Panel(
-        lines,
+        body,
         title="[bold]Results[/bold]",
         title_align="left",
         border_style="green",
@@ -2061,7 +2337,7 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
     console.print()
 
     def _total_tok_s(r: BenchmarkResult) -> float:
-        return r.results.tokens_per_sec * r.input.max_concurrency
+        return r.results.tokens_per_sec
 
     # Group by model_id, sort groups by best tok/s descending
     sorted_results = sorted(results, key=lambda r: (r.model.model_id, -_total_tok_s(r)))
@@ -2120,7 +2396,7 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
             hardware = r.environment.gpu_name or "-"
             vram_gb = f"{r.results.vram_peak_mib / 1024:.2f} GB" if r.results.vram_peak_mib is not None else "-"
             total_toks = _total_tok_s(r)
-            total_imgs = r.results.inputs_per_sec * concurrency
+            total_imgs = r.results.inputs_per_sec
             is_fastest = total_toks == max_toks
 
             tok_s_text = f"{total_toks:.1f}"
@@ -2301,9 +2577,19 @@ def cmd_run(args: argparse.Namespace) -> None:
     # Collect environment
     env = collect_environment(base_url)
 
+    # Detect the server GPU index for VRAM tracking
+    server_gpu_idx: int | None = None
+    try:
+        if platform.system() == "Linux":
+            from urllib.parse import urlparse
+            parsed = urlparse(base_url)
+            port = parsed.port or 8000
+            server_gpu_idx = get_gpu_for_server_port(port)
+    except Exception:
+        pass
+
     # Load inputs from dataset, local path, or default URL
     if args.dataset:
-        # Strip hf:// prefix if present
         dataset_name = args.dataset.removeprefix("hf://")
         inputs, breakdown, input_hash = load_hf_dataset(
             dataset_name,
@@ -2316,22 +2602,19 @@ def cmd_run(args: argparse.Namespace) -> None:
     elif args.input_path:
         inputs, breakdown, input_hash = load_local_inputs(args.input_path, max_size=args.max_size)
         input_source = args.input_path
-        # Apply --max-samples limit for local inputs (HF handles it internally)
         if args.max_samples is not None and args.max_samples < len(inputs):
             inputs = inputs[: args.max_samples]
     else:
-        # Use default sample image URL
         inputs = [[DEFAULT_IMAGE_URL]]
         breakdown = {"images": 1, "pdf_pages": 0, "video_frames": 0}
         input_hash = f"url:{DEFAULT_IMAGE_URL}"
         input_source = DEFAULT_IMAGE_URL
 
     total_inputs = len(inputs)
+    image_stats = compute_image_stats(inputs)
 
-    # Resolve quant
     quant_resolved = args.quant if args.quant != "auto" else None
 
-    # Print configuration
     print_config(
         model_id=args.model,
         revision=args.revision,
@@ -2349,13 +2632,12 @@ def cmd_run(args: argparse.Namespace) -> None:
         tmux_session=tmux_session,
     )
 
-    # Create client
-    client = OpenAI(base_url=base_url, api_key=args.api_key)
+    # Create async client for benchmark
+    client = AsyncOpenAI(base_url=base_url, api_key=args.api_key)
 
     # Progress display
     total_tasks = total_inputs * args.runs
     with Progress(
-        SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TextColumn("{task.completed}/{task.total} images"),
@@ -2365,18 +2647,18 @@ def cmd_run(args: argparse.Namespace) -> None:
         console=console,
         transient=True,
     ) as progress:
-        task_id = progress.add_task("  Warmup...", total=total_tasks)
+        task_id = progress.add_task("Warmup...", total=total_tasks)
 
         def progress_callback(phase: str, run_num: int, completed: int) -> None:
             if phase == "warmup":
-                progress.update(task_id, description="  Warmup...")
+                progress.update(task_id, description="Warmup...")
             elif phase == "run":
-                progress.update(task_id, description=f"  Run {run_num}/{args.runs}")
+                progress.update(task_id, description=f"Run {run_num}/{args.runs}")
             elif phase == "progress":
                 progress.update(task_id, completed=completed)
 
         t_benchmark_start = time.perf_counter()
-        runs_raw, retries = run_benchmark(
+        runs_raw, retries = asyncio.run(run_benchmark(
             client=client,
             model=args.model,
             inputs=inputs,
@@ -2386,7 +2668,7 @@ def cmd_run(args: argparse.Namespace) -> None:
             max_concurrency=args.max_concurrency,
             warmup=args.warmup,
             progress_callback=progress_callback,
-        )
+        ))
         t_benchmark_end = time.perf_counter()
 
     total_duration_s = round(t_benchmark_end - t_benchmark_start, 1)
@@ -2402,7 +2684,6 @@ def cmd_run(args: argparse.Namespace) -> None:
     cached_token_values = [r.cached_tokens for r in successful_runs]
     reasoning_token_values = [r.reasoning_tokens for r in successful_runs]
 
-    # TPOT calculation: for each run, tpot = (latency - ttft/1000) / completion_tokens * 1000
     tpot_values = []
     for r in successful_runs:
         if r.completion_tokens > 0 and r.ttft_ms is not None:
@@ -2411,29 +2692,27 @@ def cmd_run(args: argparse.Namespace) -> None:
                 tpot_ms = (total_gen_time_s / r.completion_tokens) * 1000.0
                 tpot_values.append(tpot_ms)
 
-    # Tokens per second
+    # System-wide throughput: total work / wall-clock time (accounts for all concurrent workers)
     total_completion_tokens = sum(r.completion_tokens for r in successful_runs)
-    total_gen_time = sum(r.latency_s for r in successful_runs)
-    tokens_per_sec = round(total_completion_tokens / total_gen_time, 1) if total_gen_time > 0 else 0
+    tokens_per_sec = round(total_completion_tokens / total_duration_s, 1) if total_duration_s > 0 else 0
     inputs_per_sec = round(len(successful_runs) / total_duration_s, 2) if total_duration_s > 0 else 0
 
-    # VRAM peak (try nvidia-smi for the active GPU)
+    # VRAM peak — query the correct server GPU
     vram_peak: int | None = None
     try:
         if platform.system() == "Linux":
-            gpu_idx = _nvidia_gpu_index()
-            result = subprocess.run(
+            gpu_idx = server_gpu_idx if server_gpu_idx is not None else _nvidia_gpu_index()
+            smi_result = subprocess.run(
                 ["nvidia-smi", f"--id={gpu_idx}", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
-            if result.returncode == 0:
-                vram_peak = int(float(result.stdout.strip().split("\n")[0]))
+            if smi_result.returncode == 0:
+                vram_peak = int(float(smi_result.stdout.strip().split("\n")[0]))
     except Exception:
         pass
 
-    # Build result
     run_id = secrets.token_hex(6)
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -2451,6 +2730,7 @@ def cmd_run(args: argparse.Namespace) -> None:
             hash=input_hash,
             total_inputs=total_inputs,
             breakdown=breakdown,
+            image_stats=image_stats,
             prompt=args.prompt,
             max_tokens=args.max_tokens,
             max_concurrency=args.max_concurrency,
@@ -2478,9 +2758,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     save_dir = Path(args.save)
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    # Backend slug: use the detected backend name (ollama, vllm, vllm-openai, sglang, etc.)
     backend_slug = env.backend.lower()
-    # Model slug: take last part of model ID, replace non-alnum with dash
     model_slug = re.sub(r"[^a-zA-Z0-9]", "-", args.model.split("/")[-1]).strip("-").lower()
     filename = f"{backend_slug}-{model_slug}.json"
     save_path = save_dir / filename
@@ -2488,7 +2766,6 @@ def cmd_run(args: argparse.Namespace) -> None:
     with open(save_path, "w") as f:
         f.write(json.dumps(dataclasses.asdict(result), indent=2))
 
-    # Print results
     print_results(result, str(save_path))
 
 
@@ -2510,7 +2787,7 @@ def cmd_compare(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # Sort by total tokens_per_sec (across workers) descending
-    results.sort(key=lambda r: r.results.tokens_per_sec * r.input.max_concurrency, reverse=True)
+    results.sort(key=lambda r: r.results.tokens_per_sec, reverse=True)
 
     print_compare_table(results)
 
