@@ -16,25 +16,25 @@
 
 Benchmark any vision-language model on your own hardware with a single command. vlmbench auto-detects your platform, starts the right backend, and gives you reproducible results as JSON.
 
-- **macOS** — [Ollama](https://ollama.com) (auto-starts, zero config)
-- **Linux** — [vLLM](https://docs.vllm.ai) via Docker (`--gpus all`, auto-pulls) or native vLLM
-- **SGLang** — coming soon
+- [**Ollama**](https://ollama.com) on **macOS**: auto-starts, zero config
+- [**vLLM**](https://docs.vllm.ai) on **Linux**: via Docker (`--gpus all`, auto-pulls) or native vLLM
+- [**SGLang**](https://github.com/lmsysorg/sglang) on **Linux**: coming soon
 
-<img width="2468" height="1920" alt="image" src="https://raw.githubusercontent.com/vlm-run/vlmbench/main/assets/screenshot.png" />
+<img alt="image" src="./assets/screenshot.png" style="width: 100%; height: auto;"/>
 
 ## Quick Start
 
 No install needed — just run with [`uvx`](https://docs.astral.sh/uv/):
 
 ```bash
-# macOS (Ollama — auto-starts, auto-pulls the model)
+# Local images/PDFs
 uvx vlmbench run -m qwen3-vl:2b -i ./images/
 
-# Linux (vLLM Docker — auto-starts with --gpus all)
-uvx vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./images/
+# HuggingFace dataset
+uvx vlmbench run -m qwen3-vl:2b -d hf://vlm-run/FineVision-vlmbench-mini
 
-# Linux (native vLLM — requires vllm installed)
-uvx vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./images/ --backend vllm
+# Dry-run with limited samples (uses streaming, no full download)
+uvx vlmbench run -m qwen3-vl:2b -d hf://vlm-run/FineVision-vlmbench-mini --max-samples 5
 ```
 
 Or install it:
@@ -61,7 +61,7 @@ pip install vlmbench
 │                                                                              │
 │   TTFT           467 ms    (p95: 1975 ms)                                    │
 │   TPOT           6.0 ms    (p95: 6.2 ms)                                     │
-│   Throughput   1664.8 tok/s   9.20 images/s                                  │
+│   Throughput   1664.8 tok/s
 │   Latency        0.87 s/img  (p95: 3.55 s)                                   │
 │   Tokens          270 prompt    181 completion (avg)                         │
 │   Reliability  186/186 ok, 0 retries                                         │
@@ -74,14 +74,14 @@ pip install vlmbench
 
 When you run `uvx vlmbench run`, here's what happens automatically:
 
-1. **Detects your platform** — macOS routes to Ollama, Linux to vLLM Docker
-2. **Pulls the Docker image** — `docker pull vllm/vllm-openai:latest` (cached after first run)
-3. **Starts the server in tmux** — `docker run --gpus all` in a named tmux session (`vlmbench-vllm`)
-4. **Launches a GPU monitor** — `nvitop` (Linux) or `macmon` (macOS) in a split pane
-5. **Waits for the server** — polls `/v1/models` until ready (up to 600s for large models)
-6. **Runs warmup requests** — fail-fast validation before timed runs
-7. **Benchmarks with concurrency** — streams completions via the OpenAI API, measures TTFT/TPOT/throughput
-8. **Saves results as JSON** — one file per run in `./results/`, ready for `vlmbench compare`
+1. **Detects your platform**: macOS routes to Ollama, Linux to vLLM Docker
+2. **Pulls the Docker image**: `docker pull vllm/vllm-openai:latest` (cached after first run)
+3. **Starts the server in tmux**: `docker run --gpus all` in a named tmux session (`vlmbench-vllm`)
+4. **Launches a GPU monitor**: `nvitop` (Linux) or `macmon` (macOS) in a split pane
+5. **Waits for the server**: polls `/v1/models` until ready (up to 600s for large models)
+6. **Runs warmup requests**: fail-fast validation before timed runs
+7. **Benchmarks with concurrency**: streams completions via the OpenAI API, measures TTFT/TPOT/throughput
+8. **Saves results as JSON**: one file per run in `./results/`, ready for `vlmbench compare`
 
 Attach to the live session anytime with `tmux attach -t vlmbench-vllm`.
 
@@ -194,7 +194,7 @@ uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ --backend vllm
 
 ```bash
 uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ \
-  --base-url https://api.together.xyz/v1 --api-key $TOGETHER_API_KEY
+  --base-url https://api.openai.com/v1 --api-key $OPENAI_API_KEY
 ```
 
 ### Compare
@@ -264,12 +264,53 @@ Directories processed recursively, sorted alphabetically.
 
 Results saved as JSON to `./results/{model-slug}-{timestamp}.json` with model metadata, environment info, benchmark stats (TTFT, TPOT, throughput, latency percentiles), and raw per-run data.
 
+## HuggingFace Jobs
+
+Run benchmarks at scale on HuggingFace infrastructure. Requires a [HuggingFace Pro](https://huggingface.co/pro) account and `HF_TOKEN` exported (or in `.env`).
+
+```bash
+# Single GPU job
+make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1
+
+# Sweep across GPU types
+make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS="t4-small l4x1 a10g-small"
+
+# Run locally on a GPU machine (no HF Jobs, no upload)
+make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct
+```
+
+Results upload to [`vlm-run/vlmbench-results`](https://huggingface.co/datasets/vlm-run/vlmbench-results) under `results/<gpu-flavor>/`.
+
+<details>
+<summary><b>Available GPU flavors</b></summary>
+
+| Flavor | GPU | VRAM |
+|--------|-----|------|
+| `t4-small` | T4 | 16 GB |
+| `t4-medium` | T4 | 16 GB |
+| `l4x1` | L4 | 24 GB |
+| `l4x4` | 4x L4 | 96 GB |
+| `a10g-small` | A10G | 24 GB |
+| `a10g-large` | A10G | 24 GB |
+| `a10g-largex2` | 2x A10G | 48 GB |
+| `a10g-largex4` | 4x A10G | 96 GB |
+| `a100-large` | A100 | 80 GB |
+
+</details>
+
 ## Requirements
 
+**Core:**
 - Python >= 3.11
 - [uv](https://docs.astral.sh/uv/) (recommended)
-- Docker + NVIDIA GPU support (for `vllm-openai`/`sglang` Docker backends)
-- vLLM (`uv pip install vllm`) for native `--backend vllm`
-- tmux (for server management and monitoring)
-- macmon (`brew install macmon`) or nvitop (GPU monitoring)
-- ffmpeg (video input) — optional
+
+**Linux (vLLM/SGLang Docker backends):**
+- Docker + NVIDIA GPU support
+- Native vLLM: `uv pip install vllm`
+
+**Monitoring:**
+- `tmux`: server management and session control
+- `nvitop` (Linux) or `macmon` (macOS, `brew install macmon`)
+
+**Optional:**
+- `ffmpeg`: video frame extraction

@@ -26,8 +26,6 @@ vlmbench — Single-file, drop-in VLM benchmark CLI for your agents.
 by VLM Run · https://vlm.run
 """
 
-from __future__ import annotations
-
 import argparse
 import base64
 import dataclasses
@@ -50,8 +48,10 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from itertools import groupby
 from pathlib import Path
-from typing import Any, Optional, Protocol, Union, get_args, get_origin, get_type_hints, runtime_checkable
+from types import UnionType
+from typing import Any, Protocol, get_args, get_origin, get_type_hints, runtime_checkable
 
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 from PIL import Image
@@ -65,14 +65,16 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-VERSION = "0.2.2"
+VERSION = "0.3.0"
 SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
 DEFAULT_MAX_TOKENS = 2048
 DEFAULT_RUNS = 3
-DEFAULT_CONCURRENCY = 1
+DEFAULT_CONCURRENCY = 4
 DEFAULT_SAVE_DIR = "./results"
 DEFAULT_API_KEY = "no-key"
+DEFAULT_IMAGE_URL = "https://storage.googleapis.com/vlm-data-public-prod/hub/examples/image.caption/car.jpg"
+DEFAULT_MAX_IMAGE_SIZE = 2048
 
 DEFAULT_VLLM_IMAGE = "vllm-openai:latest"
 DEFAULT_MAX_IMAGE_SIZE = 2048
@@ -112,22 +114,22 @@ def print_warning(message: str) -> None:
 class ModelInfo:
     model_id: str = ""
     revision: str = "main"
-    quant: Optional[str] = None
-    params_b: Optional[float] = None
+    quant: str | None = None
+    params_b: float | None = None
 
 
 @dataclass
 class EnvironmentInfo:
     backend: str = ""
-    backend_version: Optional[str] = None
+    backend_version: str | None = None
     base_url: str = ""
-    accelerator: Optional[str] = None
-    gpu_name: Optional[str] = None
-    gpu_vram_mib: Optional[int] = None
-    gpu_driver: Optional[str] = None
-    ram_total_mib: Optional[int] = None
-    cpu: Optional[str] = None
-    os: Optional[str] = None
+    accelerator: str | None = None
+    gpu_name: str | None = None
+    gpu_vram_mib: int | None = None
+    gpu_driver: str | None = None
+    ram_total_mib: int | None = None
+    cpu: str | None = None
+    os: str | None = None
 
 
 @dataclass
@@ -164,9 +166,9 @@ class Results:
     latency_s_per_input: StatBlock = field(default_factory=StatBlock)
     prompt_tokens: TokenStat = field(default_factory=TokenStat)
     completion_tokens: TokenStat = field(default_factory=TokenStat)
-    cached_tokens: Optional[TokenStat] = None
-    reasoning_tokens: Optional[TokenStat] = None
-    vram_peak_mib: Optional[int] = None
+    cached_tokens: TokenStat | None = None
+    reasoning_tokens: TokenStat | None = None
+    vram_peak_mib: int | None = None
     total_inputs_processed: int = 0
     total_duration_s: float = 0.0
     errors: int = 0
@@ -177,13 +179,13 @@ class Results:
 class RunRaw:
     input_idx: int = 0
     run: int = 0
-    ttft_ms: Optional[float] = None
+    ttft_ms: float | None = None
     latency_s: float = 0.0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cached_tokens: int = 0
     reasoning_tokens: int = 0
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -191,7 +193,7 @@ class BenchmarkResult:
     schema_version: str = SCHEMA_VERSION
     run_id: str = ""
     timestamp: str = ""
-    tag: Optional[str] = None
+    tag: str | None = None
     model: ModelInfo = field(default_factory=ModelInfo)
     environment: EnvironmentInfo = field(default_factory=EnvironmentInfo)
     input: InputInfo = field(default_factory=InputInfo)
@@ -205,8 +207,8 @@ def _coerce_field(ftype: type, val: Any) -> Any:
         return None
     origin = get_origin(ftype)
     args = get_args(ftype)
-    # Optional[X] is Union[X, None]
-    if origin is Union:
+    # X | None is UnionType in Python 3.10+
+    if origin is UnionType:
         non_none = [a for a in args if a is not type(None)]
         if non_none:
             return _coerce_field(non_none[0], val)
@@ -236,7 +238,7 @@ def _dc_from_dict(cls: type, data: dict[str, Any]) -> Any:
 # ── Environment Detection ─────────────────────────────────────────────────────
 
 
-def detect_backend(base_url: str) -> tuple[str, Optional[str]]:
+def detect_backend(base_url: str) -> tuple[str, str | None]:
     """Detect the backend type and version from the base URL."""
     # Strip /v1 suffix for probing
     probe_url = base_url.rstrip("/")
@@ -262,12 +264,13 @@ def detect_backend(base_url: str) -> tuple[str, Optional[str]]:
         pass
 
     # 3. URL-based detection
-    if "openai.com" in base_url:
-        return "openai", None
-    if "together.xyz" in base_url:
-        return "together", None
-
-    return "generic", None
+    match base_url:
+        case url if "openai.com" in url:
+            return "openai", None
+        case url if "together.xyz" in url:
+            return "together", None
+        case _:
+            return "generic", None
 
 
 def _nvidia_gpu_index() -> int:
@@ -360,45 +363,48 @@ def get_apple_gpu_info() -> dict[str, Any]:
 def get_system_info() -> dict[str, Any]:
     """Cross-platform: RAM, CPU, OS."""
     info: dict[str, Any] = {"os": platform.platform()}
+    system = platform.system()
 
     # CPU
     try:
-        if platform.system() == "Darwin":
-            result = subprocess.run(
-                ["sysctl", "-n", "machdep.cpu.brand_string"],
-                capture_output=True,
-                text=True,
-                timeout=3,
-            )
-            if result.returncode == 0:
-                info["cpu"] = result.stdout.strip()
-        elif platform.system() == "Linux":
-            with open("/proc/cpuinfo") as f:
-                for line in f:
-                    if line.startswith("model name"):
-                        info["cpu"] = line.split(":", 1)[1].strip()
-                        break
+        match system:
+            case "Darwin":
+                result = subprocess.run(
+                    ["sysctl", "-n", "machdep.cpu.brand_string"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                if result.returncode == 0:
+                    info["cpu"] = result.stdout.strip()
+            case "Linux":
+                with open("/proc/cpuinfo") as f:
+                    for line in f:
+                        if line.startswith("model name"):
+                            info["cpu"] = line.split(":", 1)[1].strip()
+                            break
     except Exception:
         pass
 
     # RAM
     try:
-        if platform.system() == "Darwin":
-            result = subprocess.run(
-                ["sysctl", "-n", "hw.memsize"],
-                capture_output=True,
-                text=True,
-                timeout=3,
-            )
-            if result.returncode == 0:
-                info["ram_total_mib"] = int(result.stdout.strip()) // (1024 * 1024)
-        elif platform.system() == "Linux":
-            with open("/proc/meminfo") as f:
-                for line in f:
-                    if line.startswith("MemTotal"):
-                        kb = int(re.search(r"\d+", line).group())
-                        info["ram_total_mib"] = kb // 1024
-                        break
+        match system:
+            case "Darwin":
+                result = subprocess.run(
+                    ["sysctl", "-n", "hw.memsize"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                if result.returncode == 0:
+                    info["ram_total_mib"] = int(result.stdout.strip()) // (1024 * 1024)
+            case "Linux":
+                with open("/proc/meminfo") as f:
+                    for line in f:
+                        if line.startswith("MemTotal"):
+                            kb = int(re.search(r"\d+", line).group())
+                            info["ram_total_mib"] = kb // 1024
+                            break
     except Exception:
         pass
 
@@ -420,19 +426,18 @@ def collect_environment(base_url: str) -> EnvironmentInfo:
         "ram_total_mib": sys_info.get("ram_total_mib"),
     }
 
-    # GPU info based on platform
-    if backend in ("openai", "together"):
-        # Cloud APIs — no local GPU info
-        env_data["accelerator"] = None
-        env_data["gpu_name"] = None
-        env_data["gpu_vram_mib"] = None
-        env_data["gpu_driver"] = None
-    elif platform.system() == "Darwin":
-        gpu_info = get_apple_gpu_info()
-        env_data.update(gpu_info)
-    elif platform.system() == "Linux":
-        gpu_info = get_nvidia_gpu_info()
-        env_data.update(gpu_info)
+    # GPU info based on platform and backend
+    match (backend, platform.system()):
+        case ("openai" | "together", _):
+            # Cloud APIs — no local GPU info
+            env_data["accelerator"] = None
+            env_data["gpu_name"] = None
+            env_data["gpu_vram_mib"] = None
+            env_data["gpu_driver"] = None
+        case (_, "Darwin"):
+            env_data.update(get_apple_gpu_info())
+        case (_, "Linux"):
+            env_data.update(get_nvidia_gpu_info())
 
     return EnvironmentInfo(**env_data)
 
@@ -517,7 +522,7 @@ def _pull_docker_image(backend: str = DEFAULT_VLLM_IMAGE) -> bool:
 
 
 class DockerServerManager:
-    """Manage an inference server via Docker with GPU support in tmux."""
+    """Manage an inference server via Docker with GPU support (tmux or subprocess)."""
 
     DEFAULT_PORT = 8000
 
@@ -527,6 +532,8 @@ class DockerServerManager:
         self.docker_image, self.container_name = _parse_docker_backend(backend)
         self.category = _backend_category(backend)
         self.session_name = _tmux_session_name(self.category)
+        self._subprocess: subprocess.Popen | None = None
+        self._using_tmux = False
 
     def is_running(self) -> bool:
         try:
@@ -539,55 +546,79 @@ class DockerServerManager:
     def start(self, model: str, extra_args: str | None = None) -> None:
         _require_command("docker")
 
-        # Build docker run command (pull + run chained in tmux pane)
         cache_dir = Path.home() / ".vlmbench" / self.category
         cache_dir.mkdir(parents=True, exist_ok=True)
-        # Forward CUDA_VISIBLE_DEVICES from host so the user can select GPUs
         cuda_env = "-e CUDA_DEVICE_ORDER=PCI_BUS_ID"
         cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if cuda_visible is not None:
             cuda_env += f" -e CUDA_VISIBLE_DEVICES={cuda_visible}"
-        run_cmd = (
-            f"docker run --rm --gpus all {cuda_env}"
-            f" --name {shlex.quote(self.container_name)}"
-            f" -p {self.port}:8000 --ipc=host"
-            f" -v {shlex.quote(str(cache_dir))}:/root/.cache/huggingface"
-            f" {shlex.quote(self.docker_image)}"
-            f" --model {shlex.quote(model)}"
+
+        # Build docker run command
+        run_args = [
+            "docker",
+            "run",
+            "--rm",
+            "--gpus",
+            "all",
+            "-e",
+            "CUDA_DEVICE_ORDER=PCI_BUS_ID",
+        ]
+        if cuda_visible is not None:
+            run_args.extend(["-e", f"CUDA_VISIBLE_DEVICES={cuda_visible}"])
+        run_args.extend(
+            [
+                "--name",
+                self.container_name,
+                "-p",
+                f"{self.port}:8000",
+                "--ipc=host",
+                "-v",
+                f"{cache_dir}:/root/.cache/huggingface",
+                self.docker_image,
+                "--model",
+                model,
+            ]
         )
         if extra_args:
-            run_cmd += f" {shlex.join(shlex.split(extra_args))}"
+            run_args.extend(shlex.split(extra_args))
+
+        if shutil.which("tmux"):
+            self._start_with_tmux(run_args)
+        else:
+            self._start_with_subprocess(run_args)
+
+    def _start_with_tmux(self, run_args: list[str]) -> None:
+        """Start server in tmux with GPU monitoring pane."""
+        self._using_tmux = True
         pull_cmd = f"docker pull {shlex.quote(self.docker_image)}"
+        run_cmd = shlex.join(run_args)
         server_cmd = f"{pull_cmd} && {run_cmd}"
 
-        if not shutil.which("tmux"):
-            raise TmuxNotAvailable(server_cmd, self._base_url)
+        subprocess.run(["tmux", "kill-session", "-t", self.session_name], capture_output=True)
+        subprocess.run(["tmux", "new-session", "-d", "-s", self.session_name, server_cmd], check=True)
 
-        # Kill any stale session with the same stable name
-        subprocess.run(
-            ["tmux", "kill-session", "-t", self.session_name],
-            capture_output=True,
-        )
-
-        # Top pane: docker run | Bottom pane: GPU monitor
-        subprocess.run(
-            ["tmux", "new-session", "-d", "-s", self.session_name, server_cmd],
-            check=True,
-        )
         monitor_cmd = _gpu_monitor_cmd()
         if monitor_cmd:
-            subprocess.run(
-                ["tmux", "split-window", "-v", "-t", self.session_name, monitor_cmd],
-                check=True,
-            )
-            subprocess.run(
-                ["tmux", "select-pane", "-t", f"{self.session_name}:.0"],
-                check=True,
-            )
+            subprocess.run(["tmux", "split-window", "-v", "-t", self.session_name, monitor_cmd], check=True)
+            subprocess.run(["tmux", "select-pane", "-t", f"{self.session_name}:.0"], check=True)
+
         console.print(
             f"  [cyan]Started [bold]{self.docker_image}[/bold] in tmux session '[bold]{self.session_name}[/bold]'[/cyan]"
         )
         console.print(f"  [dim]Attach with: tmux attach -t {self.session_name}[/dim]")
+        console.print(f"  [dim]Container:   docker logs -f {self.container_name}[/dim]")
+
+    def _start_with_subprocess(self, run_args: list[str]) -> None:
+        """Start server as background subprocess (no tmux)."""
+        self._using_tmux = False
+        console.print(f"  [cyan]Pulling [bold]{self.docker_image}[/bold]...[/cyan]")
+        subprocess.run(["docker", "pull", self.docker_image], check=True)
+        console.print(f"  [cyan]Starting [bold]{self.docker_image}[/bold] as subprocess...[/cyan]")
+        self._subprocess = subprocess.Popen(
+            run_args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         console.print(f"  [dim]Container:   docker logs -f {self.container_name}[/dim]")
 
     def wait_ready(self, timeout: int = 600) -> bool:
@@ -595,6 +626,8 @@ class DockerServerManager:
         while time.time() < deadline:
             if self.is_running():
                 return True
+            if self._subprocess is not None and self._subprocess.poll() is not None:
+                return False
             time.sleep(2)
         return False
 
@@ -603,7 +636,7 @@ class DockerServerManager:
 
 
 class OllamaServerManager:
-    """Manage an Ollama inference server via tmux."""
+    """Manage an Ollama inference server (tmux or subprocess)."""
 
     DEFAULT_PORT = 11434
 
@@ -611,6 +644,8 @@ class OllamaServerManager:
         self.port = port or self.DEFAULT_PORT
         self._base_url = f"http://localhost:{self.port}/v1"
         self.session_name = _tmux_session_name("ollama")
+        self._subprocess: subprocess.Popen | None = None
+        self._using_tmux = False
 
     def is_running(self) -> bool:
         try:
@@ -623,48 +658,54 @@ class OllamaServerManager:
     def start(self, model: str, extra_args: str | None = None) -> None:
         if not self.is_running():
             _require_command("ollama")
-            server_cmd = "ollama serve"
+            serve_args = ["ollama", "serve"]
             if extra_args:
-                server_cmd += f" {shlex.join(shlex.split(extra_args))}"
+                serve_args.extend(shlex.split(extra_args))
 
-            if not shutil.which("tmux"):
-                raise TmuxNotAvailable(server_cmd, self._base_url, post_cmd=f"ollama pull {shlex.quote(model)}")
+            if shutil.which("tmux"):
+                self._start_with_tmux(serve_args)
+            else:
+                self._start_with_subprocess(serve_args)
 
-            # Kill any stale session with the same stable name
-            subprocess.run(
-                ["tmux", "kill-session", "-t", self.session_name],
-                capture_output=True,
-            )
-            # Top pane: ollama serve | Bottom pane: system monitor
-            subprocess.run(
-                ["tmux", "new-session", "-d", "-s", self.session_name, server_cmd],
-                check=True,
-            )
-            monitor_cmd = _gpu_monitor_cmd()
-            if monitor_cmd:
-                subprocess.run(
-                    ["tmux", "split-window", "-v", "-t", self.session_name, monitor_cmd],
-                    check=True,
-                )
-                subprocess.run(
-                    ["tmux", "select-pane", "-t", f"{self.session_name}:.0"],
-                    check=True,
-                )
-            console.print(f"  [cyan]Started Ollama in tmux session '[bold]{self.session_name}[/bold]'[/cyan]")
-            console.print(f"  [dim]Attach with: tmux attach -t {self.session_name}[/dim]")
-            # Wait for Ollama to be responsive before pulling
             if not self.wait_ready(timeout=30):
                 console.print("[red]Ollama failed to start within 30s.[/red]")
                 sys.exit(1)
-        # Ensure the model is available
+
         console.print(f"  [cyan]Pulling model '{model}' (if needed)...[/cyan]")
         subprocess.run(["ollama", "pull", model], check=True)
+
+    def _start_with_tmux(self, serve_args: list[str]) -> None:
+        """Start Ollama in tmux with monitoring pane."""
+        self._using_tmux = True
+        server_cmd = shlex.join(serve_args)
+        subprocess.run(["tmux", "kill-session", "-t", self.session_name], capture_output=True)
+        subprocess.run(["tmux", "new-session", "-d", "-s", self.session_name, server_cmd], check=True)
+
+        monitor_cmd = _gpu_monitor_cmd()
+        if monitor_cmd:
+            subprocess.run(["tmux", "split-window", "-v", "-t", self.session_name, monitor_cmd], check=True)
+            subprocess.run(["tmux", "select-pane", "-t", f"{self.session_name}:.0"], check=True)
+
+        console.print(f"  [cyan]Started Ollama in tmux session '[bold]{self.session_name}[/bold]'[/cyan]")
+        console.print(f"  [dim]Attach with: tmux attach -t {self.session_name}[/dim]")
+
+    def _start_with_subprocess(self, serve_args: list[str]) -> None:
+        """Start Ollama as background subprocess (no tmux)."""
+        self._using_tmux = False
+        console.print("  [cyan]Starting Ollama as subprocess...[/cyan]")
+        self._subprocess = subprocess.Popen(
+            serve_args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
     def wait_ready(self, timeout: int = 120) -> bool:
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self.is_running():
                 return True
+            if self._subprocess is not None and self._subprocess.poll() is not None:
+                return False
             time.sleep(2)
         return False
 
@@ -673,7 +714,7 @@ class OllamaServerManager:
 
 
 class NativeVllmServerManager:
-    """Manage a native vLLM inference server (``vllm serve``) via tmux."""
+    """Manage a native vLLM inference server (``vllm serve``) (tmux or subprocess)."""
 
     DEFAULT_PORT = 8000
 
@@ -681,6 +722,8 @@ class NativeVllmServerManager:
         self.port = port or self.DEFAULT_PORT
         self._base_url = f"http://localhost:{self.port}/v1"
         self.session_name = _tmux_session_name("vllm")
+        self._subprocess: subprocess.Popen | None = None
+        self._using_tmux = False
 
     def is_running(self) -> bool:
         try:
@@ -693,44 +736,49 @@ class NativeVllmServerManager:
     def start(self, model: str, extra_args: str | None = None) -> None:
         _require_command("vllm")
 
-        server_cmd = f"vllm serve {shlex.quote(model)}"
+        serve_args = ["vllm", "serve", model]
         if self.port != self.DEFAULT_PORT:
-            server_cmd += f" --port {self.port}"
+            serve_args.extend(["--port", str(self.port)])
         if extra_args:
-            server_cmd += f" {shlex.join(shlex.split(extra_args))}"
+            serve_args.extend(shlex.split(extra_args))
 
-        if not shutil.which("tmux"):
-            raise TmuxNotAvailable(server_cmd, self._base_url)
+        if shutil.which("tmux"):
+            self._start_with_tmux(serve_args)
+        else:
+            self._start_with_subprocess(serve_args)
 
-        # Kill any stale session with the same stable name
-        subprocess.run(
-            ["tmux", "kill-session", "-t", self.session_name],
-            capture_output=True,
-        )
+    def _start_with_tmux(self, serve_args: list[str]) -> None:
+        """Start vLLM in tmux with GPU monitoring pane."""
+        self._using_tmux = True
+        server_cmd = shlex.join(serve_args)
+        subprocess.run(["tmux", "kill-session", "-t", self.session_name], capture_output=True)
+        subprocess.run(["tmux", "new-session", "-d", "-s", self.session_name, server_cmd], check=True)
 
-        # Top pane: vllm serve | Bottom pane: GPU monitor
-        subprocess.run(
-            ["tmux", "new-session", "-d", "-s", self.session_name, server_cmd],
-            check=True,
-        )
         monitor_cmd = _gpu_monitor_cmd()
         if monitor_cmd:
-            subprocess.run(
-                ["tmux", "split-window", "-v", "-t", self.session_name, monitor_cmd],
-                check=True,
-            )
-            subprocess.run(
-                ["tmux", "select-pane", "-t", f"{self.session_name}:.0"],
-                check=True,
-            )
+            subprocess.run(["tmux", "split-window", "-v", "-t", self.session_name, monitor_cmd], check=True)
+            subprocess.run(["tmux", "select-pane", "-t", f"{self.session_name}:.0"], check=True)
+
         console.print(f"  [cyan]Started native vLLM in tmux session '[bold]{self.session_name}[/bold]'[/cyan]")
         console.print(f"  [dim]Attach with: tmux attach -t {self.session_name}[/dim]")
+
+    def _start_with_subprocess(self, serve_args: list[str]) -> None:
+        """Start vLLM as background subprocess (no tmux)."""
+        self._using_tmux = False
+        console.print("  [cyan]Starting native vLLM as subprocess...[/cyan]")
+        self._subprocess = subprocess.Popen(
+            serve_args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
     def wait_ready(self, timeout: int = 600) -> bool:
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self.is_running():
                 return True
+            if self._subprocess is not None and self._subprocess.poll() is not None:
+                return False
             time.sleep(2)
         return False
 
@@ -748,38 +796,32 @@ def _require_command(name: str) -> None:
         sys.exit(1)
 
 
-class TmuxNotAvailable(Exception):
-    """Raised when tmux is needed but not installed. Carries the server command."""
-
-    def __init__(self, server_cmd: str, base_url: str, post_cmd: str | None = None) -> None:
-        self.server_cmd = server_cmd
-        self.base_url = base_url
-        self.post_cmd = post_cmd
-
-
 def _build_server_cmd(backend: str, model: str, serve_args: str | None = None) -> tuple[str, str]:
     """Build the server command string and base_url for display purposes (without starting anything)."""
     if backend == "auto":
         backend = _auto_detect_backend()
     category = _backend_category(backend)
-    if backend == "ollama":
-        cmd = "ollama serve"
-        base_url = f"http://localhost:{OllamaServerManager.DEFAULT_PORT}/v1"
-    elif backend == "vllm":
-        cmd = f"vllm serve {shlex.quote(model)}"
-        base_url = f"http://localhost:{NativeVllmServerManager.DEFAULT_PORT}/v1"
-    else:
-        # Docker-based (vllm-openai, sglang)
-        image, _container = _parse_docker_backend(backend)
-        cache_dir = Path.home() / ".vlmbench" / category
-        cmd = (
-            f"docker run --rm --gpus all"
-            f" -p {DockerServerManager.DEFAULT_PORT}:8000 --ipc=host"
-            f" -v {shlex.quote(str(cache_dir))}:/root/.cache/huggingface"
-            f" {shlex.quote(image)}"
-            f" --model {shlex.quote(model)}"
-        )
-        base_url = f"http://localhost:{DockerServerManager.DEFAULT_PORT}/v1"
+
+    match backend:
+        case "ollama":
+            cmd = "ollama serve"
+            base_url = f"http://localhost:{OllamaServerManager.DEFAULT_PORT}/v1"
+        case "vllm":
+            cmd = f"vllm serve {shlex.quote(model)}"
+            base_url = f"http://localhost:{NativeVllmServerManager.DEFAULT_PORT}/v1"
+        case _:
+            # Docker-based (vllm-openai, sglang)
+            image, _container = _parse_docker_backend(backend)
+            cache_dir = Path.home() / ".vlmbench" / category
+            cmd = (
+                f"docker run --rm --gpus all"
+                f" -p {DockerServerManager.DEFAULT_PORT}:8000 --ipc=host"
+                f" -v {shlex.quote(str(cache_dir))}:/root/.cache/huggingface"
+                f" {shlex.quote(image)}"
+                f" --model {shlex.quote(model)}"
+            )
+            base_url = f"http://localhost:{DockerServerManager.DEFAULT_PORT}/v1"
+
     if serve_args:
         cmd += f" {shlex.join(shlex.split(serve_args))}"
     return cmd, base_url
@@ -847,44 +889,50 @@ def _print_server_instructions(
 
 def _gpu_monitor_cmd() -> str | None:
     """Return the best available GPU/system monitor command for the bottom tmux pane."""
-    if platform.system() == "Darwin":
-        # macOS: prefer macmon (brew install macmon)
-        if shutil.which("macmon"):
-            return "macmon"
-    else:
-        # Linux: prefer nvitop via uvx
-        if shutil.which("uvx"):
-            return "uvx nvitop -m full -c"
-        if shutil.which("nvitop"):
-            return "nvitop -m full -c"
-    return None
+    match platform.system():
+        case "Darwin":
+            # macOS: prefer macmon (brew install macmon)
+            return "macmon" if shutil.which("macmon") else None
+        case _:
+            # Linux: prefer nvitop via uvx
+            if shutil.which("uvx"):
+                return "uvx nvitop -m full -c"
+            if shutil.which("nvitop"):
+                return "nvitop -m full -c"
+            return None
 
 
 def _auto_detect_backend() -> str:
     """Pick a default backend based on the current platform."""
-    if platform.system() == "Darwin":
-        return "ollama"
-    return DEFAULT_VLLM_IMAGE  # Linux defaults to Docker vLLM
+    match platform.system():
+        case "Darwin":
+            return "ollama"
+        case _:
+            return DEFAULT_VLLM_IMAGE  # Linux defaults to Docker vLLM
 
 
 def _resolve_backend_for_monitor(backend: str) -> str:
     """Resolve backend string to a category: 'ollama', 'vllm', or 'sglang'."""
-    if backend == "auto":
-        return "ollama" if platform.system() == "Darwin" else "vllm"
-    if backend == "ollama":
-        return "ollama"
-    if backend.startswith("sglang"):
-        return "sglang"
-    return "vllm"
+    match backend:
+        case "auto":
+            return "ollama" if platform.system() == "Darwin" else "vllm"
+        case "ollama":
+            return "ollama"
+        case _ if backend.startswith("sglang"):
+            return "sglang"
+        case _:
+            return "vllm"
 
 
 def _create_server_manager(backend: str) -> DockerServerManager | OllamaServerManager | NativeVllmServerManager:
     """Create the appropriate server manager for the given backend."""
-    if backend == "ollama":
-        return OllamaServerManager()
-    if backend == "vllm":
-        return NativeVllmServerManager()
-    return DockerServerManager(backend)
+    match backend:
+        case "ollama":
+            return OllamaServerManager()
+        case "vllm":
+            return NativeVllmServerManager()
+        case _:
+            return DockerServerManager(backend)
 
 
 def _find_docker_container(name_prefix: str = "vlmbench-") -> str | None:
@@ -1022,17 +1070,7 @@ def resolve_server(
     else:
         backend_label = getattr(manager, "docker_image", backend)
     console.print(f"  [cyan]Auto-starting {backend_label}...[/cyan]")
-    try:
-        manager.start(model, extra_args=serve_args)
-    except TmuxNotAvailable as exc:
-        _print_server_instructions(
-            exc.server_cmd,
-            exc.base_url,
-            reason="tmux is not installed, so vlmbench cannot background the server.",
-            post_cmd=exc.post_cmd,
-            tip="Install tmux for automatic server management: brew install tmux / apt install tmux",
-        )
-        sys.exit(0)
+    manager.start(model, extra_args=serve_args)
 
     console.print("  [dim]Waiting for server to be ready...[/dim]")
     if not manager.wait_ready(timeout=600):
@@ -1041,7 +1079,9 @@ def resolve_server(
 
     console.print("  [green]Server ready.[/green]")
 
-    return manager.get_base_url(), getattr(manager, "session_name", None)
+    # Return session name only if using tmux
+    session = manager.session_name if getattr(manager, "_using_tmux", False) else None
+    return manager.get_base_url(), session
 
 
 def _try_detect_running_server() -> tuple[str | None, str]:
@@ -1160,14 +1200,352 @@ def video_to_base64_frames(path: Path) -> list[str]:
         return results
 
 
-def load_inputs(input_path: str, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> tuple[list[list[str]], dict[str, int], str]:
-    """Load inputs from a file or directory.
+def pil_to_base64(img: Any, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> str:
+    """Convert a PIL Image to a base64 data URI, with optional resizing.
+
+    Args:
+        img: PIL Image
+        max_size: Maximum dimension (width or height). Images larger than this
+                  are downscaled while preserving aspect ratio.
+    """
+    # Convert to RGB if necessary (handles RGBA, P mode, etc.)
+    if hasattr(img, "mode") and img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+
+    # Downscale if larger than max_size
+    if max(img.width, img.height) > max_size:
+        img.thumbnail((max_size, max_size))
+
+    # Encode as JPEG for smaller size
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=95)
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return f"data:image/jpeg;base64,{b64}"
+
+
+def numpy_to_base64(arr: Any, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> str:
+    """Convert a numpy array to a base64 data URI via PIL."""
+    from PIL import Image
+
+    # Handle different array shapes
+    if arr.ndim == 2:
+        # Grayscale
+        img = Image.fromarray(arr, mode="L")
+    elif arr.ndim == 3 and arr.shape[2] == 3:
+        # RGB
+        img = Image.fromarray(arr, mode="RGB")
+    elif arr.ndim == 3 and arr.shape[2] == 4:
+        # RGBA -> RGB
+        img = Image.fromarray(arr, mode="RGBA").convert("RGB")
+    else:
+        # Best effort
+        img = Image.fromarray(arr)
+    return pil_to_base64(img, max_size=max_size)
+
+
+def _is_base64_image(val: Any) -> bool:
+    """Check if a value is a base64-encoded image string."""
+    if not isinstance(val, str):
+        return False
+    # Check for data URI format
+    if val.startswith("data:image/"):
+        return True
+    # Check for raw base64 (heuristic: long string with base64 chars)
+    if len(val) > 100 and all(
+        c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=" for c in val[:100]
+    ):
+        return True
+    return False
+
+
+def _is_pil_image(val: Any) -> bool:
+    """Check if a value is a PIL Image."""
+    return hasattr(val, "save") and hasattr(val, "mode")
+
+
+def _is_numpy_image(val: Any) -> bool:
+    """Check if a value is a numpy array that looks like an image."""
+    return hasattr(val, "ndim") and hasattr(val, "shape") and val.ndim in (2, 3)
+
+
+def _convert_to_base64(img: Any, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> str:
+    """Convert an image (PIL, numpy, base64 string, or bytes) to a base64 data URI."""
+    # Already a data URI
+    if isinstance(img, str) and img.startswith("data:image/"):
+        return img
+
+    # Raw base64 string (no data URI prefix)
+    if isinstance(img, str) and _is_base64_image(img):
+        # Assume JPEG if no mime type provided
+        return f"data:image/jpeg;base64,{img}"
+
+    # Bytes - decode and re-encode with resizing
+    if isinstance(img, bytes):
+        from PIL import Image
+
+        pil_img = Image.open(io.BytesIO(img))
+        return pil_to_base64(pil_img, max_size=max_size)
+
+    # PIL Image
+    if _is_pil_image(img):
+        return pil_to_base64(img, max_size=max_size)
+
+    # numpy array
+    if _is_numpy_image(img):
+        return numpy_to_base64(img, max_size=max_size)
+
+    # Dict with 'bytes' key (common in HF datasets)
+    if isinstance(img, dict) and "bytes" in img:
+        from PIL import Image
+
+        pil_img = Image.open(io.BytesIO(img["bytes"]))
+        return pil_to_base64(pil_img, max_size=max_size)
+
+    raise ValueError(f"Unsupported image type: {type(img)}")
+
+
+def _detect_image_column(ds: Any, columns: list[str]) -> tuple[str | None, bool]:
+    """Detect the image column in a dataset.
+
+    Returns:
+        (column_name, is_list) - column name and whether it contains lists of images
+    """
+    # First, check for common column names
+    for col in columns:
+        col_lower = col.lower()
+        if col_lower in ("image", "img"):
+            return col, False
+        if col_lower in ("images", "imgs"):
+            return col, True
+
+    # Try to detect by inspecting the first row
+    first_row = ds[0]
+    for col in columns:
+        val = first_row[col]
+        if val is None:
+            continue
+
+        # Single image checks
+        if _is_pil_image(val) or _is_numpy_image(val) or _is_base64_image(val):
+            return col, False
+
+        # Dict with bytes (HF image format)
+        if isinstance(val, dict) and "bytes" in val:
+            return col, False
+
+        # List of images
+        if isinstance(val, list) and len(val) > 0:
+            first_item = val[0]
+            if (
+                _is_pil_image(first_item)
+                or _is_numpy_image(first_item)
+                or _is_base64_image(first_item)
+                or (isinstance(first_item, dict) and "bytes" in first_item)
+            ):
+                return col, True
+
+    return None, False
+
+
+def load_hf_dataset(
+    dataset_path: str,
+    image_col: str | None = None,
+    split: str = "train",
+    max_samples: int | None = None,
+    max_size: int = DEFAULT_MAX_IMAGE_SIZE,
+) -> tuple[list[list[str]], dict[str, int], str]:
+    """Load inputs from a HuggingFace dataset.
+
+    Supports datasets with image columns containing:
+    - PIL.Image.Image
+    - numpy.ndarray
+    - base64-encoded strings (with or without data URI prefix)
+    - bytes
+    - dict with 'bytes' key (HF native format)
+
+    When max_samples is specified, uses streaming mode to avoid downloading
+    the entire dataset.
+
+    Args:
+        dataset_path: HuggingFace dataset path (org/name or org/name:config)
+        image_col: Optional column name containing images. If None, auto-detect.
+        split: Dataset split to load (default: train)
+        max_samples: Maximum number of samples to load. If set, uses streaming.
+        max_size: Maximum image dimension (width or height)
+
+    Returns:
+        (inputs, breakdown, hash)
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        console.print("[red]datasets library required for HuggingFace inputs.[/red]")
+        console.print("[dim]Install with: uv pip install datasets[/dim]")
+        sys.exit(1)
+
+    # Parse dataset path: org/name or org/name:config
+    if ":" in dataset_path:
+        dataset_name, config_name = dataset_path.split(":", 1)
+    else:
+        dataset_name = dataset_path
+        config_name = None
+
+    # Use streaming mode when max_samples is specified to avoid full download
+    use_streaming = max_samples is not None
+
+    if use_streaming:
+        console.print(f"  [cyan]Streaming [bold]{dataset_name}[/bold] (split={split}, limit={max_samples})...[/cyan]")
+    else:
+        console.print(f"  [cyan]Loading [bold]{dataset_name}[/bold] (split={split})...[/cyan]")
+
+    try:
+        ds = load_dataset(dataset_name, config_name, split=split, streaming=use_streaming)
+    except Exception as e:
+        console.print(f"[red]Failed to load dataset: {e}[/red]")
+        sys.exit(1)
+
+    # Get column names (works for both streaming and regular datasets)
+    columns = ds.column_names
+
+    # Determine image column by peeking at first row
+    is_list_col = False
+    first_row = None
+
+    if use_streaming:
+        # For streaming, we need to peek at the first row
+        ds_iter = iter(ds)
+        try:
+            first_row = next(ds_iter)
+        except StopIteration:
+            console.print("[red]Dataset is empty.[/red]")
+            sys.exit(1)
+    else:
+        first_row = ds[0]
+
+    if image_col is not None:
+        if image_col not in columns:
+            console.print(f"[red]Column '{image_col}' not found. Available: {columns}[/red]")
+            sys.exit(1)
+        first_val = first_row[image_col]
+        is_list_col = isinstance(first_val, list)
+    else:
+        # Auto-detect from first row
+        detected_col = None
+        for col in columns:
+            val = first_row[col]
+            if val is None:
+                continue
+            if isinstance(val, list) and len(val) > 0:
+                if _is_pil_image(val[0]) or _is_numpy_image(val[0]) or _is_base64_image(val[0]):
+                    detected_col = col
+                    is_list_col = True
+                    break
+            elif _is_pil_image(val) or _is_numpy_image(val) or _is_base64_image(val):
+                detected_col = col
+                is_list_col = False
+                break
+            elif isinstance(val, dict) and "bytes" in val:
+                detected_col = col
+                is_list_col = False
+                break
+
+        if detected_col is None:
+            console.print(f"[red]No image column found. Columns: {columns}[/red]")
+            console.print("[dim]Use --dataset-image-col to specify the column name.[/dim]")
+            sys.exit(1)
+        image_col = detected_col
+
+    console.print(f"  [dim]Using column: {image_col} ({'list' if is_list_col else 'single'})[/dim]")
+
+    inputs: list[list[str]] = []
+    breakdown = {"images": 0, "pdf_pages": 0, "video_frames": 0, "hf_images": 0}
+    hasher = hashlib.sha256()
+
+    def process_row(row: dict) -> bool:
+        """Process a single row, return True if processed successfully."""
+        val = row[image_col]
+        if val is None:
+            return False
+
+        if is_list_col:
+            if len(val) > 0:
+                b64_list = [_convert_to_base64(img, max_size=max_size) for img in val]
+                inputs.append(b64_list)
+                breakdown["hf_images"] += len(b64_list)
+                for b64 in b64_list:
+                    hasher.update(b64.encode("utf-8"))
+                return True
+        else:
+            b64 = _convert_to_base64(val, max_size=max_size)
+            inputs.append([b64])
+            breakdown["hf_images"] += 1
+            hasher.update(b64.encode("utf-8"))
+            return True
+        return False
+
+    if use_streaming:
+        # Process first row we already fetched
+        process_row(first_row)
+
+        # Stream remaining rows with progress
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=30),
+            TextColumn("{task.completed}/{task.total} samples"),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Loading", total=max_samples)
+            progress.update(task, completed=len(inputs))
+
+            for row in ds_iter:
+                if len(inputs) >= max_samples:
+                    break
+                if process_row(row):
+                    progress.update(task, completed=len(inputs))
+    else:
+        # Full dataset with progress bar
+        total = len(ds)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=30),
+            TextColumn("{task.completed}/{task.total} rows"),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Processing", total=total)
+            for i, row in enumerate(ds):
+                process_row(row)
+                progress.update(task, completed=i + 1)
+
+    if not inputs:
+        console.print("[red]No images found in dataset.[/red]")
+        sys.exit(1)
+
+    console.print(f"  [green]Loaded [bold]{len(inputs)}[/bold] inputs ({breakdown['hf_images']} images)[/green]")
+
+    input_hash = f"sha256:{hasher.hexdigest()[:16]}"
+    return inputs, breakdown, input_hash
+
+
+def load_local_inputs(
+    input_path: str, max_size: int = DEFAULT_MAX_IMAGE_SIZE
+) -> tuple[list[list[str]], dict[str, int], str]:
+    """Load inputs from a local file or directory.
+
+    Supports images, PDFs, and videos.
+
+    Args:
+        input_path: Path to file or directory
+        max_size: Maximum image dimension (width or height)
 
     Returns:
         (inputs, breakdown, hash)
         - inputs: list of lists of base64 data URIs (each inner list = one "input")
         - breakdown: {"images": N, "pdf_pages": N, "video_frames": N}
-        - hash: SHA256 hex of all input file contents
+        - hash: SHA256 hex of all input contents
     """
     path = Path(input_path)
     breakdown = {"images": 0, "pdf_pages": 0, "video_frames": 0}
@@ -1191,7 +1569,7 @@ def load_inputs(input_path: str, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> tupl
             hasher.update(fh.read())
 
         if ext in IMAGE_EXTENSIONS:
-            b64 = image_to_base64(f, max_size)
+            b64 = image_to_base64(f, max_size=max_size)
             inputs.append([b64])
             breakdown["images"] += 1
         elif ext in PDF_EXTENSIONS:
@@ -1216,58 +1594,6 @@ def load_inputs(input_path: str, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> tupl
     return inputs, breakdown, input_hash
 
 
-def load_hf_dataset(
-    dataset: str,
-    max_size: int = DEFAULT_MAX_IMAGE_SIZE,
-) -> tuple[list[list[str]], dict[str, int], str, list[str]]:
-    """Load inputs from a HuggingFace dataset using the ``datasets`` library.
-
-    Requires ``pip install 'vlmbench[hf]'`` (or ``pip install datasets``).
-    Returns the same tuple as ``load_inputs`` plus a list of per-row prompts.
-    """
-    try:
-        from datasets import load_dataset
-    except ImportError:
-        print_error(
-            "Missing dependency",
-            "The 'datasets' package is required for HuggingFace datasets.\n"
-            "Install it with:  pip install 'vlmbench[hf]'  or  pip install datasets",
-        )
-        sys.exit(1)
-
-    with console.status(f"  Loading [bold]{dataset}[/bold]..."):
-        ds = load_dataset(dataset, split="train")
-
-    inputs: list[list[str]] = []
-    prompts: list[str] = []
-    breakdown = {"images": 0, "pdf_pages": 0, "video_frames": 0}
-    hasher = hashlib.sha256()
-
-    for row in ds:
-        images = row.get("images", [])
-        if not isinstance(images, list):
-            images = [images]
-
-        row_uris: list[str] = []
-        for img in images:
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            img_bytes = buf.getvalue()
-            hasher.update(img_bytes)
-            row_uris.append(image_to_base64(img, max_size))
-            breakdown["images"] += 1
-        if row_uris:
-            inputs.append(row_uris)
-            prompts.append(row.get("prompt", DEFAULT_PROMPT))
-
-    if not inputs:
-        print_error("No inputs", f"No images could be loaded from {dataset}")
-        sys.exit(1)
-
-    input_hash = f"sha256:{hasher.hexdigest()}"
-    return inputs, breakdown, input_hash, prompts
-
-
 # ── Benchmark Core ────────────────────────────────────────────────────────────
 
 
@@ -1289,7 +1615,7 @@ def call_completion(
     global _stream_options_supported
 
     t_start = time.perf_counter()
-    ttft: Optional[float] = None
+    ttft: float | None = None
     completion_tokens = 0
     prompt_tokens = 0
     cached_tokens = 0
@@ -1562,10 +1888,10 @@ def print_banner() -> None:
 def print_config(
     model_id: str,
     revision: str,
-    quant: Optional[str],
+    quant: str | None,
     base_url: str,
     backend: str,
-    backend_version: Optional[str],
+    backend_version: str | None,
     env: EnvironmentInfo,
     total_inputs: int,
     breakdown: dict[str, int],
@@ -1738,8 +2064,6 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
         return r.results.tokens_per_sec * r.input.max_concurrency
 
     # Group by model_id, sort groups by best tok/s descending
-    from itertools import groupby
-
     sorted_results = sorted(results, key=lambda r: (r.model.model_id, -_total_tok_s(r)))
     groups: list[tuple[str, list[BenchmarkResult]]] = [
         (model_id, list(runs)) for model_id, runs in groupby(sorted_results, key=lambda r: r.model.model_id)
@@ -1888,12 +2212,30 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Model ID (vLLM: Qwen/Qwen3-VL-2B-Instruct, Ollama: qwen3-vl:2b)",
     )
-    run_parser.add_argument(
+
+    # Input source (mutually exclusive: --input OR --dataset, defaults to sample image URL)
+    input_group = run_parser.add_mutually_exclusive_group(required=False)
+    input_group.add_argument(
         "--input",
         "-i",
-        required=True,
         dest="input_path",
-        help="File/directory of images/PDFs/videos, or hf://datasets/<org>/<name>",
+        help="Local file, directory, or URL (images, PDFs, videos)",
+    )
+    input_group.add_argument(
+        "--dataset",
+        "-d",
+        dest="dataset",
+        help="HuggingFace dataset (e.g., vlm-run/FineVision-vlmbench-mini or org/name:config)",
+    )
+    run_parser.add_argument(
+        "--dataset-image-col",
+        default=None,
+        help="Image column name in dataset (auto-detected if not specified)",
+    )
+    run_parser.add_argument(
+        "--dataset-split",
+        default="train",
+        help="Dataset split to use (default: train)",
     )
 
     # Server
@@ -1930,6 +2272,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--runs", type=int, default=DEFAULT_RUNS, help="Timed runs per input")
     run_parser.add_argument("--warmup", type=int, default=1, help="Number of warmup runs (not recorded)")
     run_parser.add_argument("--max-concurrency", type=int, default=DEFAULT_CONCURRENCY, help="Max parallel requests")
+    run_parser.add_argument(
+        "--max-samples", type=int, default=None, help="Limit number of input samples (for dry-runs)"
+    )
 
     # Output
     run_parser.add_argument("--save", default=DEFAULT_SAVE_DIR, help="Output directory")
@@ -1956,16 +2301,31 @@ def cmd_run(args: argparse.Namespace) -> None:
     # Collect environment
     env = collect_environment(base_url)
 
-    # Load inputs
-    if args.input_path.startswith(HF_DATASET_PREFIX):
-        dataset_id = args.input_path[len(HF_DATASET_PREFIX) :]
-        inputs, breakdown, input_hash, dataset_prompts = load_hf_dataset(dataset_id, max_size=args.max_size)
-        prompt = dataset_prompts if args.prompt == DEFAULT_PROMPT else args.prompt
-        input_display = args.input_path
+    # Load inputs from dataset, local path, or default URL
+    if args.dataset:
+        # Strip hf:// prefix if present
+        dataset_name = args.dataset.removeprefix("hf://")
+        inputs, breakdown, input_hash = load_hf_dataset(
+            dataset_name,
+            image_col=args.dataset_image_col,
+            split=args.dataset_split,
+            max_samples=args.max_samples,
+            max_size=args.max_size,
+        )
+        input_source = f"hf://{dataset_name}"
+    elif args.input_path:
+        inputs, breakdown, input_hash = load_local_inputs(args.input_path, max_size=args.max_size)
+        input_source = args.input_path
+        # Apply --max-samples limit for local inputs (HF handles it internally)
+        if args.max_samples is not None and args.max_samples < len(inputs):
+            inputs = inputs[: args.max_samples]
     else:
-        inputs, breakdown, input_hash = load_inputs(args.input_path, max_size=args.max_size)
-        prompt = args.prompt
-        input_display = args.input_path
+        # Use default sample image URL
+        inputs = [[DEFAULT_IMAGE_URL]]
+        breakdown = {"images": 1, "pdf_pages": 0, "video_frames": 0}
+        input_hash = f"url:{DEFAULT_IMAGE_URL}"
+        input_source = DEFAULT_IMAGE_URL
+
     total_inputs = len(inputs)
 
     # Resolve quant
@@ -1982,7 +2342,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         env=env,
         total_inputs=total_inputs,
         breakdown=breakdown,
-        input_path=input_display,
+        input_path=input_source,
         max_tokens=args.max_tokens,
         runs=args.runs,
         max_concurrency=args.max_concurrency,
@@ -2020,7 +2380,7 @@ def cmd_run(args: argparse.Namespace) -> None:
             client=client,
             model=args.model,
             inputs=inputs,
-            prompt=prompt,
+            prompt=args.prompt,
             max_tokens=args.max_tokens,
             runs=args.runs,
             max_concurrency=args.max_concurrency,
@@ -2058,7 +2418,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     inputs_per_sec = round(len(successful_runs) / total_duration_s, 2) if total_duration_s > 0 else 0
 
     # VRAM peak (try nvidia-smi for the active GPU)
-    vram_peak: Optional[int] = None
+    vram_peak: int | None = None
     try:
         if platform.system() == "Linux":
             gpu_idx = _nvidia_gpu_index()
@@ -2091,7 +2451,7 @@ def cmd_run(args: argparse.Namespace) -> None:
             hash=input_hash,
             total_inputs=total_inputs,
             breakdown=breakdown,
-            prompt=args.prompt if isinstance(prompt, str) else "[per-input]",
+            prompt=args.prompt,
             max_tokens=args.max_tokens,
             max_concurrency=args.max_concurrency,
         ),
@@ -2118,10 +2478,11 @@ def cmd_run(args: argparse.Namespace) -> None:
     save_dir = Path(args.save)
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    # Backend slug: use the detected backend name (ollama, vllm, vllm-openai, sglang, etc.)
+    backend_slug = env.backend.lower()
     # Model slug: take last part of model ID, replace non-alnum with dash
     model_slug = re.sub(r"[^a-zA-Z0-9]", "-", args.model.split("/")[-1]).strip("-").lower()
-    ts_str = datetime.now().strftime("%Y%m%dT%H%M%S")
-    filename = f"{model_slug}-{ts_str}.json"
+    filename = f"{backend_slug}-{model_slug}.json"
     save_path = save_dir / filename
 
     with open(save_path, "w") as f:
@@ -2172,13 +2533,14 @@ def main() -> None:
     parser = build_parser()
     parsed = parser.parse_args(argv)
 
-    if parsed.command is None:
-        parser.print_help()
-        sys.exit(0)
-    elif parsed.command == "run":
-        cmd_run(parsed)
-    elif parsed.command == "compare":
-        cmd_compare(parsed)
+    match parsed.command:
+        case None:
+            parser.print_help()
+            sys.exit(0)
+        case "run":
+            cmd_run(parsed)
+        case "compare":
+            cmd_compare(parsed)
 
 
 if __name__ == "__main__":
