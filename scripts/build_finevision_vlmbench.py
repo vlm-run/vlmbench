@@ -17,17 +17,14 @@ Usage:
     uv run scripts/build_finevision_vlmbench.py --push      # build + push to HF
     uv run scripts/build_finevision_vlmbench.py --dry-run   # preview configs only
 """
-from __future__ import annotations
-
 import hashlib
 import io
-import json
 import random
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
-from datasets import Dataset, DatasetDict, Features, Image, Sequence, Value, load_dataset
+from datasets import Dataset, Features, Image, Sequence, Value, load_dataset
 from huggingface_hub import HfApi
 from PIL import Image as PILImage
 from rich.console import Console
@@ -140,13 +137,7 @@ def extract_row(raw: dict, category: str, config_name: str) -> SampledRow | None
     if not images or not texts:
         return None
 
-    # Ensure images are PIL Image objects
-    valid_images = []
-    for img in images:
-        if img is None:
-            continue
-        if isinstance(img, PILImage.Image):
-            valid_images.append(img)
+    valid_images = [img for img in images if isinstance(img, PILImage.Image)]
     if not valid_images:
         return None
 
@@ -355,15 +346,8 @@ def show_distribution(ds: Dataset) -> None:
     t3.add_column("Width", justify="right")
     t3.add_column("Height", justify="right")
     for stat in ["min", "mean", "median", "max", "std"]:
-        if stat == "median":
-            w_val = df["image_width"].median()
-            h_val = df["image_height"].median()
-        elif stat == "std":
-            w_val = df["image_width"].std()
-            h_val = df["image_height"].std()
-        else:
-            w_val = getattr(df["image_width"], stat)()
-            h_val = getattr(df["image_height"], stat)()
+        w_val = getattr(df["image_width"], stat)()
+        h_val = getattr(df["image_height"], stat)()
         t3.add_row(stat, f"{w_val:.0f}", f"{h_val:.0f}")
     console.print(t3)
 
@@ -373,12 +357,8 @@ def show_distribution(ds: Dataset) -> None:
     t4.add_column("Prompt", justify="right")
     t4.add_column("Response", justify="right")
     for stat in ["min", "mean", "median", "max"]:
-        if stat == "median":
-            p_val = df["prompt_length"].median()
-            r_val = df["response_length"].median()
-        else:
-            p_val = getattr(df["prompt_length"], stat)()
-            r_val = getattr(df["response_length"], stat)()
+        p_val = getattr(df["prompt_length"], stat)()
+        r_val = getattr(df["response_length"], stat)()
         t4.add_row(stat, f"{p_val:.0f}", f"{r_val:.0f}")
     console.print(t4)
 
