@@ -43,8 +43,9 @@ if [[ ! " ${BENCH_ARGS[*]} " =~ " --save " ]]; then
     BENCH_ARGS+=(--save "$SAVE_DIR")
 fi
 
-echo "Running: uvx vlmbench run ${BENCH_ARGS[*]}"
-uvx vlmbench run "${BENCH_ARGS[@]}"
+VLMBENCH_PKG="vlmbench @ git+https://github.com/vlm-run/vlmbench.git@spillai/hf-jobs-gpu-sweep"
+echo "Running: uvx --from '$VLMBENCH_PKG' vlmbench run ${BENCH_ARGS[*]}"
+uvx --from "$VLMBENCH_PKG" vlmbench run "${BENCH_ARGS[@]}"
 
 # ── Upload results ───────────────────────────────────────────────────
 if [[ "$UPLOAD" == true ]]; then
