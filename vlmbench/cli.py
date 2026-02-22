@@ -26,8 +26,6 @@ vlmbench — Single-file, drop-in VLM benchmark CLI for your agents.
 by VLM Run · https://vlm.run
 """
 
-from __future__ import annotations
-
 import argparse
 import base64
 import dataclasses
@@ -50,8 +48,10 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from itertools import groupby
 from pathlib import Path
-from typing import Any, Optional, Protocol, Union, get_args, get_origin, get_type_hints, runtime_checkable
+from types import UnionType
+from typing import Any, Protocol, get_args, get_origin, get_type_hints, runtime_checkable
 
 from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 from PIL import Image
@@ -65,7 +65,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-VERSION = "0.2.2"
+VERSION = "0.2.5"
 SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
 DEFAULT_MAX_TOKENS = 2048
@@ -112,22 +112,22 @@ def print_warning(message: str) -> None:
 class ModelInfo:
     model_id: str = ""
     revision: str = "main"
-    quant: Optional[str] = None
-    params_b: Optional[float] = None
+    quant: str | None = None
+    params_b: float | None = None
 
 
 @dataclass
 class EnvironmentInfo:
     backend: str = ""
-    backend_version: Optional[str] = None
+    backend_version: str | None = None
     base_url: str = ""
-    accelerator: Optional[str] = None
-    gpu_name: Optional[str] = None
-    gpu_vram_mib: Optional[int] = None
-    gpu_driver: Optional[str] = None
-    ram_total_mib: Optional[int] = None
-    cpu: Optional[str] = None
-    os: Optional[str] = None
+    accelerator: str | None = None
+    gpu_name: str | None = None
+    gpu_vram_mib: int | None = None
+    gpu_driver: str | None = None
+    ram_total_mib: int | None = None
+    cpu: str | None = None
+    os: str | None = None
 
 
 @dataclass
@@ -164,9 +164,9 @@ class Results:
     latency_s_per_input: StatBlock = field(default_factory=StatBlock)
     prompt_tokens: TokenStat = field(default_factory=TokenStat)
     completion_tokens: TokenStat = field(default_factory=TokenStat)
-    cached_tokens: Optional[TokenStat] = None
-    reasoning_tokens: Optional[TokenStat] = None
-    vram_peak_mib: Optional[int] = None
+    cached_tokens: TokenStat | None = None
+    reasoning_tokens: TokenStat | None = None
+    vram_peak_mib: int | None = None
     total_inputs_processed: int = 0
     total_duration_s: float = 0.0
     errors: int = 0
@@ -177,13 +177,13 @@ class Results:
 class RunRaw:
     input_idx: int = 0
     run: int = 0
-    ttft_ms: Optional[float] = None
+    ttft_ms: float | None = None
     latency_s: float = 0.0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cached_tokens: int = 0
     reasoning_tokens: int = 0
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -191,7 +191,7 @@ class BenchmarkResult:
     schema_version: str = SCHEMA_VERSION
     run_id: str = ""
     timestamp: str = ""
-    tag: Optional[str] = None
+    tag: str | None = None
     model: ModelInfo = field(default_factory=ModelInfo)
     environment: EnvironmentInfo = field(default_factory=EnvironmentInfo)
     input: InputInfo = field(default_factory=InputInfo)
@@ -205,8 +205,8 @@ def _coerce_field(ftype: type, val: Any) -> Any:
         return None
     origin = get_origin(ftype)
     args = get_args(ftype)
-    # Optional[X] is Union[X, None]
-    if origin is Union:
+    # X | None is UnionType in Python 3.10+
+    if origin is UnionType:
         non_none = [a for a in args if a is not type(None)]
         if non_none:
             return _coerce_field(non_none[0], val)
@@ -236,7 +236,7 @@ def _dc_from_dict(cls: type, data: dict[str, Any]) -> Any:
 # ── Environment Detection ─────────────────────────────────────────────────────
 
 
-def detect_backend(base_url: str) -> tuple[str, Optional[str]]:
+def detect_backend(base_url: str) -> tuple[str, str | None]:
     """Detect the backend type and version from the base URL."""
     # Strip /v1 suffix for probing
     probe_url = base_url.rstrip("/")
@@ -262,12 +262,13 @@ def detect_backend(base_url: str) -> tuple[str, Optional[str]]:
         pass
 
     # 3. URL-based detection
-    if "openai.com" in base_url:
-        return "openai", None
-    if "together.xyz" in base_url:
-        return "together", None
-
-    return "generic", None
+    match base_url:
+        case url if "openai.com" in url:
+            return "openai", None
+        case url if "together.xyz" in url:
+            return "together", None
+        case _:
+            return "generic", None
 
 
 def _nvidia_gpu_index() -> int:
@@ -360,45 +361,48 @@ def get_apple_gpu_info() -> dict[str, Any]:
 def get_system_info() -> dict[str, Any]:
     """Cross-platform: RAM, CPU, OS."""
     info: dict[str, Any] = {"os": platform.platform()}
+    system = platform.system()
 
     # CPU
     try:
-        if platform.system() == "Darwin":
-            result = subprocess.run(
-                ["sysctl", "-n", "machdep.cpu.brand_string"],
-                capture_output=True,
-                text=True,
-                timeout=3,
-            )
-            if result.returncode == 0:
-                info["cpu"] = result.stdout.strip()
-        elif platform.system() == "Linux":
-            with open("/proc/cpuinfo") as f:
-                for line in f:
-                    if line.startswith("model name"):
-                        info["cpu"] = line.split(":", 1)[1].strip()
-                        break
+        match system:
+            case "Darwin":
+                result = subprocess.run(
+                    ["sysctl", "-n", "machdep.cpu.brand_string"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                if result.returncode == 0:
+                    info["cpu"] = result.stdout.strip()
+            case "Linux":
+                with open("/proc/cpuinfo") as f:
+                    for line in f:
+                        if line.startswith("model name"):
+                            info["cpu"] = line.split(":", 1)[1].strip()
+                            break
     except Exception:
         pass
 
     # RAM
     try:
-        if platform.system() == "Darwin":
-            result = subprocess.run(
-                ["sysctl", "-n", "hw.memsize"],
-                capture_output=True,
-                text=True,
-                timeout=3,
-            )
-            if result.returncode == 0:
-                info["ram_total_mib"] = int(result.stdout.strip()) // (1024 * 1024)
-        elif platform.system() == "Linux":
-            with open("/proc/meminfo") as f:
-                for line in f:
-                    if line.startswith("MemTotal"):
-                        kb = int(re.search(r"\d+", line).group())
-                        info["ram_total_mib"] = kb // 1024
-                        break
+        match system:
+            case "Darwin":
+                result = subprocess.run(
+                    ["sysctl", "-n", "hw.memsize"],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                if result.returncode == 0:
+                    info["ram_total_mib"] = int(result.stdout.strip()) // (1024 * 1024)
+            case "Linux":
+                with open("/proc/meminfo") as f:
+                    for line in f:
+                        if line.startswith("MemTotal"):
+                            kb = int(re.search(r"\d+", line).group())
+                            info["ram_total_mib"] = kb // 1024
+                            break
     except Exception:
         pass
 
@@ -420,19 +424,18 @@ def collect_environment(base_url: str) -> EnvironmentInfo:
         "ram_total_mib": sys_info.get("ram_total_mib"),
     }
 
-    # GPU info based on platform
-    if backend in ("openai", "together"):
-        # Cloud APIs — no local GPU info
-        env_data["accelerator"] = None
-        env_data["gpu_name"] = None
-        env_data["gpu_vram_mib"] = None
-        env_data["gpu_driver"] = None
-    elif platform.system() == "Darwin":
-        gpu_info = get_apple_gpu_info()
-        env_data.update(gpu_info)
-    elif platform.system() == "Linux":
-        gpu_info = get_nvidia_gpu_info()
-        env_data.update(gpu_info)
+    # GPU info based on platform and backend
+    match (backend, platform.system()):
+        case ("openai" | "together", _):
+            # Cloud APIs — no local GPU info
+            env_data["accelerator"] = None
+            env_data["gpu_name"] = None
+            env_data["gpu_vram_mib"] = None
+            env_data["gpu_driver"] = None
+        case (_, "Darwin"):
+            env_data.update(get_apple_gpu_info())
+        case (_, "Linux"):
+            env_data.update(get_nvidia_gpu_info())
 
     return EnvironmentInfo(**env_data)
 
@@ -762,24 +765,27 @@ def _build_server_cmd(backend: str, model: str, serve_args: str | None = None) -
     if backend == "auto":
         backend = _auto_detect_backend()
     category = _backend_category(backend)
-    if backend == "ollama":
-        cmd = "ollama serve"
-        base_url = f"http://localhost:{OllamaServerManager.DEFAULT_PORT}/v1"
-    elif backend == "vllm":
-        cmd = f"vllm serve {shlex.quote(model)}"
-        base_url = f"http://localhost:{NativeVllmServerManager.DEFAULT_PORT}/v1"
-    else:
-        # Docker-based (vllm-openai, sglang)
-        image, _container = _parse_docker_backend(backend)
-        cache_dir = Path.home() / ".vlmbench" / category
-        cmd = (
-            f"docker run --rm --gpus all"
-            f" -p {DockerServerManager.DEFAULT_PORT}:8000 --ipc=host"
-            f" -v {shlex.quote(str(cache_dir))}:/root/.cache/huggingface"
-            f" {shlex.quote(image)}"
-            f" --model {shlex.quote(model)}"
-        )
-        base_url = f"http://localhost:{DockerServerManager.DEFAULT_PORT}/v1"
+
+    match backend:
+        case "ollama":
+            cmd = "ollama serve"
+            base_url = f"http://localhost:{OllamaServerManager.DEFAULT_PORT}/v1"
+        case "vllm":
+            cmd = f"vllm serve {shlex.quote(model)}"
+            base_url = f"http://localhost:{NativeVllmServerManager.DEFAULT_PORT}/v1"
+        case _:
+            # Docker-based (vllm-openai, sglang)
+            image, _container = _parse_docker_backend(backend)
+            cache_dir = Path.home() / ".vlmbench" / category
+            cmd = (
+                f"docker run --rm --gpus all"
+                f" -p {DockerServerManager.DEFAULT_PORT}:8000 --ipc=host"
+                f" -v {shlex.quote(str(cache_dir))}:/root/.cache/huggingface"
+                f" {shlex.quote(image)}"
+                f" --model {shlex.quote(model)}"
+            )
+            base_url = f"http://localhost:{DockerServerManager.DEFAULT_PORT}/v1"
+
     if serve_args:
         cmd += f" {shlex.join(shlex.split(serve_args))}"
     return cmd, base_url
@@ -847,44 +853,50 @@ def _print_server_instructions(
 
 def _gpu_monitor_cmd() -> str | None:
     """Return the best available GPU/system monitor command for the bottom tmux pane."""
-    if platform.system() == "Darwin":
-        # macOS: prefer macmon (brew install macmon)
-        if shutil.which("macmon"):
-            return "macmon"
-    else:
-        # Linux: prefer nvitop via uvx
-        if shutil.which("uvx"):
-            return "uvx nvitop -m full -c"
-        if shutil.which("nvitop"):
-            return "nvitop -m full -c"
-    return None
+    match platform.system():
+        case "Darwin":
+            # macOS: prefer macmon (brew install macmon)
+            return "macmon" if shutil.which("macmon") else None
+        case _:
+            # Linux: prefer nvitop via uvx
+            if shutil.which("uvx"):
+                return "uvx nvitop -m full -c"
+            if shutil.which("nvitop"):
+                return "nvitop -m full -c"
+            return None
 
 
 def _auto_detect_backend() -> str:
     """Pick a default backend based on the current platform."""
-    if platform.system() == "Darwin":
-        return "ollama"
-    return DEFAULT_VLLM_IMAGE  # Linux defaults to Docker vLLM
+    match platform.system():
+        case "Darwin":
+            return "ollama"
+        case _:
+            return DEFAULT_VLLM_IMAGE  # Linux defaults to Docker vLLM
 
 
 def _resolve_backend_for_monitor(backend: str) -> str:
     """Resolve backend string to a category: 'ollama', 'vllm', or 'sglang'."""
-    if backend == "auto":
-        return "ollama" if platform.system() == "Darwin" else "vllm"
-    if backend == "ollama":
-        return "ollama"
-    if backend.startswith("sglang"):
-        return "sglang"
-    return "vllm"
+    match backend:
+        case "auto":
+            return "ollama" if platform.system() == "Darwin" else "vllm"
+        case "ollama":
+            return "ollama"
+        case _ if backend.startswith("sglang"):
+            return "sglang"
+        case _:
+            return "vllm"
 
 
 def _create_server_manager(backend: str) -> DockerServerManager | OllamaServerManager | NativeVllmServerManager:
     """Create the appropriate server manager for the given backend."""
-    if backend == "ollama":
-        return OllamaServerManager()
-    if backend == "vllm":
-        return NativeVllmServerManager()
-    return DockerServerManager(backend)
+    match backend:
+        case "ollama":
+            return OllamaServerManager()
+        case "vllm":
+            return NativeVllmServerManager()
+        case _:
+            return DockerServerManager(backend)
 
 
 def _find_docker_container(name_prefix: str = "vlmbench-") -> str | None:
@@ -1289,7 +1301,7 @@ def call_completion(
     global _stream_options_supported
 
     t_start = time.perf_counter()
-    ttft: Optional[float] = None
+    ttft: float | None = None
     completion_tokens = 0
     prompt_tokens = 0
     cached_tokens = 0
@@ -1562,10 +1574,10 @@ def print_banner() -> None:
 def print_config(
     model_id: str,
     revision: str,
-    quant: Optional[str],
+    quant: str | None,
     base_url: str,
     backend: str,
-    backend_version: Optional[str],
+    backend_version: str | None,
     env: EnvironmentInfo,
     total_inputs: int,
     breakdown: dict[str, int],
@@ -1738,8 +1750,6 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
         return r.results.tokens_per_sec * r.input.max_concurrency
 
     # Group by model_id, sort groups by best tok/s descending
-    from itertools import groupby
-
     sorted_results = sorted(results, key=lambda r: (r.model.model_id, -_total_tok_s(r)))
     groups: list[tuple[str, list[BenchmarkResult]]] = [
         (model_id, list(runs)) for model_id, runs in groupby(sorted_results, key=lambda r: r.model.model_id)
@@ -2058,7 +2068,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     inputs_per_sec = round(len(successful_runs) / total_duration_s, 2) if total_duration_s > 0 else 0
 
     # VRAM peak (try nvidia-smi for the active GPU)
-    vram_peak: Optional[int] = None
+    vram_peak: int | None = None
     try:
         if platform.system() == "Linux":
             gpu_idx = _nvidia_gpu_index()
@@ -2118,10 +2128,11 @@ def cmd_run(args: argparse.Namespace) -> None:
     save_dir = Path(args.save)
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    # Backend slug: use the detected backend name (ollama, vllm, vllm-openai, sglang, etc.)
+    backend_slug = env.backend.lower()
     # Model slug: take last part of model ID, replace non-alnum with dash
     model_slug = re.sub(r"[^a-zA-Z0-9]", "-", args.model.split("/")[-1]).strip("-").lower()
-    ts_str = datetime.now().strftime("%Y%m%dT%H%M%S")
-    filename = f"{model_slug}-{ts_str}.json"
+    filename = f"{backend_slug}-{model_slug}.json"
     save_path = save_dir / filename
 
     with open(save_path, "w") as f:
@@ -2172,13 +2183,14 @@ def main() -> None:
     parser = build_parser()
     parsed = parser.parse_args(argv)
 
-    if parsed.command is None:
-        parser.print_help()
-        sys.exit(0)
-    elif parsed.command == "run":
-        cmd_run(parsed)
-    elif parsed.command == "compare":
-        cmd_compare(parsed)
+    match parsed.command:
+        case None:
+            parser.print_help()
+            sys.exit(0)
+        case "run":
+            cmd_run(parsed)
+        case "compare":
+            cmd_compare(parsed)
 
 
 if __name__ == "__main__":
