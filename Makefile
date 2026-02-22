@@ -61,17 +61,18 @@ endif
 		$(if $(INPUT),--input $(INPUT),) \
 		$(if $(DATASET),--dataset $(DATASET),)
 
-# Submit simple benchmark to HF Jobs (uses inline uv script)
+# Submit simple benchmark to HF Jobs
 # Usage: make hf-benchmark FLAVOR=l4x1
 hf-benchmark:
 ifndef FLAVOR
 	$(error FLAVOR is required. Example: make hf-benchmark FLAVOR=l4x1)
 endif
+	$(eval SCRIPT_B64 := $(shell base64 < scripts/simple_benchmark.py | tr -d '\n'))
 	uvx hf jobs run \
 		--flavor $(FLAVOR) \
 		--secrets HF_TOKEN \
 		--timeout $(HF_TIMEOUT) \
-		uv run scripts/simple_benchmark.py
+		bash -c 'echo $(SCRIPT_B64) | base64 -d > /tmp/bench.py && uv run /tmp/bench.py'
 
 # Sweep across multiple GPU flavors
 # Usage: make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS="t4-small l4x1 a10g-small"
