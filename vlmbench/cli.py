@@ -65,7 +65,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-VERSION = "0.2.11"
+VERSION = "0.3.0"
 SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
 DEFAULT_MAX_TOKENS = 2048
@@ -73,6 +73,7 @@ DEFAULT_RUNS = 3
 DEFAULT_CONCURRENCY = 4
 DEFAULT_SAVE_DIR = "./results"
 DEFAULT_API_KEY = "no-key"
+DEFAULT_IMAGE_URL = "https://storage.googleapis.com/vlm-data-public-prod/hub/examples/image.caption/car.jpg"
 
 DEFAULT_VLLM_IMAGE = "vllm-openai:latest"
 DEFAULT_MAX_IMAGE_SIZE = 2048
@@ -2190,13 +2191,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Model ID (vLLM: Qwen/Qwen3-VL-2B-Instruct, Ollama: qwen3-vl:2b)",
     )
 
-    # Input source (mutually exclusive: --input OR --dataset)
-    input_group = run_parser.add_mutually_exclusive_group(required=True)
+    # Input source (mutually exclusive: --input OR --dataset, defaults to sample image URL)
+    input_group = run_parser.add_mutually_exclusive_group(required=False)
     input_group.add_argument(
         "--input",
         "-i",
         dest="input_path",
-        help="Local file or directory (images, PDFs, videos)",
+        help="Local file, directory, or URL (images, PDFs, videos)",
     )
     input_group.add_argument(
         "--dataset",
@@ -2278,7 +2279,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     # Collect environment
     env = collect_environment(base_url)
 
-    # Load inputs from dataset or local path
+    # Load inputs from dataset, local path, or default URL
     if args.dataset:
         # Strip hf:// prefix if present
         dataset_name = args.dataset.removeprefix("hf://")
@@ -2289,12 +2290,18 @@ def cmd_run(args: argparse.Namespace) -> None:
             max_samples=args.max_samples,
         )
         input_source = f"hf://{dataset_name}"
-    else:
+    elif args.input_path:
         inputs, breakdown, input_hash = load_local_inputs(args.input_path)
         input_source = args.input_path
         # Apply --max-samples limit for local inputs (HF handles it internally)
         if args.max_samples is not None and args.max_samples < len(inputs):
             inputs = inputs[: args.max_samples]
+    else:
+        # Use default sample image URL
+        inputs = [[DEFAULT_IMAGE_URL]]
+        breakdown = {"images": 1, "pdf_pages": 0, "video_frames": 0}
+        input_hash = f"url:{DEFAULT_IMAGE_URL}"
+        input_source = DEFAULT_IMAGE_URL
 
     total_inputs = len(inputs)
 

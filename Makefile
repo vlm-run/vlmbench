@@ -61,18 +61,18 @@ endif
 		$(if $(INPUT),--input $(INPUT),) \
 		$(if $(DATASET),--dataset $(DATASET),)
 
-# Submit simple benchmark to HF Jobs
-# Usage: make hf-benchmark FLAVOR=l4x1
+# Submit benchmark to HF Jobs (test with --help, run with MODEL=...)
+# Usage: make hf-benchmark FLAVOR=l4x1 MODEL=Qwen/Qwen3-VL-2B-Instruct
 hf-benchmark:
 ifndef FLAVOR
 	$(error FLAVOR is required. Example: make hf-benchmark FLAVOR=l4x1)
 endif
-	$(eval SCRIPT_B64 := $(shell base64 < scripts/simple_benchmark.py | tr -d '\n'))
 	uvx hf jobs run \
 		--flavor $(FLAVOR) \
 		--secrets HF_TOKEN \
 		--timeout $(HF_TIMEOUT) \
-		bash -c 'echo $(SCRIPT_B64) | base64 -d > /tmp/bench.py && uv run /tmp/bench.py'
+		-- ghcr.io/astral-sh/uv:python3.12-bookworm \
+		uv run --with vlmbench vlmbench --help
 
 # Sweep across multiple GPU flavors
 # Usage: make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS="t4-small l4x1 a10g-small"
