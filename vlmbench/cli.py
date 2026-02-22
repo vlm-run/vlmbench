@@ -74,6 +74,7 @@ DEFAULT_CONCURRENCY = 4
 DEFAULT_SAVE_DIR = "./results"
 DEFAULT_API_KEY = "no-key"
 DEFAULT_IMAGE_URL = "https://storage.googleapis.com/vlm-data-public-prod/hub/examples/image.caption/car.jpg"
+DEFAULT_MAX_IMAGE_SIZE = 2048
 
 DEFAULT_VLLM_IMAGE = "vllm-openai:latest"
 DEFAULT_MAX_IMAGE_SIZE = 2048
@@ -1199,18 +1200,30 @@ def video_to_base64_frames(path: Path) -> list[str]:
         return results
 
 
-def pil_to_base64(img: Any) -> str:
-    """Convert a PIL Image to a base64 data URI."""
-    buf = io.BytesIO()
+def pil_to_base64(img: Any, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> str:
+    """Convert a PIL Image to a base64 data URI, with optional resizing.
+
+    Args:
+        img: PIL Image
+        max_size: Maximum dimension (width or height). Images larger than this
+                  are downscaled while preserving aspect ratio.
+    """
     # Convert to RGB if necessary (handles RGBA, P mode, etc.)
     if hasattr(img, "mode") and img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
-    img.save(buf, format="PNG")
+
+    # Downscale if larger than max_size
+    if max(img.width, img.height) > max_size:
+        img.thumbnail((max_size, max_size))
+
+    # Encode as JPEG for smaller size
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=95)
     b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-    return f"data:image/png;base64,{b64}"
+    return f"data:image/jpeg;base64,{b64}"
 
 
-def numpy_to_base64(arr: Any) -> str:
+def numpy_to_base64(arr: Any, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> str:
     """Convert a numpy array to a base64 data URI via PIL."""
     from PIL import Image
 
@@ -1227,7 +1240,7 @@ def numpy_to_base64(arr: Any) -> str:
     else:
         # Best effort
         img = Image.fromarray(arr)
-    return pil_to_base64(img)
+    return pil_to_base64(img, max_size=max_size)
 
 
 def _is_base64_image(val: Any) -> bool:
@@ -1255,7 +1268,7 @@ def _is_numpy_image(val: Any) -> bool:
     return hasattr(val, "ndim") and hasattr(val, "shape") and val.ndim in (2, 3)
 
 
-def _convert_to_base64(img: Any) -> str:
+def _convert_to_base64(img: Any, max_size: int = DEFAULT_MAX_IMAGE_SIZE) -> str:
     """Convert an image (PIL, numpy, base64 string, or bytes) to a base64 data URI."""
     # Already a data URI
     if isinstance(img, str) and img.startswith("data:image/"):
@@ -1263,26 +1276,30 @@ def _convert_to_base64(img: Any) -> str:
 
     # Raw base64 string (no data URI prefix)
     if isinstance(img, str) and _is_base64_image(img):
-        # Assume PNG if no mime type provided
-        return f"data:image/png;base64,{img}"
+        # Assume JPEG if no mime type provided
+        return f"data:image/jpeg;base64,{img}"
 
-    # Bytes - encode as base64
+    # Bytes - decode and re-encode with resizing
     if isinstance(img, bytes):
-        b64 = base64.b64encode(img).decode("utf-8")
-        return f"data:image/png;base64,{b64}"
+        from PIL import Image
+
+        pil_img = Image.open(io.BytesIO(img))
+        return pil_to_base64(pil_img, max_size=max_size)
 
     # PIL Image
     if _is_pil_image(img):
-        return pil_to_base64(img)
+        return pil_to_base64(img, max_size=max_size)
 
     # numpy array
     if _is_numpy_image(img):
-        return numpy_to_base64(img)
+        return numpy_to_base64(img, max_size=max_size)
 
     # Dict with 'bytes' key (common in HF datasets)
     if isinstance(img, dict) and "bytes" in img:
-        b64 = base64.b64encode(img["bytes"]).decode("utf-8")
-        return f"data:image/png;base64,{b64}"
+        from PIL import Image
+
+        pil_img = Image.open(io.BytesIO(img["bytes"]))
+        return pil_to_base64(pil_img, max_size=max_size)
 
     raise ValueError(f"Unsupported image type: {type(img)}")
 
@@ -1335,6 +1352,7 @@ def load_hf_dataset(
     image_col: str | None = None,
     split: str = "train",
     max_samples: int | None = None,
+    max_size: int = DEFAULT_MAX_IMAGE_SIZE,
 ) -> tuple[list[list[str]], dict[str, int], str]:
     """Load inputs from a HuggingFace dataset.
 
@@ -1353,6 +1371,7 @@ def load_hf_dataset(
         image_col: Optional column name containing images. If None, auto-detect.
         split: Dataset split to load (default: train)
         max_samples: Maximum number of samples to load. If set, uses streaming.
+        max_size: Maximum image dimension (width or height)
 
     Returns:
         (inputs, breakdown, hash)
@@ -1450,14 +1469,14 @@ def load_hf_dataset(
 
         if is_list_col:
             if len(val) > 0:
-                b64_list = [_convert_to_base64(img) for img in val]
+                b64_list = [_convert_to_base64(img, max_size=max_size) for img in val]
                 inputs.append(b64_list)
                 breakdown["hf_images"] += len(b64_list)
                 for b64 in b64_list:
                     hasher.update(b64.encode("utf-8"))
                 return True
         else:
-            b64 = _convert_to_base64(val)
+            b64 = _convert_to_base64(val, max_size=max_size)
             inputs.append([b64])
             breakdown["hf_images"] += 1
             hasher.update(b64.encode("utf-8"))
@@ -1511,13 +1530,16 @@ def load_hf_dataset(
     return inputs, breakdown, input_hash
 
 
-def load_local_inputs(input_path: str) -> tuple[list[list[str]], dict[str, int], str]:
+def load_local_inputs(
+    input_path: str, max_size: int = DEFAULT_MAX_IMAGE_SIZE
+) -> tuple[list[list[str]], dict[str, int], str]:
     """Load inputs from a local file or directory.
 
     Supports images, PDFs, and videos.
 
     Args:
         input_path: Path to file or directory
+        max_size: Maximum image dimension (width or height)
 
     Returns:
         (inputs, breakdown, hash)
@@ -1547,11 +1569,11 @@ def load_local_inputs(input_path: str) -> tuple[list[list[str]], dict[str, int],
             hasher.update(fh.read())
 
         if ext in IMAGE_EXTENSIONS:
-            b64 = image_to_base64(f)
+            b64 = image_to_base64(f, max_size=max_size)
             inputs.append([b64])
             breakdown["images"] += 1
         elif ext in PDF_EXTENSIONS:
-            pages = pdf_to_base64(f)
+            pages = pdf_to_base64(f, max_size=max_size)
             # Each page is a separate input
             for page in pages:
                 inputs.append([page])
@@ -2288,10 +2310,11 @@ def cmd_run(args: argparse.Namespace) -> None:
             image_col=args.dataset_image_col,
             split=args.dataset_split,
             max_samples=args.max_samples,
+            max_size=args.max_size,
         )
         input_source = f"hf://{dataset_name}"
     elif args.input_path:
-        inputs, breakdown, input_hash = load_local_inputs(args.input_path)
+        inputs, breakdown, input_hash = load_local_inputs(args.input_path, max_size=args.max_size)
         input_source = args.input_path
         # Apply --max-samples limit for local inputs (HF handles it internally)
         if args.max_samples is not None and args.max_samples < len(inputs):
