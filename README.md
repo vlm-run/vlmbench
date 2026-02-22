@@ -61,13 +61,15 @@ pip install vlmbench
 │                                                                              │
 │   TTFT           467 ms    (p95: 1975 ms)                                    │
 │   TPOT           6.0 ms    (p95: 6.2 ms)                                     │
-│   Throughput   1664.8 tok/s   9.20 images/s                                  │
+│   Throughput   1664.8 tok/s   9.20 img/s                                     │
 │   Latency        0.87 s/img  (p95: 3.55 s)                                   │
-│   Tokens          270 prompt    181 completion (avg)                         │
+│   Tokens          270 prompt    181 completion (avg)                          │
+│   Output       11222 total   181 tok/img   1664.8 out tok/s                  │
+│   VRAM          5920 MiB peak                                                │
 │   Reliability  186/186 ok, 0 retries                                         │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  > Saved -> results/lightonocr-2-1b-20260207T104621.json
+  > Saved → results/lightonocr-2-1b-20260207T104621.json
 ```
 
 ## Behind the Scenes
@@ -220,6 +222,29 @@ vlmbench run -m allenai/olmOCR-2-7B-1025-FP8  -i ./docs/ --max-concurrency 8 --r
 vlmbench compare results/*.json
 ```
 
+When all runs used `--profile ocr --reference`, compare includes quality columns:
+
+```
+  compare (4 runs)
+
+╭────────────────────────────────┬────────┬────────┬─────────┬────────┬─────────┬───────┬───────┬──────────┬────────────╮
+│                                │   TTFT │   TPOT │         │        │   Tok/  │       │       │          │            │
+│ Model                          │   (ms) │   (ms) │ Tok/s ↓ │  Img/s │   img   │  CER  │  WER  │     VRAM │ Backend    │
+├────────────────────────────────┼────────┼────────┼─────────┼────────┼─────────┼───────┼───────┼──────────┼────────────┤
+│ lightonai/LightOnOCR-2-1B      │    467 │    6.0 │  1664.8 │   9.20 │     181 │  2.1% │  4.8% │  5.78 GB │ vLLM 0.15  │
+│ rednote-hilab/dots.ocr         │   1424 │   10.2 │   477.6 │   7.76 │     203 │  2.4% │  5.1% │  9.42 GB │ vLLM 0.15  │
+│ Qwen/Qwen3-VL-8B-Instruct     │    698 │   17.2 │   461.6 │   6.40 │     289 │  1.4% │  3.2% │ 17.41 GB │ vLLM 0.15  │
+│ allenai/olmOCR-2-7B-1025-FP8   │    812 │   14.8 │   412.3 │   5.74 │     312 │  1.6% │  3.5% │ 10.22 GB │ vLLM 0.15  │
+╰────────────────────────────────┴────────┴────────┴─────────┴────────┴─────────┴───────┴───────┴──────────┴────────────╯
+
+╭─ Summary ────────────────────────────────────────────────────────────────────╮
+│  Runs       4 across 4 model(s)  total duration 818.8s                       │
+│  Tok/s      1664.8 best   412.3 worst   754.1 avg                            │
+│  Quality    1.4% best CER (Qwen3-VL-8B)   2.4% worst CER (dots.ocr)         │
+│  Errors     0                                                                │
+╰──────────────────────────────────────────────────────────── vlmbench v0.2.5 ─╯
+```
+
 ### OCR quality profiling — fast, but is the output correct?
 
 Use `--profile ocr` to measure **output token volume** alongside speed. Add `--reference` with ground-truth text files to score accuracy (CER / WER).
@@ -241,6 +266,38 @@ vlmbench run -m rednote-hilab/dots.ocr -i ./docs/ \
 vlmbench compare results/*ocr*.json
 ```
 
+The Results panel is followed by a quality panel when `--profile ocr --reference` is used:
+
+```
+╭─ Results ────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│   TTFT           467 ms    (p95: 1975 ms)                                    │
+│   TPOT           6.0 ms    (p95: 6.2 ms)                                     │
+│   Throughput   1664.8 tok/s   9.20 img/s                                     │
+│   Latency        0.87 s/img  (p95: 3.55 s)                                   │
+│   Tokens          270 prompt    181 completion (avg)                          │
+│   Output       11222 total   181 tok/img   1664.8 out tok/s                  │
+│   VRAM          5920 MiB peak                                                │
+│   Reliability  186/186 ok, 0 retries                                         │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+╭─ OCR Quality (vs ground truth) ─────────────────────────────────────────────╮
+│                                                                              │
+│   CER            2.1%      (best: 0.4%, worst: 8.7%)                         │
+│   WER            4.8%      (best: 1.2%, worst: 16.3%)                        │
+│   Exact match   12/62      19.4%                                             │
+│                                                                              │
+│   Worst inputs                                                               │
+│     scan_047.jpg     CER: 8.7%   WER: 16.3%   (handwritten, low contrast)   │
+│     receipt_019.png  CER: 7.2%   WER: 14.8%   (crumpled, skewed)            │
+│     form_003.tiff    CER: 6.1%   WER: 11.9%   (multi-column layout)         │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+  > Saved → results/lightonocr-2-1b-ocr-20260222T143012.json
+  > Outputs → results/lightonocr-2-1b-ocr-20260222T143012-outputs/
+```
+
 ### Markdown extraction — does it preserve table structure?
 
 ```bash
@@ -255,22 +312,54 @@ vlmbench run -m lightonai/LightOnOCR-2-1B -i ./financial-reports/ \
 vlmbench compare results/*markdown*.json
 ```
 
+The `--profile markdown` panel scores structural element preservation:
+
+```
+╭─ Markdown Quality (vs ground truth) ────────────────────────────────────────╮
+│                                                                              │
+│   CER            1.8%      (best: 0.2%, worst: 6.1%)                         │
+│   WER            3.9%      (best: 0.8%, worst: 12.4%)                        │
+│                                                                              │
+│   Structure                                                                  │
+│     Headings     94.2%     preserved   (49/52)                               │
+│     Tables       87.1%     preserved   (27/31)                               │
+│     Lists        91.8%     preserved   (56/61)                               │
+│     LaTeX        78.4%     preserved   (29/37)                               │
+│                                                                              │
+│   Worst inputs                                                               │
+│     10k_page3.pdf    Tables: 2/5 preserved   (nested multi-level headers)    │
+│     balance.pdf      LaTeX:  0/4 preserved   (inline equations dropped)      │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+  > Saved → results/qwen3-vl-8b-markdown-20260222T151230.json
+  > Outputs → results/qwen3-vl-8b-markdown-20260222T151230-outputs/
+```
+
 ### Concurrency sweep — what's the optimal batch size?
 
 Auto-ramp concurrency (1, 2, 4, 8, ...) until throughput plateaus:
 
 ```bash
 vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ --sweep concurrency
+```
 
-# Expected output:
-#   concurrency=1   →   58.2 tok/s   TTFT p95:  312 ms
-#   concurrency=2   →  112.4 tok/s   TTFT p95:  345 ms
-#   concurrency=4   →  210.8 tok/s   TTFT p95:  489 ms
-#   concurrency=8   →  398.1 tok/s   TTFT p95:  721 ms
-#   concurrency=16  →  448.0 tok/s   TTFT p95: 1842 ms   ← saturation
-#   concurrency=32  →  451.2 tok/s   TTFT p95: 3901 ms   ← diminishing returns
-#
-#   ✓ Optimal: concurrency=8 (89% of peak tok/s, 2.6× lower p95 TTFT)
+```
+╭─ Sweep: concurrency ─── Qwen/Qwen3-VL-8B-Instruct ─────────────────────────────────────╮
+│                                                                                          │
+│   Workers   Tok/s         Img/s   TTFT p50   TTFT p95   Latency p50   VRAM               │
+│   ────────────────────────────────────────────────────────────────────────────            │
+│         1     58.2 ▏        0.82     198 ms      312 ms       1.22 s   5.8 GB             │
+│         2    112.4 ▎        1.58     210 ms      345 ms       1.26 s   5.9 GB             │
+│         4    210.8 ▍        2.96     245 ms      489 ms       1.35 s   6.1 GB             │
+│       ★ 8    398.1 ▋        5.60     312 ms      721 ms       1.43 s   6.4 GB             │
+│        16    448.0 ▊        6.30     689 ms     1842 ms       2.54 s   7.2 GB             │
+│        32    451.2 ▊        6.34    1421 ms     3901 ms       5.04 s   8.1 GB             │
+│                                                                                          │
+│   ★ Optimal    8 workers — 89% of peak tok/s, 2.6× lower p95 TTFT                       │
+│   ↑ Peak      32 workers — 451.2 tok/s (saturated, +0.7% over 16)                       │
+│                                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────╯
+  > Saved → results/qwen3-vl-8b-sweep-concurrency-20260222T160045.json
 ```
 
 ### Resolution impact — does 4K input actually help?
@@ -285,17 +374,28 @@ vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ --sweep resolution
 vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./docs/ \
   --sweep resolution --profile ocr --reference ./ground-truth/
 
-# Expected output:
-#    512 px  →  892.1 tok/s   CER: 8.2%   WER: 14.1%
-#   1024 px  →  461.3 tok/s   CER: 3.1%   WER:  6.8%
-#   2048 px  →  198.7 tok/s   CER: 1.9%   WER:  4.2%
-#   4096 px  →   62.4 tok/s   CER: 1.8%   WER:  4.0%   ← diminishing returns
-
 # Or test the model's native max resolution (no downscaling)
 vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./highres-scans/ \
-  --max-size 4096 --tag 4k
-vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./highres-scans/ \
   --resolution max --tag native-max
+```
+
+Combined `--sweep resolution --profile ocr --reference` renders both speed and quality:
+
+```
+╭─ Sweep: resolution ─── Qwen/Qwen3-VL-8B-Instruct ──────────────────────────────────────╮
+│                                                                                          │
+│   Max size   Tok/s         Img/s   TTFT p50   Tok/img   CER     WER                     │
+│   ────────────────────────────────────────────────────────────────────                    │
+│     512 px   892.1 █▊       12.40      89 ms       72    8.2%   14.1%                    │
+│    1024 px   461.3 █         6.42     198 ms      181    3.1%    6.8%                    │
+│  ★ 2048 px   198.7 ▍        2.76     412 ms      342    1.9%    4.2%                    │
+│    4096 px    62.4 ▏        0.87    1204 ms      891    1.8%    4.0%                    │
+│                                                                                          │
+│   ★ Sweet spot   2048px — best quality/speed ratio (1.9% CER at 198.7 tok/s)            │
+│   ↓ Diminishing  4096px — 3.2× slower for only 0.1% CER improvement                    │
+│                                                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────╯
+  > Saved → results/qwen3-vl-8b-sweep-resolution-20260222T162130.json
 ```
 
 ### Quantization comparison — FP16 vs FP8, what do I actually lose?
@@ -305,7 +405,25 @@ vlmbench run -m Qwen/Qwen3-VL-8B-Instruct     -i ./docs/ --max-concurrency 8 --q
 vlmbench run -m Qwen/Qwen3-VL-8B-Instruct-FP8 -i ./docs/ --max-concurrency 8 --quant fp8
 
 vlmbench compare results/*qwen3-vl-8b*.json
-# Look at: tok/s difference, VRAM savings, TTFT delta
+```
+
+```
+  compare (2 runs)
+
+╭──────────────────────────────────┬────────┬────────┬─────────┬────────┬─────────┬───────┬──────────╮
+│ Model                            │   TTFT │   TPOT │         │        │   Tok/  │       │          │
+│                                  │   (ms) │   (ms) │ Tok/s ↓ │  Img/s │   img   │ Quant │     VRAM │
+├──────────────────────────────────┼────────┼────────┼─────────┼────────┼─────────┼───────┼──────────┤
+│ Qwen/Qwen3-VL-8B-Instruct-FP8   │    612 │   14.1 │   461.6 │   6.40 │     289 │ fp8   │ 11.75 GB │
+│ Qwen/Qwen3-VL-8B-Instruct       │    698 │   17.2 │   448.0 │   6.40 │     289 │ fp16  │ 17.41 GB │
+╰──────────────────────────────────┴────────┴────────┴─────────┴────────┴─────────┴───────┴──────────╯
+
+╭─ Summary ────────────────────────────────────────────────────────────────────╮
+│  Runs       2 across 1 model(s)  total duration 465.6s                       │
+│  Tok/s      461.6 best   448.0 worst   454.8 avg                             │
+│  FP8 vs FP16   +3.0% tok/s   −32.5% VRAM   −12.3% TTFT                      │
+│  Errors     0                                                                │
+╰──────────────────────────────────────────────────────────── vlmbench v0.2.5 ─╯
 ```
 
 ### Backend comparison — vLLM vs Ollama on the same model
@@ -341,6 +459,26 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 \
 vlmbench compare results/*qwen3-vl-8b*.json
 ```
 
+```
+  compare (3 runs)
+
+╭────────────────────────────────┬────────┬────────┬─────────┬────────┬─────────┬──────────┬───────╮
+│ Model                          │   TTFT │   TPOT │         │        │   Tok/  │          │       │
+│                                │   (ms) │   (ms) │ Tok/s ↓ │  Img/s │   img   │     VRAM │ Tag   │
+├────────────────────────────────┼────────┼────────┼─────────┼────────┼─────────┼──────────┼───────┤
+│ Qwen/Qwen3-VL-8B-Instruct     │    389 │    8.1 │   812.4 │  11.30 │     289 │ 12.2 GB  │ 4gpu  │
+│                                │    498 │   12.4 │   598.2 │   8.32 │     289 │ 11.8 GB  │ 2gpu  │
+│                                │    698 │   17.2 │   448.0 │   6.40 │     289 │ 17.4 GB  │ 1gpu  │
+╰────────────────────────────────┴────────┴────────┴─────────┴────────┴─────────┴──────────┴───────╯
+
+╭─ Summary ────────────────────────────────────────────────────────────────────╮
+│  Runs       3 across 1 model(s)  total duration 698.2s                       │
+│  Tok/s      812.4 best   448.0 worst   619.5 avg                             │
+│  Scaling    1→2 GPU: +33.5% tok/s   2→4 GPU: +35.8% tok/s                   │
+│  Errors     0                                                                │
+╰──────────────────────────────────────────────────────────── vlmbench v0.2.5 ─╯
+```
+
 ### Cloud vs local — is the API faster than self-hosting?
 
 ```bash
@@ -367,7 +505,26 @@ vlmbench run -m lightonai/LightOnOCR-2-1B -i ./reports-50page/ \
   --max-concurrency 8 --tag 50page
 
 vlmbench compare results/*lightonocr*.json
-# Look at: images/s scaling, VRAM growth, TTFT vs page count
+```
+
+```
+  compare (3 runs)
+
+╭──────────────────────────────┬────────┬────────┬─────────┬────────┬─────────┬──────────┬────────╮
+│ Model                        │   TTFT │   TPOT │         │        │   Tok/  │          │        │
+│                              │   (ms) │   (ms) │ Tok/s ↓ │  Img/s │   img   │     VRAM │ Tag    │
+├──────────────────────────────┼────────┼────────┼─────────┼────────┼─────────┼──────────┼────────┤
+│ lightonai/LightOnOCR-2-1B    │    312 │    5.8 │  1721.4 │  10.12 │     170 │  5.6 GB  │ 1page  │
+│                              │    467 │    6.0 │  1664.8 │   9.20 │     181 │  5.9 GB  │ 10page │
+│                              │    891 │    6.2 │  1598.2 │   8.84 │     181 │  6.4 GB  │ 50page │
+╰──────────────────────────────┴────────┴────────┴─────────┴────────┴─────────┴──────────┴────────╯
+
+╭─ Summary ────────────────────────────────────────────────────────────────────╮
+│  Runs       3 across 1 model(s)  total duration 486.2s                       │
+│  Tok/s      1721.4 best   1598.2 worst   1661.5 avg                          │
+│  Scaling    1pg → 50pg: −7.2% tok/s   +185% TTFT   +14% VRAM                │
+│  Errors     0                                                                │
+╰──────────────────────────────────────────────────────────── vlmbench v0.2.5 ─╯
 ```
 
 ### HuggingFace dataset evaluation — standard benchmarks
@@ -411,9 +568,30 @@ format = "json"
 
 ```bash
 vlmbench matrix bench.toml
+```
 
-# Runs 4 models × 3 concurrency levels = 12 benchmark runs
-# Generates comparison table + saves all results as JSON
+```
+  matrix bench.toml — 4 models × 3 concurrency = 12 runs
+
+  ✓  lightonai/LightOnOCR-2-1B        concurrency=1   1m 02s
+  ✓  lightonai/LightOnOCR-2-1B        concurrency=4   0m 48s
+  ✓  lightonai/LightOnOCR-2-1B        concurrency=8   0m 41s
+  ✓  Qwen/Qwen3-VL-8B-Instruct       concurrency=1   3m 12s
+  ✓  Qwen/Qwen3-VL-8B-Instruct       concurrency=4   1m 54s
+  ●  Qwen/Qwen3-VL-8B-Instruct       concurrency=8   running...
+  ·  Qwen/Qwen3-VL-8B-Instruct-FP8   concurrency=1
+  ·  Qwen/Qwen3-VL-8B-Instruct-FP8   concurrency=4
+  ·  Qwen/Qwen3-VL-8B-Instruct-FP8   concurrency=8
+  ·  rednote-hilab/dots.ocr           concurrency=1
+  ·  rednote-hilab/dots.ocr           concurrency=4
+  ·  rednote-hilab/dots.ocr           concurrency=8
+
+  Progress: 6/12 runs complete   elapsed 8m 37s   est. remaining ~9m
+```
+
+After all runs complete, view the full comparison and launch the dashboard:
+
+```bash
 vlmbench compare results/*.json
 vlmbench dashboard results/ --open
 ```
