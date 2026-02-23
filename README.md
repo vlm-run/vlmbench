@@ -187,38 +187,25 @@ uvx vlmbench compare results/*.json
 
 ## Usage
 
-### Mac + Ollama
-
 ```bash
+# Mac + Ollama
 uvx vlmbench run -m qwen3-vl:2b -i ./images/
-uvx vlmbench run -m glm-ocr:latest -i ./images/
-```
 
-### Linux + vLLM (Docker)
-
-```bash
-# Auto-starts vLLM via Docker with --gpus all (HuggingFace model IDs)
+# Linux + vLLM Docker (auto-starts with --gpus all)
 uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/
 
-# Nightly Docker image
+# Linux + vLLM Docker (nightly image)
 uvx vlmbench run -m PaddlePaddle/PaddleOCR-VL-1.5 -i ./images/ \
   --backend vllm-openai:nightly
+
+# Linux + vLLM native (requires pip install vllm)
+uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ --backend vllm
 
 # Concurrency for throughput testing
 uvx vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./images/ \
   --max-concurrency 8 --runs 3
-```
 
-### Linux + vLLM (native)
-
-```bash
-# Requires vllm installed (pip install vllm)
-uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ --backend vllm
-```
-
-### Cloud API
-
-```bash
+# Cloud API
 uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ \
   --base-url https://api.openai.com/v1 --api-key $OPENAI_API_KEY
 ```
