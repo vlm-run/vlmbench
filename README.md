@@ -182,7 +182,7 @@ uvx vlmbench compare results/*.json
 │  Runs       4 across 4 model(s)  total duration 818.8s                       │
 │  Tok/s      1664.8 best   448.0 worst   763.0 avg                            │
 │  Errors     0                                                                │
-╰──────────────────────────────────────────────────────────── vlmbench v0.1.0 ─╯
+╰──────────────────────────────────────────────────────────── vlmbench v0.3.1 ─╯
 ```
 
 ## Usage
