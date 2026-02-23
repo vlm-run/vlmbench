@@ -2243,7 +2243,9 @@ def print_results(result: BenchmarkResult, save_path: str) -> None:
     upper.add_row(
         "Tokens/sec",
         Text(f"{r.tokens_per_sec:.0f} tok/s", style=_tok_style(r.tokens_per_sec)),
-        "—", "—", "—",
+        "—",
+        "—",
+        "—",
     )
     upper.add_row("Workers", str(concurrency), "—", "—", "—")
     upper.add_row(
@@ -2312,6 +2314,7 @@ def print_results(result: BenchmarkResult, save_path: str) -> None:
 
     # Compose both tables into a single renderables group
     from rich.console import Group as RenderGroup
+
     body = RenderGroup(upper, Text(), lower)
 
     panel = Panel(
@@ -2578,6 +2581,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     try:
         if platform.system() == "Linux":
             from urllib.parse import urlparse
+
             parsed = urlparse(base_url)
             port = parsed.port or 8000
             server_gpu_idx = get_gpu_for_server_port(port)
@@ -2654,17 +2658,19 @@ def cmd_run(args: argparse.Namespace) -> None:
                 progress.update(task_id, completed=completed)
 
         t_benchmark_start = time.perf_counter()
-        runs_raw, retries = asyncio.run(run_benchmark(
-            client=client,
-            model=args.model,
-            inputs=inputs,
-            prompt=args.prompt,
-            max_tokens=args.max_tokens,
-            runs=args.runs,
-            max_concurrency=args.max_concurrency,
-            warmup=args.warmup,
-            progress_callback=progress_callback,
-        ))
+        runs_raw, retries = asyncio.run(
+            run_benchmark(
+                client=client,
+                model=args.model,
+                inputs=inputs,
+                prompt=args.prompt,
+                max_tokens=args.max_tokens,
+                runs=args.runs,
+                max_concurrency=args.max_concurrency,
+                warmup=args.warmup,
+                progress_callback=progress_callback,
+            )
+        )
         t_benchmark_end = time.perf_counter()
 
     total_duration_s = round(t_benchmark_end - t_benchmark_start, 1)
