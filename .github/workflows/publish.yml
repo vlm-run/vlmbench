@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'pyproject.toml'
+      - 'vlmbench/cli.py'
 
 jobs:
   test:
