@@ -45,29 +45,55 @@ pip install vlmbench
 
 ## Example Run
 
+```bash
+uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct \
+  -d hf://vlm-run/FineVision-vlmbench-mini --max-samples 64 \
+  --prompt "Describe this image in 80 words or less" \
+  --max-concurrency 8 --backend vllm
+```
+
 ```
 ╭─ Configuration ──────────────────────────────────────────────────────────────╮
 │                                                                              │
-│   Model      lightonai/LightOnOCR-2-1B @ main                                │
-│   Server     http://localhost:8000/v1 • vLLM 0.15.1                          │
-│   Hardware   NVIDIA RTX PRO 6000 • CUDA • 95.59 GB VRAM                      │
-│   Input      ./docs/ -> 62 inputs (43 images, 19 PDF pages)                  │
-│   Config     max_tokens=2048 • runs=3 • concurrency=8                        │
-│   Tmux       vlmbench-vllm • tmux attach -t vlmbench-vllm                    │
+│  model        Qwen/Qwen3-VL-2B-Instruct                                     │
+│  revision     main                                                           │
+│  backend      vLLM 0.11.2                                                    │
+│  endpoint     http://localhost:8000/v1                                        │
+│                                                                              │
+│  gpu          NVIDIA RTX PRO 6000 Blackwell Workstation Edition              │
+│  vram         97,887 MiB                                                     │
+│  driver       580.126.09                                                     │
+│                                                                              │
+│  dataset      hf://vlm-run/FineVision-vlmbench-mini                          │
+│  images       64 (mixed)                                                     │
+│                                                                              │
+│  max_tokens   2048                                                           │
+│  runs         3                                                              │
+│  concurrency  8                                                              │
+│                                                                              │
+│  monitor      tmux attach -t vlmbench-vllm                                   │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 
 ╭─ Results ────────────────────────────────────────────────────────────────────╮
 │                                                                              │
-│   TTFT           467 ms    (p95: 1975 ms)                                    │
-│   TPOT           6.0 ms    (p95: 6.2 ms)                                     │
-│   Throughput   1664.8 tok/s
-│   Latency        0.87 s/img  (p95: 3.55 s)                                   │
-│   Tokens          270 prompt    181 completion (avg)                         │
-│   Reliability  186/186 ok, 0 retries                                         │
+│  Metric                Value              p50        p95        p99          │
+│  Throughput            13.33 img/s         —          —          —           │
+│  Tokens/sec            1168 tok/s          —          —          —           │
+│  Workers               8                   —          —          —           │
+│  TTFT                  58 ms           51 ms     114 ms     140 ms           │
+│  TPOT                  5.3 ms         5.0 ms     7.3 ms     7.4 ms           │
+│  Latency (per worker)  0.54 s/img     0.46 s     0.92 s     1.36 s           │
+│                                                                              │
+│  Tokens (avg)          prompt 2,077  •  completion 88                        │
+│  Token ranges          prompt 180–8,545  •  completion 55–190                │
+│  Images                144  •  avg 964×867 (0.93 MP)                         │
+│  Resolution            min 338×266  •  median 1024×768  •  max 2048×1755     │
+│  VRAM peak             69.7 GB                                               │
+│  Reliability           192/192 ok  •  14.4s total                            │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  > Saved -> results/lightonocr-2-1b-20260207T104621.json
+  > Saved -> results/vllm-qwen3-vl-2b-instruct.json
 ```
 
 ## Behind the Scenes
@@ -156,43 +182,30 @@ uvx vlmbench compare results/*.json
 │  Runs       4 across 4 model(s)  total duration 818.8s                       │
 │  Tok/s      1664.8 best   448.0 worst   763.0 avg                            │
 │  Errors     0                                                                │
-╰──────────────────────────────────────────────────────────── vlmbench v0.1.0 ─╯
+╰──────────────────────────────────────────────────────────── vlmbench v0.3.1 ─╯
 ```
 
 ## Usage
 
-### Mac + Ollama
-
 ```bash
+# Mac + Ollama
 uvx vlmbench run -m qwen3-vl:2b -i ./images/
-uvx vlmbench run -m glm-ocr:latest -i ./images/
-```
 
-### Linux + vLLM (Docker)
-
-```bash
-# Auto-starts vLLM via Docker with --gpus all (HuggingFace model IDs)
+# Linux + vLLM Docker (auto-starts with --gpus all)
 uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/
 
-# Nightly Docker image
+# Linux + vLLM Docker (nightly image)
 uvx vlmbench run -m PaddlePaddle/PaddleOCR-VL-1.5 -i ./images/ \
   --backend vllm-openai:nightly
+
+# Linux + vLLM native (requires pip install vllm)
+uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ --backend vllm
 
 # Concurrency for throughput testing
 uvx vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./images/ \
   --max-concurrency 8 --runs 3
-```
 
-### Linux + vLLM (native)
-
-```bash
-# Requires vllm installed (pip install vllm)
-uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ --backend vllm
-```
-
-### Cloud API
-
-```bash
+# Cloud API
 uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ \
   --base-url https://api.openai.com/v1 --api-key $OPENAI_API_KEY
 ```
