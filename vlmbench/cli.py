@@ -1,13 +1,3 @@
-# /// script
-# requires-python = ">=3.11"
-# dependencies = [
-#   "rich>=13",
-#   "openai>=1.0",
-#   "tenacity>=8",
-#   "Pillow>=10",
-#   "pypdfium2>=4",
-# ]
-# ///
 """
 ██╗   ██╗██╗     ███╗   ███╗
 ██║   ██║██║     ████╗ ████║
@@ -31,6 +21,7 @@ import asyncio
 import base64
 import dataclasses
 import hashlib
+import importlib.metadata
 import io
 import json
 import os
@@ -53,6 +44,7 @@ from pathlib import Path
 from types import UnionType
 from typing import Any, Protocol, get_args, get_origin, get_type_hints, runtime_checkable
 
+import yaml
 from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
 from PIL import Image
 from rich import box
@@ -65,13 +57,13 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-VERSION = "0.4.2"
+VERSION = importlib.metadata.version("vlmbench")
 SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_RUNS = 3
 DEFAULT_CONCURRENCY = 8
-DEFAULT_SAVE_DIR = "./results"
+DEFAULT_SAVE_DIR = str(Path.home() / ".vlmbench" / "benchmarks")
 DEFAULT_UPLOAD_REPO = "vlm-run/vlmbench-results"
 DEFAULT_API_KEY = "no-key"
 DEFAULT_IMAGE_URL = "https://storage.googleapis.com/vlm-data-public-prod/hub/examples/image.caption/car.jpg"
@@ -2571,6 +2563,30 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+PROFILES_DIR = Path(__file__).resolve().parent / "profiles"
+
+
+def load_profile(name: str) -> dict[str, Any]:
+    """Load a model profile from vlmbench/profiles/<name>.yaml."""
+    yaml_path = PROFILES_DIR / f"{name}.yaml"
+    if not yaml_path.exists():
+        available = sorted(p.stem for p in PROFILES_DIR.glob("*.yaml"))
+        console.print(f"[red]Profile '{name}' not found.[/red]")
+        if available:
+            console.print(f"  Available: {', '.join(available)}")
+        sys.exit(1)
+    with open(yaml_path) as f:
+        return yaml.safe_load(f)
+
+
+def _run_profile_setup(setup: str) -> None:
+    """Execute a profile's inline setup script."""
+    console.print(f"  [dim]$ {setup.strip().splitlines()[0]}…[/dim]")
+    result = subprocess.run(["bash", "-c", setup])
+    if result.returncode != 0:
+        console.print(f"[red]Profile setup failed (exit {result.returncode})[/red]")
+        sys.exit(1)
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
@@ -2583,12 +2599,17 @@ def build_parser() -> argparse.ArgumentParser:
     # ── run subcommand ──
     run_parser = subparsers.add_parser("run", help="Run a VLM benchmark.")
 
-    # Required
+    # Model (required unless --profile is set; validated in cmd_run)
     run_parser.add_argument(
         "--model",
         "-m",
-        required=True,
+        default=None,
         help="Model ID (vLLM: Qwen/Qwen3-VL-2B-Instruct, Ollama: qwen3-vl:2b)",
+    )
+    run_parser.add_argument(
+        "--profile",
+        default=None,
+        help="Model profile name (e.g. glm-ocr). See: vlmbench profiles",
     )
 
     # Input source (mutually exclusive: --input OR --dataset, defaults to sample image URL)
@@ -2675,7 +2696,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── compare subcommand ──
     compare_parser = subparsers.add_parser("compare", help="Compare benchmark results from multiple JSON files.")
-    compare_parser.add_argument("files", nargs="+", help="JSON result files to compare")
+    compare_parser.add_argument("files", nargs="*", help=f"JSON result files (default: all in {DEFAULT_SAVE_DIR}/)")
+
+    # ── profiles subcommand ──
+    subparsers.add_parser("profiles", help="List available model profiles.")
+
+    # ── dockerfile subcommand ──
+    df_parser = subparsers.add_parser("dockerfile", help="Generate a self-contained Dockerfile for a profile.")
+    df_parser.add_argument("profile", help="Profile name (e.g. glm-ocr)")
 
     return parser
 
@@ -2879,8 +2907,70 @@ def upload_results(paths: list[Path], repo_id: str) -> None:
     console.print()
 
 
+def cmd_profiles() -> None:
+    """List available model profiles."""
+    profile_yamls = sorted(PROFILES_DIR.glob("*.yaml"))
+    if not profile_yamls:
+        console.print("  No profiles found.")
+        return
+    table = Table(box=box.SIMPLE)
+    table.add_column("Profile", style="bold")
+    table.add_column("Model")
+    table.add_column("Notes", style="dim")
+    for p in profile_yamls:
+        with open(p) as f:
+            d = yaml.safe_load(f)
+        notes: list[str] = []
+        if d.get("setup"):
+            notes.append("custom setup")
+        if "image" in d:
+            notes.append(d["image"])
+        table.add_row(p.stem, d.get("model", "?"), ", ".join(notes) if notes else "")
+    console.print(table)
+
+
+def cmd_dockerfile(args: argparse.Namespace) -> None:
+    """Generate a self-contained Dockerfile for a profile."""
+    name = args.profile
+    profile = load_profile(name)
+    image = profile.get("image", "vllm/vllm-openai:v0.15.1")
+    model = profile.get("model", "")
+    setup = profile.get("setup", "").strip()
+
+    out_dir = Path.home() / ".vlmbench" / "profiles" / name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dockerfile = out_dir / "Dockerfile"
+
+    lines = [f"FROM {image}", f"LABEL vlmbench.profile={name} vlmbench.model={model}"]
+    if setup:
+        lines.extend(['RUN <<"EOF"', "set -euo pipefail", setup, "EOF"])
+    dockerfile.write_text("\n".join(lines) + "\n")
+    console.print(f"  [bold]Generated[/bold] [dim]{dockerfile}[/dim]")
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     """Run a VLM benchmark."""
+    # Apply profile defaults before anything else
+    if args.profile:
+        profile = load_profile(args.profile)
+        if not args.model:
+            args.model = profile["model"]
+        if args.prompt == DEFAULT_PROMPT and "prompt" in profile:
+            args.prompt = profile["prompt"]
+        if args.serve_args is None and "serve_args" in profile:
+            args.serve_args = profile["serve_args"]
+        if args.serve and profile.get("setup"):
+            console.print(f"  [cyan]Running profile setup for '{args.profile}'...[/cyan]")
+            _run_profile_setup(profile["setup"])
+    if not args.model:
+        console.print("[red]--model or --profile is required.[/red]")
+        sys.exit(1)
+
+    if args.upload and not os.environ.get("HF_TOKEN"):
+        console.print("[red]--upload requires HF_TOKEN environment variable.[/red]")
+        console.print("[dim]Set it with: export HF_TOKEN=hf_...[/dim]")
+        sys.exit(1)
+
     base_url, tmux_session = resolve_server(
         base_url=args.base_url,
         serve=args.serve,
@@ -2993,9 +3083,22 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 def cmd_compare(args: argparse.Namespace) -> None:
     """Compare benchmark results from multiple JSON files."""
-    results: list[BenchmarkResult] = []
+    files = args.files
+    if not files:
+        default_dir = Path(DEFAULT_SAVE_DIR)
+        if not default_dir.is_dir():
+            console.print(f"[red]No results directory found at {DEFAULT_SAVE_DIR}/[/red]")
+            console.print("[dim]Run a benchmark first, or pass JSON files explicitly.[/dim]")
+            sys.exit(1)
+        files = sorted(str(p) for p in default_dir.glob("*.json"))
+        if not files:
+            console.print(f"[red]No JSON files in {DEFAULT_SAVE_DIR}/[/red]")
+            sys.exit(1)
+        console.print(f"  [dim]Loading {len(files)} results from {DEFAULT_SAVE_DIR}/[/dim]")
+        console.print()
 
-    for filepath in args.files:
+    results: list[BenchmarkResult] = []
+    for filepath in files:
         path = Path(filepath)
         if not path.exists():
             console.print(f"[red]File not found: {filepath}[/red]")
@@ -3005,7 +3108,7 @@ def cmd_compare(args: argparse.Namespace) -> None:
         results.append(_dc_from_dict(BenchmarkResult, data))
 
     if not results:
-        console.print("[red]No result files provided.[/red]")
+        console.print("[red]No result files found.[/red]")
         sys.exit(1)
 
     # Sort by total tokens_per_sec (across workers) descending
@@ -3021,7 +3124,7 @@ def main() -> None:
 
     # If no subcommand given (first arg starts with -- or -), insert "run"
     argv = sys.argv[1:]
-    subcommands = {"compare"}
+    subcommands = {"compare", "profiles", "dockerfile"}
     if argv and argv[0] not in subcommands and not argv[0].startswith("--help"):
         if argv[0].startswith("--") or argv[0].startswith("-"):
             argv = ["run"] + argv
@@ -3040,6 +3143,10 @@ def main() -> None:
             cmd_run(parsed)
         case "compare":
             cmd_compare(parsed)
+        case "profiles":
+            cmd_profiles()
+        case "dockerfile":
+            cmd_dockerfile(parsed)
 
 
 if __name__ == "__main__":

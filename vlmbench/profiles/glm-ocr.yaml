@@ -1,0 +1,11 @@
+image: vllm/vllm-openai:nightly
+model: zai-org/GLM-OCR
+prompt: "Text Recognition:"
+serve_args: >-
+  --speculative-config.method mtp
+  --speculative-config.num_speculative_tokens 1
+  --allowed-local-media-path /
+setup: |
+  pip install --no-cache-dir \
+    vllm --pre --extra-index-url https://wheels.vllm.ai/nightly/cu129 \
+    "transformers>=5.1.0"

@@ -1,0 +1,8 @@
+image: vllm/vllm-openai:v0.15.1
+model: PaddlePaddle/PaddleOCR-VL
+prompt: "OCR:"
+serve_args: >-
+  --trust-remote-code
+  --max-num-batched-tokens 16384
+  --no-enable-prefix-caching
+  --mm-processor-cache-gb 0

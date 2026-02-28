@@ -1,0 +1,7 @@
+image: vllm/vllm-openai:v0.15.1
+model: deepseek-ai/DeepSeek-OCR
+prompt: "Free OCR."
+serve_args: >-
+  --logits_processors vllm.model_executor.models.deepseek_ocr:NGramPerReqLogitsProcessor
+  --no-enable-prefix-caching
+  --mm-processor-cache-gb 0

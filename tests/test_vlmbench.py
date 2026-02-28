@@ -280,7 +280,8 @@ def test_help():
 
 
 def test_import():
-    """Verify the package is importable."""
-    from vlmbench import __version__
+    """Verify the package is importable and has a version."""
+    import importlib.metadata
 
-    assert isinstance(__version__, str)
+    version = importlib.metadata.version("vlmbench")
+    assert isinstance(version, str)
