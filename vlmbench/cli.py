@@ -65,7 +65,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
 DEFAULT_MAX_TOKENS = 4096
@@ -2366,6 +2366,7 @@ def print_concurrency_table(results: list[BenchmarkResult], saved_paths: list[st
         padding=(0, 1),
     )
     table.add_column("Workers", justify="right", min_width=7)
+    table.add_column("Samples", justify="right", min_width=9)
     table.add_column(f"Tok/s {_UP}", justify="right", min_width=7)
     table.add_column(f"Img/s {_UP}", justify="right", min_width=7)
     table.add_column(f"TTFT (ms) {_DN}", justify="right", min_width=11)
@@ -2373,7 +2374,6 @@ def print_concurrency_table(results: list[BenchmarkResult], saved_paths: list[st
     table.add_column(f"Latency (s) {_DN}", justify="right", min_width=13)
     table.add_column(f"Duration (s) {_DN}", justify="right", min_width=13)
     table.add_column(f"VRAM {_DN}", justify="right", min_width=9)
-    table.add_column(f"Errors {_DN}", justify="right", min_width=8)
 
     for r in results:
         c = r.input.max_concurrency
@@ -2381,11 +2381,13 @@ def print_concurrency_table(results: list[BenchmarkResult], saved_paths: list[st
         is_best = toks == max_toks
         style = "bold bright_green" if is_best else ""
         vram_gb = f"{r.results.vram_peak_mib / 1024:.1f} GB" if r.results.vram_peak_mib is not None else "-"
-        err_val = str(r.results.errors)
-        err_style = "red" if r.results.errors > 0 else style
+        total_ok = r.results.total_inputs_processed - r.results.errors
+        samples_text = f"{total_ok}/{r.results.total_inputs_processed}"
+        samples_style = "red" if r.results.errors > 0 else style
 
         table.add_row(
             Text(str(c), style=style),
+            Text(samples_text, style=samples_style),
             Text(f"{toks:.1f}", style=style),
             Text(f"{r.results.inputs_per_sec:.2f}", style=style),
             Text(f"{r.results.ttft_ms.mean:.0f}", style=style),
@@ -2393,7 +2395,6 @@ def print_concurrency_table(results: list[BenchmarkResult], saved_paths: list[st
             Text(f"{r.results.latency_s_per_input.mean:.2f}", style=style),
             Text(f"{r.results.total_duration_s:.1f}", style=style),
             Text(vram_gb, style=style),
-            Text(err_val, style=err_style),
         )
 
     panel = Panel(
@@ -2416,8 +2417,16 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
     console.print(f"  [bold]compare[/bold] [dim]({len(results)} runs)[/dim]")
     console.print()
 
+    _UP = "\u2191"
+    _DN = "\u2193"
+    _BEST = "bold bright_green"
+
     def _total_tok_s(r: BenchmarkResult) -> float:
         return r.results.tokens_per_sec
+
+    def _be_label(r: BenchmarkResult) -> str:
+        be, ver = r.environment.backend, r.environment.backend_version or ""
+        return f"vLLM {ver}".strip() if be == "vllm" else f"{be.capitalize()} {ver}".strip()
 
     # Group by model_id, sort groups by best tok/s descending
     sorted_results = sorted(results, key=lambda r: (r.model.model_id, -_total_tok_s(r)))
@@ -2426,21 +2435,17 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
     ]
     groups.sort(key=lambda g: max(_total_tok_s(r) for r in g[1]), reverse=True)
 
-    # Global fastest
-    max_toks = max(_total_tok_s(r) for r in results)
+    # Global bests per metric (for per-cell highlighting)
+    best_ttft = min(r.results.ttft_ms.mean for r in results)
+    best_tpot = min(r.results.tpot_ms.mean for r in results)
+    best_toks = max(_total_tok_s(r) for r in results)
+    best_imgs = max(r.results.inputs_per_sec for r in results)
+    best_dur = min(r.results.total_duration_s for r in results)
+    vram_vals = [r.results.vram_peak_mib for r in results if r.results.vram_peak_mib is not None]
+    best_vram = min(vram_vals) if vram_vals else None
 
-    # Collect all column values to detect uniform columns
     all_quants = {r.model.quant or "-" for r in results}
-    all_drivers = {r.environment.gpu_driver or "-" for r in results}
-    all_backends: set[str] = set()
-    for r in results:
-        be = r.environment.backend
-        be_ver = r.environment.backend_version or ""
-        all_backends.add(f"vLLM {be_ver}".strip() if be == "vllm" else f"{be.capitalize()} {be_ver}".strip())
-
     show_quant = len(all_quants) > 1
-    len(all_drivers) > 1
-    len(all_backends) > 1
 
     table = Table(
         show_header=True,
@@ -2449,99 +2454,116 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
         border_style="dim white",
         padding=(0, 1),
     )
-    table.add_column("Model", min_width=24, no_wrap=True, style=f"bold {STEEL_BLUE}")
-    table.add_column("TTFT (ms)", justify="right", min_width=8, style="dim")
-    table.add_column("TPOT (ms)", justify="right", min_width=8, style="dim")
-    table.add_column("Tok/s \u2193", justify="right", min_width=7)
-    table.add_column("Img/s", justify="right", min_width=6, style="dim")
-    table.add_column("Duration (s)", justify="right", min_width=8, style="dim")
-    table.add_column("num_workers", justify="right", min_width=4, style="dim")
-    table.add_column("VRAM", justify="right", min_width=9, style="dim")
+    model_width = min(max(len(r.model.model_id) for r in results), 80)
+    table.add_column("Model", width=model_width, no_wrap=True, style=f"bold {STEEL_BLUE}")
+    table.add_column(f"TTFT (ms) {_DN}", justify="right", min_width=8)
+    table.add_column(f"TPOT (ms) {_DN}", justify="right", min_width=8)
+    table.add_column(f"Tok/s {_UP}", justify="right", min_width=7)
+    table.add_column(f"Img/s {_UP}", justify="right", min_width=6)
+    table.add_column(f"Duration (s) {_DN}", justify="right", min_width=8)
+    table.add_column("Workers", justify="right", min_width=4, style="dim")
+    table.add_column(f"VRAM {_DN}", justify="right", min_width=9)
     if show_quant:
         table.add_column("Quant", min_width=6, style="dim")
     table.add_column("Backend", min_width=7, style="dim")
     table.add_column("Hardware", min_width=14, style="dim")
-    table.add_column("Driver", min_width=8, style="dim")
 
     for group_idx, (model_id, runs) in enumerate(groups):
         if group_idx > 0:
             table.add_section()
 
         for row_idx, r in enumerate(runs):
-            be = r.environment.backend
-            be_ver = r.environment.backend_version or ""
-            be_label = f"vLLM {be_ver}".strip() if be == "vllm" else f"{be.capitalize()} {be_ver}".strip()
-
-            concurrency = r.input.max_concurrency
-            hardware = r.environment.gpu_name or "-"
-            vram_gb = f"{r.results.vram_peak_mib / 1024:.2f} GB" if r.results.vram_peak_mib is not None else "-"
             total_toks = _total_tok_s(r)
             total_imgs = r.results.inputs_per_sec
-            is_fastest = total_toks == max_toks
+            vram_mib = r.results.vram_peak_mib
+            vram_gb = f"{vram_mib / 1024:.2f} GB" if vram_mib is not None else "-"
 
-            tok_s_text = f"{total_toks:.1f}"
-            tok_s_style = "bold bright_green" if is_fastest else "white"
-
-            # Show model name only on the first row of each group
             model_cell = model_id if row_idx == 0 else ""
 
             cells: list[Any] = [
                 model_cell,
-                f"{r.results.ttft_ms.mean:.0f}",
-                f"{r.results.tpot_ms.mean:.1f}",
-                Text(tok_s_text, style=tok_s_style),
-                f"{total_imgs:.2f}",
-                f"{r.results.total_duration_s:.1f}",
-                str(concurrency),
-                vram_gb,
+                Text(f"{r.results.ttft_ms.mean:.0f}", style=_BEST if r.results.ttft_ms.mean == best_ttft else "dim"),
+                Text(f"{r.results.tpot_ms.mean:.1f}", style=_BEST if r.results.tpot_ms.mean == best_tpot else "dim"),
+                Text(f"{total_toks:.1f}", style=_BEST if total_toks == best_toks else "white"),
+                Text(f"{total_imgs:.2f}", style=_BEST if total_imgs == best_imgs else "dim"),
+                Text(
+                    f"{r.results.total_duration_s:.1f}",
+                    style=_BEST if r.results.total_duration_s == best_dur else "dim",
+                ),
+                str(r.input.max_concurrency),
+                Text(
+                    vram_gb,
+                    style=_BEST if vram_mib is not None and best_vram is not None and vram_mib == best_vram else "dim",
+                ),
             ]
             if show_quant:
                 cells.append(r.model.quant or "-")
-            cells.append(be_label)
-            cells.append(hardware)
-            cells.append(r.environment.gpu_driver or "-")
+            cells.append(_be_label(r))
+            cells.append((r.environment.gpu_name or "-").replace("NVIDIA ", "NV "))
 
             table.add_row(*cells)
 
+    table_width = console.measure(table).maximum
     console.print(table)
     console.print()
 
-    # ── Summary statistics ────────────────────────────────────────────────
-    unique_models = {r.model.model_id for r in results}
-    all_tok_s = [_total_tok_s(r) for r in results]
+    # ── Results leaderboard ────────────────────────────────────────────────
     total_duration = sum(r.results.total_duration_s for r in results)
     total_errors = sum(r.results.errors for r in results)
     total_retries = sum(r.results.retries for r in results)
 
-    lines = Text()
-    lines.append("Runs       ", style=f"bold {STEEL_BLUE}")
-    lines.append(f"{len(results)}", style="white")
-    lines.append(f" across {len(unique_models)} model(s)", style="dim")
-    lines.append(f"  total duration {total_duration:.1f}s\n", style="dim")
+    lb = Table(show_header=True, header_style="bold white", box=None, padding=(0, 1), show_edge=False)
+    lb.add_column("#", justify="right", style="dim", width=3)
+    lb.add_column("Model", no_wrap=True, style=f"bold {STEEL_BLUE}", min_width=20)
+    lb.add_column(f"Best Tok/s {_UP}", justify="right", min_width=10)
+    lb.add_column("@ Workers", justify="right", style="dim", min_width=9)
+    lb.add_column(f"TTFT {_DN}", justify="right", min_width=8)
+    lb.add_column(f"TPOT {_DN}", justify="right", min_width=8)
+    lb.add_column(f"Img/s {_UP}", justify="right", min_width=6)
+    lb.add_column(f"VRAM {_DN}", justify="right", min_width=9)
+    lb.add_column("Backend", min_width=7, style="dim")
 
-    lines.append("Tok/s      ", style=f"bold {STEEL_BLUE}")
-    lines.append(f"{max(all_tok_s):.1f}", style="bright_green")
-    lines.append(" best", style="dim")
-    lines.append(f"   {min(all_tok_s):.1f}", style="white")
-    lines.append(" worst", style="dim")
-    lines.append(f"   {statistics.mean(all_tok_s):.1f}", style="white")
-    lines.append(" avg\n", style="dim")
+    for rank, (model_id, runs) in enumerate(groups, 1):
+        best_run = max(runs, key=_total_tok_s)
+        br = best_run.results
+        tok_style = _BEST if _total_tok_s(best_run) == best_toks else "white"
+        vram_mib = br.vram_peak_mib
+        vram_gb = f"{vram_mib / 1024:.1f} GB" if vram_mib is not None else "-"
 
-    reliability_style = "bright_green" if total_errors == 0 else "yellow"
-    lines.append("Errors     ", style=f"bold {STEEL_BLUE}")
-    lines.append(f"{total_errors}", style=reliability_style)
+        lb.add_row(
+            str(rank),
+            model_id,
+            Text(f"{_total_tok_s(best_run):.1f}", style=tok_style),
+            str(best_run.input.max_concurrency),
+            f"{br.ttft_ms.mean:.0f} ms",
+            f"{br.tpot_ms.mean:.1f} ms",
+            f"{br.inputs_per_sec:.2f}",
+            vram_gb,
+            _be_label(best_run),
+        )
+
+    from rich.console import Group as RenderGroup
+
+    footer = Text()
+    footer.append(f"\n   {len(results)} runs", style="white")
+    footer.append(f" across {len(groups)} model(s)", style="dim")
+    footer.append(f"  \u00b7  total {total_duration:.1f}s", style="dim")
+    error_style = "bright_green" if total_errors == 0 else "yellow"
+    footer.append("  \u00b7  ", style="dim")
+    footer.append(f"{total_errors} errors", style=error_style)
     if total_retries > 0:
-        lines.append(f"  ({total_retries} retries)", style="dim")
+        footer.append(f" ({total_retries} retries)", style="dim")
 
     panel = Panel(
-        lines,
-        title="[bold]Summary[/bold]",
+        RenderGroup(lb, footer),
+        title="[bold]Results[/bold]",
         title_align="left",
         subtitle=f"[dim]vlmbench v{VERSION}[/dim]",
         subtitle_align="right",
         border_style="dim white",
         box=box.ROUNDED,
-        padding=(1, 2),
+        padding=(1, 0),
+        width=table_width,
     )
     console.print(panel)
     console.print()
