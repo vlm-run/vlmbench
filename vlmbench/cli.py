@@ -2493,7 +2493,7 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
             if show_quant:
                 cells.append(r.model.quant or "-")
             cells.append(_be_label(r))
-            cells.append(r.environment.gpu_name or "-")
+            cells.append((r.environment.gpu_name or "-").replace("NVIDIA ", "NV "))
 
             table.add_row(*cells)
 
