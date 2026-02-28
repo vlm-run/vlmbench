@@ -51,7 +51,7 @@ dist: clean
 VLLM_IMAGE ?= vllm/vllm-openai:v0.15.1
 SERVE_PORT ?= 8000
 SERVE_ARGS ?=
-GPU_DEVICE ?= 1
+GPU_DEVICE ?= 0
 # LD_FIX: prepend host driver libs so the container's stale CUDA compat
 #         libs (e.g. 575.x) don't shadow the host driver (e.g. 580.x).
 LD_FIX     := /usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/cuda/lib64
@@ -69,9 +69,11 @@ CONCURRENCY           ?= 4,8,16,32,64
 MAX_MODEL_LEN         ?= 16384
 
 # ── Serve (vLLM Docker for testing) ──────────────────────────────────
-# Usage: make serve MODEL=Qwen/Qwen3-VL-2B-Instruct
-#        make serve MODEL=Qwen/Qwen3-VL-2B-Instruct VLLM_IMAGE=<custom-image>
-#        make serve SERVE_PORT=8100 GPU_DEVICE=0
+# Usage: 
+#   make serve MODEL=Qwen/Qwen3-VL-2B-Instruct
+#   make serve MODEL=Qwen/Qwen3-VL-2B-Instruct VLLM_IMAGE=<custom-image>
+#   make serve SERVE_PORT=8100 GPU_DEVICE=0
+#   make serve MODEL=lightonai/LightOnOCR-2-1B GPU_DEVICE=1 SERVE_ARGS="--max-model-len 16384 --limit-mm-per-prompt '{\"image\": 1}' --mm-processor-cache-gb 0 --no-enable-prefix-caching"
 serve:
 ifndef MODEL
 	$(error MODEL is required. Example: make serve MODEL=Qwen/Qwen3-VL-2B-Instruct)
@@ -101,6 +103,9 @@ serve-stop:
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--dataset vlm-run/FineVision-vlmbench-mini"
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--input ./images --save ./results --tag my-run"
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--base-url http://localhost:8100/v1 --no-serve"
+#
+# Local reproduction (start server first with `make serve`, then benchmark with --no-serve):
+#   make benchmark MODEL=<model-id> BENCHMARK_ARGS="--no-serve --base-url http://localhost:8000/v1 --concurrency 1,2,4,8,16,32,64,128 --dataset hf://vlm-run/FineVision-vlmbench-mini"
 benchmark:
 ifndef MODEL
 	$(error MODEL is required. Example: make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct)
@@ -117,8 +122,11 @@ endif
 	uvx --with vlmbench==0.4.0 vlmbench run --model $(MODEL) --warmup 1 --upload --upload-repo $(REPO_ID) $(BENCHMARK_ARGS)
 
 # Submit benchmark to HF Jobs (runs concurrency sweep by default)
-# Usage: make hf-benchmark FLAVOR=l4x1 MODEL=Qwen/Qwen3-VL-2B-Instruct
-#        make hf-benchmark FLAVOR=l4x1 MODEL=Qwen/Qwen3-VL-2B-Instruct CONCURRENCY=8
+#
+# Reproduction commands (a100-large):
+#   make hf-benchmark FLAVOR=a100-large MODEL=Qwen/Qwen3-VL-2B-Instruct CONCURRENCY=4,8,16,32,64,128
+#   make hf-benchmark FLAVOR=a100-large MODEL=Qwen/Qwen3-VL-8B-Instruct CONCURRENCY=4,8,16,32,64,128 SERVE_ARGS='--mm-encoder-tp-mode "data"'
+#   make hf-benchmark FLAVOR=a100-large MODEL=lightonai/LightOnOCR-2-1B CONCURRENCY=1,2,4,8,16,32,64,128 SERVE_ARGS='--limit-mm-per-prompt '"'"'{"image": 1}'"'"' --mm-processor-cache-gb 0 --no-enable-prefix-caching'
 hf-benchmark:
 ifndef FLAVOR
 	$(error FLAVOR is required. Example: make hf-benchmark FLAVOR=l4x1)
@@ -133,7 +141,7 @@ endif
 		--timeout $(BENCHMARK_JOB_TIMEOUT) \
 		-- $(VLLM_IMAGE) \
 		bash -c 'pip install -q "vlmbench[hf]==0.4.0" \
-			&& vllm serve $(MODEL) --max-model-len $(MAX_MODEL_LEN) & \
+			&& vllm serve $(MODEL) --max-model-len $(MAX_MODEL_LEN) $(SERVE_ARGS) & \
 			echo "Starting vLLM server in background..." \
 			&& for i in $$(seq 1 120); do \
 				curl -sf http://localhost:8000/health > /dev/null 2>&1 && break; \
@@ -144,18 +152,5 @@ endif
 			&& vlmbench run --model $(MODEL) --no-serve --base-url http://localhost:8000/v1 --warmup 1 --concurrency $(CONCURRENCY) --dataset $(DATASET) --upload --upload-repo $(REPO_ID) $(BENCHMARK_ARGS) \
 			|| echo "ERROR: vLLM server failed to start"'
 
-# Sweep across multiple GPU flavors
-# Usage: make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS="a100-large a10g-small"
-hf-sweep:
-ifndef MODEL
-	$(error MODEL is required. Example: make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct)
-endif
-	@echo "Launching $(words $(FLAVORS)) jobs for $(MODEL)..."
-	@for flavor in $(FLAVORS); do \
-		echo "  -> $$flavor"; \
-		$(MAKE) --no-print-directory hf-benchmark MODEL=$(MODEL) FLAVOR=$$flavor BENCHMARK_ARGS='$(BENCHMARK_ARGS)' & \
-	done; \
-	wait
-	@echo "All jobs submitted."
 
-.PHONY: default help clean clean-build clean-pyc lint test dist serve serve-stop benchmark uv-benchmark hf-benchmark hf-sweep
+.PHONY: default help clean clean-build clean-pyc lint test dist serve serve-stop benchmark uv-benchmark hf-benchmark
