@@ -15,7 +15,7 @@ pyproject.toml              # Package config, version, dependencies
 - **Single file**: All CLI logic lives in `vlmbench/cli.py`. This is intentional — the tool should remain a single file.
 - **Entry point**: `main()` function at the bottom of cli.py. Uses `argparse` (stdlib).
 - **Subcommands**: `run` (default), `compare`. The `run` subcommand is implicit if flags start with `--`.
-- **Version**: Defined in `pyproject.toml` as `version = "X.Y.Z"`. `cli.py` reads it at runtime via `importlib.metadata`.
+- **Version**: Defined in `vlmbench/version.py` as `__version__`. `pyproject.toml` reads it dynamically via `setuptools.dynamic` attr. `cli.py` imports it directly.
 
 ## Backend System
 
@@ -42,16 +42,16 @@ make test
 
 ## Versioning
 
-- **Every PR must bump the version** in `pyproject.toml` (`version = "X.Y.Z"`).
+- **Every PR must bump the version** in `vlmbench/version.py` (`__version__ = "X.Y.Z"`).
 - **Patch bump by default**: Increment the patch version (e.g., `0.1.1` → `0.1.2`) for all PRs — bug fixes, new features, refactors, docs, etc.
 - **Minor bump exception**: Only bump the minor version (e.g., `0.1.2` → `0.2.0`) when the PR explicitly states it is a minor release (e.g., breaking changes, large new capabilities). Reset patch to `0` on minor bumps.
 - Do **not** bump the major version without explicit instruction.
-- The version is defined **only** in `pyproject.toml`. `cli.py` reads it at runtime via `importlib.metadata.version("vlmbench")`. Do not duplicate it elsewhere.
+- The version is defined **only** in `vlmbench/version.py`. `pyproject.toml` reads it dynamically via `setuptools.dynamic` attr. Do not duplicate it elsewhere.
 
 ## Guidelines
 
 - Keep cli.py as a single file. Do not split into modules.
-- Version is defined in `pyproject.toml`. `cli.py` reads it via `importlib.metadata`. Update it in one place only.
+- Version is defined in `vlmbench/version.py`. Update it in one place only.
 - **Always run `make lint` before pushing commits.** Fix any errors before pushing.
 - **Python 3.11+** — use modern features: `tomllib`, `StrEnum`, `ExceptionGroup`, `TaskGroup`, `type X = ...` aliases, `match/case`, `datetime.fromisoformat` improvements. Avoid legacy patterns and `from __future__ import annotations`.
 - Code should be elegant and minimal — no unnecessary abstractions, no over-engineering.

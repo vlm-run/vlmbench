@@ -21,7 +21,6 @@ import asyncio
 import base64
 import dataclasses
 import hashlib
-import importlib.metadata
 import io
 import json
 import os
@@ -55,9 +54,9 @@ from rich.table import Table
 from rich.text import Text
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential  # noqa: F401
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+from vlmbench.version import __version__ as VERSION
 
-VERSION = importlib.metadata.version("vlmbench")
+# ── Constants ─────────────────────────────────────────────────────────────────
 SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
 DEFAULT_MAX_TOKENS = 4096

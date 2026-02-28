@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-VLMBENCH_BIN = str(Path(sys.executable).parent / "vlmbench")
+VLMBENCH_CMD = [sys.executable, "-m", "vlmbench.cli"]
 
 # Vision model candidates in preference order
 OLLAMA_VISION_KEYWORDS = [
@@ -78,7 +78,7 @@ def test_cli_run_local_input(server: dict, test_image: Path, tmp_path: Path) -> 
     save_dir = tmp_path / "results"
     result = subprocess.run(
         [
-            VLMBENCH_BIN,
+            *VLMBENCH_CMD,
             "run",
             "--model",
             server["model"],
@@ -122,7 +122,7 @@ def test_cli_run_local_directory(server: dict, tmp_path: Path) -> None:
     save_dir = tmp_path / "results"
     result = subprocess.run(
         [
-            VLMBENCH_BIN,
+            *VLMBENCH_CMD,
             "run",
             "--model",
             server["model"],
@@ -171,7 +171,7 @@ def test_cli_run_hf_dataset(server: dict, tmp_path: Path) -> None:
     save_dir = tmp_path / "results"
     result = subprocess.run(
         [
-            VLMBENCH_BIN,
+            *VLMBENCH_CMD,
             "run",
             "--model",
             server["model"],
@@ -212,7 +212,7 @@ def test_cli_run_hf_dataset_with_image_col(server: dict, tmp_path: Path) -> None
     save_dir = tmp_path / "results"
     result = subprocess.run(
         [
-            VLMBENCH_BIN,
+            *VLMBENCH_CMD,
             "run",
             "--model",
             server["model"],
@@ -251,7 +251,7 @@ def test_cli_input_mutual_exclusivity() -> None:
     """Verify --input and --dataset are mutually exclusive."""
     result = subprocess.run(
         [
-            VLMBENCH_BIN,
+            *VLMBENCH_CMD,
             "run",
             "--model",
             "test-model",
@@ -271,7 +271,7 @@ def test_cli_input_mutual_exclusivity() -> None:
 def test_help():
     """Verify vlmbench --help runs successfully."""
     result = subprocess.run(
-        [VLMBENCH_BIN, "--help"],
+        [*VLMBENCH_CMD, "--help"],
         capture_output=True,
         text=True,
         timeout=10,
@@ -281,7 +281,7 @@ def test_help():
 
 def test_import():
     """Verify the package is importable and has a version."""
-    import importlib.metadata
+    from vlmbench.version import __version__
 
-    version = importlib.metadata.version("vlmbench")
-    assert isinstance(version, str)
+    assert isinstance(__version__, str)
+    assert __version__

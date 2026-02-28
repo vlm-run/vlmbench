@@ -2009,7 +2009,6 @@ wheels = [
 
 [[package]]
 name = "vlmbench"
-version = "0.4.4"
 source = { editable = "." }
 dependencies = [
     { name = "openai" },

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vlmbench"
-version = "0.4.4"
+dynamic = ["version"]
 description = "Single-file, drop-in VLM benchmark CLI for your agents."
 authors = [{ name = "VLM Run", email = "support@vlm.run" }]
 readme = "README.md"
@@ -49,6 +49,9 @@ Issues = "https://github.com/vlm-run/vlmbench/issues"
 
 [tool.setuptools.package-data]
 vlmbench = ["profiles/*.yaml"]
+
+[tool.setuptools.dynamic]
+version = {attr = "vlmbench.version.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["vlmbench*"]

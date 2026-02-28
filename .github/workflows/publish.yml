@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'pyproject.toml'
+      - 'vlmbench/version.py'
 
 jobs:
   test:
@@ -44,7 +45,7 @@ jobs:
       - name: Get version
         id: version
         run: |
-          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          VERSION=$(python -c "exec(open('vlmbench/version.py').read()); print(__version__)")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Check if tag exists
