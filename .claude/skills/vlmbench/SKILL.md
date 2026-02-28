@@ -47,9 +47,13 @@ Docker backends use `--gpus all --ipc=host`. Servers run in tmux sessions (`vlmb
 
 See [MODELS.md](MODELS.md) for the full table of tested models and their required `--serve-args`. Reference this file when the user asks which models are supported or how to serve a specific model.
 
+## Concurrency sweep
+
+Use `--concurrency 4,8,16,32,64` to run at multiple concurrency levels in a single invocation. Produces one JSON per level (tagged `c4`, `c8`, etc.) and a consolidated comparison table. A single value (e.g. `--concurrency 8`) runs at that level only.
+
 ## Key metrics
 
-TTFT (ms), TPOT (ms), tok/s, img/s, latency s/img, VRAM peak (MiB), prompt/completion token counts. Results saved as JSON to `./results/`.
+TTFT (ms), TPOT (ms), tok/s, img/s, latency s/img, VRAM peak (MiB), prompt/completion token counts. Results saved as JSON to `./results/{backend}-v{version}-{model}-{gpu}-{tag}.json`.
 
 ## GPU detection
 
