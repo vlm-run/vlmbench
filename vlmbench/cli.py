@@ -65,7 +65,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-VERSION = "0.3.4"
+VERSION = "0.3.5"
 SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
 DEFAULT_MAX_TOKENS = 2048
@@ -302,88 +302,102 @@ def _nvidia_gpu_index() -> int:
     return 0
 
 
+def _collect_server_pids(port: int) -> set[int]:
+    """Collect all PIDs associated with the server on *port* (host + Docker)."""
+    pids: set[int] = set()
+
+    # Host-native: lsof
+    try:
+        lsof = subprocess.run(
+            ["lsof", "-ti", f":{port}"], capture_output=True, text=True, timeout=5
+        )
+        if lsof.returncode == 0 and lsof.stdout.strip():
+            pids.update(int(p) for p in lsof.stdout.strip().split("\n") if p.isdigit())
+    except Exception:
+        pass
+
+    # Docker: find containers publishing this port, get their host PIDs
+    try:
+        docker_ps = subprocess.run(
+            ["docker", "ps", "-q", "--filter", f"publish={port}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if docker_ps.returncode == 0 and docker_ps.stdout.strip():
+            for cid in docker_ps.stdout.strip().split("\n"):
+                cid = cid.strip()
+                if not cid:
+                    continue
+                inspect = subprocess.run(
+                    ["docker", "inspect", "--format", "{{.State.Pid}}", cid],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if inspect.returncode == 0 and inspect.stdout.strip().isdigit():
+                    pids.add(int(inspect.stdout.strip()))
+    except Exception:
+        pass
+
+    # Expand to child processes (GPU workers are often forked)
+    children: set[int] = set()
+    for pid in pids:
+        try:
+            result = subprocess.run(
+                ["pgrep", "-P", str(pid)], capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                children.update(int(c) for c in result.stdout.strip().split("\n") if c.isdigit())
+        except Exception:
+            pass
+    pids |= children
+    return pids
+
+
+def _bus_id_to_gpu_index(bus_id: str) -> int | None:
+    """Map a PCI bus ID to an nvidia-smi GPU index."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,gpu_bus_id", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.strip().split("\n"):
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 2 and parts[1] == bus_id:
+                return int(parts[0])
+    except Exception:
+        pass
+    return None
+
+
 def get_gpu_for_server_port(port: int = 8000) -> int | None:
     """Find which GPU is being used by the server on the given port.
 
-    Uses nvidia-smi to query compute apps and lsof to find the server PID.
-    Also checks child processes since GPU workers are often forked.
-    Returns the GPU index, or None if not found.
+    Handles both host-native processes and Docker containers by collecting
+    PIDs from lsof and docker inspect, then matching against nvidia-smi
+    compute apps.  Returns the GPU index, or None if not found.
     """
     try:
-        # Find the PID listening on the port
-        lsof_result = subprocess.run(
-            ["lsof", "-ti", f":{port}"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if lsof_result.returncode != 0 or not lsof_result.stdout.strip():
+        all_pids = _collect_server_pids(port)
+        if not all_pids:
             return None
 
-        server_pids = {int(p) for p in lsof_result.stdout.strip().split("\n") if p.isdigit()}
-        if not server_pids:
-            return None
-
-        # Expand to include child processes (GPU workers are often children)
-        all_pids = set(server_pids)
-        for pid in server_pids:
-            try:
-                children_result = subprocess.run(
-                    ["pgrep", "-P", str(pid)],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                if children_result.returncode == 0:
-                    for child in children_result.stdout.strip().split("\n"):
-                        if child.isdigit():
-                            all_pids.add(int(child))
-            except Exception:
-                pass
-
-        # Query nvidia-smi for compute apps
         smi_result = subprocess.run(
             ["nvidia-smi", "--query-compute-apps=pid,gpu_bus_id", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-            timeout=5,
+            capture_output=True, text=True, timeout=5,
         )
         if smi_result.returncode != 0:
             return None
 
-        # Find the GPU bus ID for our server PID or its children
-        gpu_bus_id = None
         for line in smi_result.stdout.strip().split("\n"):
             if not line.strip():
                 continue
             parts = [p.strip() for p in line.split(",")]
             if len(parts) >= 2:
                 try:
-                    pid = int(parts[0])
-                    if pid in all_pids:
-                        gpu_bus_id = parts[1]
-                        break
+                    if int(parts[0]) in all_pids:
+                        return _bus_id_to_gpu_index(parts[1])
                 except ValueError:
                     continue
-
-        if not gpu_bus_id:
-            return None
-
-        # Map bus ID to GPU index
-        idx_result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index,gpu_bus_id", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if idx_result.returncode != 0:
-            return None
-
-        for line in idx_result.stdout.strip().split("\n"):
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) >= 2 and parts[1] == gpu_bus_id:
-                return int(parts[0])
-
     except Exception:
         pass
     return None
