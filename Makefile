@@ -63,6 +63,7 @@ BENCHMARK_ARGS        ?=
 BENCHMARK_JOB_TIMEOUT ?= 45m
 HF_NAMESPACE          ?= vlm-run
 REPO_ID               ?= vlm-run/vlmbench-results
+DATASET               ?= hf://vlm-run/FineVision-vlmbench-mini
 FLAVORS               ?= a100-large
 CONCURRENCY           ?= 4,8,16,32,64
 
@@ -103,7 +104,7 @@ benchmark:
 ifndef MODEL
 	$(error MODEL is required. Example: make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct)
 endif
-	uv run vlmbench run --model $(MODEL) --warmup 1 $(BENCHMARK_ARGS)
+	uv run vlmbench run --model $(MODEL) --warmup 1 --upload --upload-repo $(REPO_ID) $(BENCHMARK_ARGS)
 
 # Run benchmark via uvx (from PyPI, mimics what HF Jobs runs)
 # Usage: make uv-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct
@@ -112,7 +113,7 @@ uv-benchmark:
 ifndef MODEL
 	$(error MODEL is required. Example: make uv-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct)
 endif
-	uvx --with vlmbench==0.3.4 vlmbench run --model $(MODEL) --warmup 1 $(BENCHMARK_ARGS)
+	uvx --with vlmbench==0.4.0 vlmbench run --model $(MODEL) --warmup 1 --upload --upload-repo $(REPO_ID) $(BENCHMARK_ARGS)
 
 # Submit benchmark to HF Jobs (runs concurrency sweep by default)
 # Usage: make hf-benchmark FLAVOR=l4x1 MODEL=Qwen/Qwen3-VL-2B-Instruct
@@ -130,7 +131,7 @@ endif
 		--secrets HF_TOKEN \
 		--timeout $(BENCHMARK_JOB_TIMEOUT) \
 		-- $(VLLM_IMAGE) \
-		bash -c 'pip install -q vlmbench==0.3.4 \
+		bash -c 'pip install -q "vlmbench[hf]==0.4.0" \
 			&& vllm serve $(MODEL) --max-model-len 8192 & \
 			echo "Starting vLLM server in background..." \
 			&& for i in $$(seq 1 120); do \
@@ -139,7 +140,7 @@ endif
 			done \
 			&& curl -sf http://localhost:8000/health > /dev/null 2>&1 \
 			&& echo "vLLM server ready!" \
-			&& vlmbench run --model $(MODEL) --no-serve --base-url http://localhost:8000/v1 --warmup 1 --concurrency $(CONCURRENCY) $(BENCHMARK_ARGS) \
+			&& vlmbench run --model $(MODEL) --no-serve --base-url http://localhost:8000/v1 --warmup 1 --concurrency $(CONCURRENCY) --dataset $(DATASET) --upload --upload-repo $(REPO_ID) $(BENCHMARK_ARGS) \
 			|| echo "ERROR: vLLM server failed to start"'
 
 # Sweep across multiple GPU flavors

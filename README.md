@@ -225,7 +225,8 @@ uvx vlmbench compare results/*.json
 | Flag | Default | Description |
 |---|---|---|
 | `--model` / `-m` | required | Model ID (vLLM: `Qwen/Qwen3-VL-2B-Instruct`, Ollama: `qwen3-vl:2b`) |
-| `--input` / `-i` | required | File or directory (images, PDFs, videos) |
+| `--input` / `-i` | sample URL | File, directory, or URL (images, PDFs, videos) |
+| `--dataset` / `-d` | none | HuggingFace dataset (e.g. `vlm-run/FineVision-vlmbench-mini`) |
 | `--base-url` | auto-detect | OpenAI-compatible base URL |
 | `--api-key` | `no-key` | API key (also reads `OPENAI_API_KEY` env) |
 | `--prompt` | `"Extract all text..."` | Prompt sent with each input |
@@ -233,11 +234,14 @@ uvx vlmbench compare results/*.json
 | `--runs` | `3` | Timed runs per input |
 | `--warmup` | `1` | Warmup runs (not recorded, fail-fast on errors) |
 | `--concurrency` | `8` | Single value or comma-separated sweep (e.g. `8` or `4,8,16,32,64`) |
+| `--max-samples` | all | Limit number of input samples (useful for dry-runs) |
 | `--save` | `./results/` | Output directory |
+| `--tag` | none | Custom label (used in result filename and metadata) |
+| `--upload` | off | Upload results to a HuggingFace dataset repo (requires `HF_TOKEN`) |
+| `--upload-repo` | `vlm-run/vlmbench-results` | HuggingFace dataset repo for uploads |
 | `--backend` | `auto` | `auto`, `ollama`, `vllm` (native), `vllm-openai:<tag>` (Docker), `sglang:<tag>` |
 | `--serve/--no-serve` | `--serve` | Auto-start server if none detected |
 | `--serve-args` | none | Extra args passed to server (Docker or native) |
-| `--tag` | none | Custom grouping label |
 | `--quant` | `auto` | Quantization metadata: `fp16`, `bf16`, `q4_K_M`, etc. |
 | `--revision` | `main` | Model revision metadata |
 
@@ -281,9 +285,29 @@ Directories processed recursively, sorted alphabetically.
 
 Results saved as JSON to `./results/{backend}-v{version}-{model}-{gpu}-{tag}.json` with model metadata, environment info, benchmark stats (TTFT, TPOT, throughput, latency percentiles), and raw per-run data. When using `--concurrency`, each level produces a separate file (e.g. `vllm-v0.15.1-qwen3-vl-2b-instruct-a100-80gb-c4.json`, `...-c8.json`, etc.).
 
+## Uploading Results
+
+Upload benchmark results directly to a HuggingFace dataset repo with `--upload`. Requires `HF_TOKEN` in your environment (or `.env` file).
+
+```bash
+# Upload to default repo (vlm-run/vlmbench-results)
+uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -d hf://vlm-run/FineVision-vlmbench-mini \
+  --concurrency 4,8,16,32,64 --upload
+
+# Upload to a custom repo
+uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ \
+  --upload --upload-repo my-org/my-benchmark-results
+```
+
+Results are saved locally first, then each JSON file is uploaded to `results/<filename>` in the dataset repo. For concurrency sweeps, all result files are uploaded after the sweep completes.
+
+Browse uploaded results at [`vlm-run/vlmbench-results`](https://huggingface.co/datasets/vlm-run/vlmbench-results).
+
 ## HuggingFace Jobs
 
-Run benchmarks at scale on HuggingFace infrastructure. Each job runs a concurrency sweep (`4,8,16,32,64` by default) and produces one JSON per level. Requires a [HuggingFace Pro](https://huggingface.co/pro) account and `HF_TOKEN` exported (or in `.env`).
+Run benchmarks at scale on HuggingFace infrastructure. Each job runs a concurrency sweep (`4,8,16,32,64` by default), produces one JSON per level, and uploads results to the HuggingFace dataset repo. Requires a [HuggingFace Pro](https://huggingface.co/pro) account and `HF_TOKEN` exported (or in `.env`).
+
+All `make` targets enable `--upload` by default (repo: `vlm-run/vlmbench-results`). Override with `REPO_ID=my-org/my-results`.
 
 ```bash
 # Single GPU job (runs concurrency sweep by default)
