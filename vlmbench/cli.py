@@ -65,13 +65,14 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-VERSION = "0.3.4"
+VERSION = "0.4.0"
 SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
 DEFAULT_MAX_TOKENS = 2048
 DEFAULT_RUNS = 3
 DEFAULT_CONCURRENCY = 8
 DEFAULT_SAVE_DIR = "./results"
+DEFAULT_UPLOAD_REPO = "vlm-run/vlmbench-results"
 DEFAULT_API_KEY = "no-key"
 DEFAULT_IMAGE_URL = "https://storage.googleapis.com/vlm-data-public-prod/hub/examples/image.caption/car.jpg"
 DEFAULT_MAX_IMAGE_SIZE = 2048
@@ -2633,6 +2634,17 @@ def build_parser() -> argparse.ArgumentParser:
     # Output
     run_parser.add_argument("--save", default=DEFAULT_SAVE_DIR, help="Output directory")
     run_parser.add_argument("--tag", default=None, help="Custom label (used in result filename and metadata)")
+    run_parser.add_argument(
+        "--upload",
+        action="store_true",
+        default=False,
+        help="Upload results to a HuggingFace dataset repo (requires HF_TOKEN)",
+    )
+    run_parser.add_argument(
+        "--upload-repo",
+        default=DEFAULT_UPLOAD_REPO,
+        help=f"HuggingFace dataset repo for uploads (default: {DEFAULT_UPLOAD_REPO})",
+    )
 
     # ── compare subcommand ──
     compare_parser = subparsers.add_parser("compare", help="Compare benchmark results from multiple JSON files.")
@@ -2815,6 +2827,31 @@ def _parse_concurrency_levels(args: argparse.Namespace) -> list[int]:
     return sorted(levels)
 
 
+def upload_results(paths: list[Path], repo_id: str) -> None:
+    """Upload result JSON files to a HuggingFace dataset repo."""
+    try:
+        from huggingface_hub import HfApi
+    except ImportError:
+        console.print("[red]huggingface_hub library required for --upload.[/red]")
+        console.print("[dim]Install with: uv pip install huggingface_hub[/dim]")
+        sys.exit(1)
+
+    api = HfApi()
+    for path in paths:
+        remote_path = f"results/{path.name}"
+        console.print(f"  [bold green]↑[/bold green] Uploading [dim]->[/dim] {repo_id}/{remote_path}")
+        api.upload_file(
+            path_or_fileobj=str(path),
+            path_in_repo=remote_path,
+            repo_id=repo_id,
+            repo_type="dataset",
+        )
+    console.print(
+        f"  [bold green]✓[/bold green] Uploaded {len(paths)} file(s) to [link=https://huggingface.co/datasets/{repo_id}]{repo_id}[/link]"
+    )
+    console.print()
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     """Run a VLM benchmark."""
     base_url, tmux_session = resolve_server(
@@ -2922,6 +2959,9 @@ def cmd_run(args: argparse.Namespace) -> None:
         saved = [str(p) for _, p in all_results]
         results = [r for r, _ in all_results]
         print_concurrency_table(results, saved)
+
+    if args.upload:
+        upload_results([p for _, p in all_results], args.upload_repo)
 
 
 def cmd_compare(args: argparse.Namespace) -> None:
