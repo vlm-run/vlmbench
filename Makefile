@@ -39,13 +39,13 @@ clean-pyc:
 	find . -name '__pycache__' -type d -exec rm -rf {} +
 
 lint:
-	pre-commit run --all-files
+	uvx --with pre-commit pre-commit run --all-files
 
 test:
-	pytest -sv tests
+	uv run pytest -sv tests
 
 dist: clean
-	python -m build --sdist --wheel
+	uv run python -m build --sdist --wheel
 
 # ── Serve settings ────────────────────────────────────────────────────
 VLLM_IMAGE ?= vllm/vllm-openai:v0.15.1
@@ -69,7 +69,7 @@ CONCURRENCY           ?= 4,8,16,32,64
 MAX_MODEL_LEN         ?= 16384
 
 # ── Serve (vLLM Docker for testing) ──────────────────────────────────
-# Usage: 
+# Usage:
 #   make serve MODEL=Qwen/Qwen3-VL-2B-Instruct
 #   make serve MODEL=Qwen/Qwen3-VL-2B-Instruct VLLM_IMAGE=<custom-image>
 #   make serve SERVE_PORT=8100 GPU_DEVICE=0
