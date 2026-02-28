@@ -23,7 +23,7 @@ help:
 	@echo "  make serve MODEL=Qwen/Qwen3-VL-2B-Instruct"
 	@echo "  make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct"
 	@echo "  make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS='--dataset vlm-run/FineVision-vlmbench-mini --max-concurrency 16'"
-	@echo "  make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1"
+	@echo "  make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1 HF_NAMESPACE=vlm-run"
 	@echo "  make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS='t4-small l4x1 a10g-small'"
 
 clean: clean-build clean-pyc
@@ -61,8 +61,10 @@ VLLM_CACHE ?= $(HOME)/.cache/vllm
 # ── Benchmarking settings ────────────────────────────────────────────
 BENCHMARK_ARGS        ?=
 BENCHMARK_JOB_TIMEOUT ?= 45m
+HF_NAMESPACE          ?= vlm-run
 REPO_ID               ?= vlm-run/vlmbench-results
-FLAVORS               ?= t4-small l4x1 a10g-small
+FLAVORS               ?= a100-large
+CONCURRENCY           ?= 8
 
 # ── Serve (vLLM Docker for testing) ──────────────────────────────────
 # Usage: make serve MODEL=Qwen/Qwen3-VL-2B-Instruct
@@ -113,18 +115,33 @@ ifndef MODEL
 endif
 	bash scripts/run_benchmark.sh --model $(MODEL) --no-upload $(BENCHMARK_ARGS)
 
-# Submit benchmark to HF Jobs (test with --help, run with MODEL=...)
+# Submit benchmark to HF Jobs
 # Usage: make hf-benchmark FLAVOR=l4x1 MODEL=Qwen/Qwen3-VL-2B-Instruct
+#        make hf-benchmark FLAVOR=l4x1 MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--dataset vlm-run/FineVision-vlmbench-mini"
 hf-benchmark:
 ifndef FLAVOR
 	$(error FLAVOR is required. Example: make hf-benchmark FLAVOR=l4x1)
 endif
+ifndef MODEL
+	$(error MODEL is required. Example: make hf-benchmark FLAVOR=l4x1 MODEL=Qwen/Qwen3-VL-2B-Instruct)
+endif
 	uvx hf jobs run \
+		--namespace $(HF_NAMESPACE) \
 		--flavor $(FLAVOR) \
 		--secrets HF_TOKEN \
 		--timeout $(BENCHMARK_JOB_TIMEOUT) \
-		-- ghcr.io/astral-sh/uv:python3.12-bookworm \
-		uv run --with vlmbench vlmbench --help
+		-- $(VLLM_IMAGE) \
+		bash -c 'pip install -q vlmbench==0.3.4 \
+			&& vllm serve $(MODEL) --max-model-len 8192 & \
+			echo "Starting vLLM server in background..." \
+			&& for i in $$(seq 1 120); do \
+				curl -sf http://localhost:8000/health > /dev/null 2>&1 && break; \
+				echo "  Waiting for vLLM... ($${i}/120)"; sleep 5; \
+			done \
+			&& curl -sf http://localhost:8000/health > /dev/null 2>&1 \
+			&& echo "vLLM server ready!" \
+			&& vlmbench run --model $(MODEL) --no-serve --base-url http://localhost:8000/v1 --max-concurrency $(CONCURRENCY) --tag c$(CONCURRENCY) $(BENCHMARK_ARGS) \
+			|| echo "ERROR: vLLM server failed to start"'
 
 # Sweep across multiple GPU flavors
 # Usage: make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS="t4-small l4x1 a10g-small"

@@ -44,7 +44,7 @@ if [[ ! " ${BENCH_ARGS[*]} " =~ " --save " ]]; then
 fi
 
 echo "Running: uvx --with vlmbench vlmbench run ${BENCH_ARGS[*]}"
-uvx --with vlmbench==0.3.0 vlmbench run "${BENCH_ARGS[@]}"
+uvx --with vlmbench==0.3.4 vlmbench run "${BENCH_ARGS[@]}"
 
 # ── Upload results ───────────────────────────────────────────────────
 if [[ "$UPLOAD" == true ]]; then

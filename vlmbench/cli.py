@@ -65,7 +65,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
 DEFAULT_MAX_TOKENS = 2048
@@ -2761,11 +2761,13 @@ def cmd_run(args: argparse.Namespace) -> None:
     save_dir.mkdir(parents=True, exist_ok=True)
 
     backend_slug = env.backend.lower()
+    ver = env.backend_version
+    version_slug = f"v{ver}" if ver and not ver.startswith("v") else (ver or "")
     model_slug = re.sub(r"[^a-zA-Z0-9]", "-", args.model.split("/")[-1]).strip("-").lower()
     gpu_slug = re.sub(r"[^a-zA-Z0-9]", "-", (env.gpu_name or "")).strip("-").lower() if env.gpu_name else ""
     gpu_slug = re.sub(r"-+", "-", gpu_slug.removeprefix("nvidia-"))
     tag_slug = args.tag or ""
-    parts = [backend_slug, model_slug, gpu_slug, tag_slug]
+    parts = [backend_slug, version_slug, model_slug, gpu_slug, tag_slug]
     filename = "-".join(p for p in parts if p) + ".json"
     save_path = save_dir / filename
 
