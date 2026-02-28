@@ -2553,7 +2553,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Output
     run_parser.add_argument("--save", default=DEFAULT_SAVE_DIR, help="Output directory")
-    run_parser.add_argument("--tag", default=None, help="Custom grouping label")
+    run_parser.add_argument("--tag", default=None, help="Custom label (used in result filename and metadata)")
 
     # ── compare subcommand ──
     compare_parser = subparsers.add_parser("compare", help="Compare benchmark results from multiple JSON files.")
@@ -2762,7 +2762,11 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     backend_slug = env.backend.lower()
     model_slug = re.sub(r"[^a-zA-Z0-9]", "-", args.model.split("/")[-1]).strip("-").lower()
-    filename = f"{backend_slug}-{model_slug}.json"
+    gpu_slug = re.sub(r"[^a-zA-Z0-9]", "-", (env.gpu_name or "")).strip("-").lower() if env.gpu_name else ""
+    gpu_slug = re.sub(r"-+", "-", gpu_slug.removeprefix("nvidia-"))
+    tag_slug = args.tag or ""
+    parts = [backend_slug, model_slug, gpu_slug, tag_slug]
+    filename = "-".join(p for p in parts if p) + ".json"
     save_path = save_dir / filename
 
     with open(save_path, "w") as f:
