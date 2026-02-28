@@ -66,6 +66,7 @@ REPO_ID               ?= vlm-run/vlmbench-results
 DATASET               ?= hf://vlm-run/FineVision-vlmbench-mini
 FLAVORS               ?= a100-large
 CONCURRENCY           ?= 4,8,16,32,64
+MAX_MODEL_LEN         ?= 16384
 
 # ── Serve (vLLM Docker for testing) ──────────────────────────────────
 # Usage: make serve MODEL=Qwen/Qwen3-VL-2B-Instruct
@@ -132,7 +133,7 @@ endif
 		--timeout $(BENCHMARK_JOB_TIMEOUT) \
 		-- $(VLLM_IMAGE) \
 		bash -c 'pip install -q "vlmbench[hf]==0.4.0" \
-			&& vllm serve $(MODEL) --max-model-len 8192 & \
+			&& vllm serve $(MODEL) --max-model-len $(MAX_MODEL_LEN) & \
 			echo "Starting vLLM server in background..." \
 			&& for i in $$(seq 1 120); do \
 				curl -sf http://localhost:8000/health > /dev/null 2>&1 && break; \
