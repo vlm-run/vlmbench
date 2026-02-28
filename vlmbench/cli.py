@@ -2466,6 +2466,7 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
     if show_quant:
         table.add_column("Quant", min_width=6, style="dim")
     table.add_column("Backend", min_width=7, style="dim")
+    table.add_column("Hardware", min_width=14, style="dim")
 
     for group_idx, (model_id, runs) in enumerate(groups):
         if group_idx > 0:
@@ -2492,6 +2493,7 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
             if show_quant:
                 cells.append(r.model.quant or "-")
             cells.append(_be_label(r))
+            cells.append(r.environment.gpu_name or "-")
 
             table.add_row(*cells)
 
