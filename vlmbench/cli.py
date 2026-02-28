@@ -65,10 +65,10 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 SCHEMA_VERSION = "0.1.0"
 DEFAULT_PROMPT = "Extract all text from this document."
-DEFAULT_MAX_TOKENS = 2048
+DEFAULT_MAX_TOKENS = 4096
 DEFAULT_RUNS = 3
 DEFAULT_CONCURRENCY = 8
 DEFAULT_SAVE_DIR = "./results"
@@ -2070,18 +2070,23 @@ async def run_benchmark(
 
         tasks = [asyncio.create_task(execute_single(i, run_num)) for i in range(len(inputs))]
 
+        error_count_run = 0
         for coro in asyncio.as_completed(tasks):
             run_result = await coro
             runs_raw.append(run_result)
             completed += 1
-            if run_result.error and completed == 1:
-                for t in tasks:
-                    t.cancel()
-                console.print()
-                print_error("Benchmark aborted", f"First request failed: {run_result.error}")
-                sys.exit(1)
+            if run_result.error:
+                error_count_run += 1
             if progress_callback:
                 progress_callback("progress", run_num, completed)
+
+        if error_count_run == len(tasks):
+            console.print()
+            first_err = next(r.error for r in runs_raw if r.error)
+            print_error("Benchmark aborted", f"All requests failed: {first_err}")
+            sys.exit(1)
+        elif error_count_run > 0:
+            console.print(f"  [yellow]Run {run_num}: {error_count_run}/{len(tasks)} samples failed (skipped)[/yellow]")
 
     return runs_raw, retries
 
