@@ -308,9 +308,7 @@ def _collect_server_pids(port: int) -> set[int]:
 
     # Host-native: lsof
     try:
-        lsof = subprocess.run(
-            ["lsof", "-ti", f":{port}"], capture_output=True, text=True, timeout=5
-        )
+        lsof = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True, timeout=5)
         if lsof.returncode == 0 and lsof.stdout.strip():
             pids.update(int(p) for p in lsof.stdout.strip().split("\n") if p.isdigit())
     except Exception:
@@ -320,7 +318,9 @@ def _collect_server_pids(port: int) -> set[int]:
     try:
         docker_ps = subprocess.run(
             ["docker", "ps", "-q", "--filter", f"publish={port}"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if docker_ps.returncode == 0 and docker_ps.stdout.strip():
             for cid in docker_ps.stdout.strip().split("\n"):
@@ -329,7 +329,9 @@ def _collect_server_pids(port: int) -> set[int]:
                     continue
                 inspect = subprocess.run(
                     ["docker", "inspect", "--format", "{{.State.Pid}}", cid],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
                 if inspect.returncode == 0 and inspect.stdout.strip().isdigit():
                     pids.add(int(inspect.stdout.strip()))
@@ -340,9 +342,7 @@ def _collect_server_pids(port: int) -> set[int]:
     children: set[int] = set()
     for pid in pids:
         try:
-            result = subprocess.run(
-                ["pgrep", "-P", str(pid)], capture_output=True, text=True, timeout=5
-            )
+            result = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True, timeout=5)
             if result.returncode == 0:
                 children.update(int(c) for c in result.stdout.strip().split("\n") if c.isdigit())
         except Exception:
@@ -356,7 +356,9 @@ def _bus_id_to_gpu_index(bus_id: str) -> int | None:
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=index,gpu_bus_id", "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode != 0:
             return None
@@ -383,7 +385,9 @@ def get_gpu_for_server_port(port: int = 8000) -> int | None:
 
         smi_result = subprocess.run(
             ["nvidia-smi", "--query-compute-apps=pid,gpu_bus_id", "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if smi_result.returncode != 0:
             return None
@@ -2345,8 +2349,8 @@ def print_results(result: BenchmarkResult, save_path: str, *, title_suffix: str 
 def print_concurrency_table(results: list[BenchmarkResult], saved_paths: list[str]) -> None:
     """Print a consolidated table for a concurrency sweep."""
     max_toks = max(r.results.tokens_per_sec for r in results)
-    _UP = "\u2191"   # higher is better
-    _DN = "\u2193"   # lower is better
+    _UP = "\u2191"  # higher is better
+    _DN = "\u2193"  # lower is better
 
     table = Table(
         show_header=True,
@@ -2638,7 +2642,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _build_save_path(
-    save_dir: Path, env: EnvironmentInfo, model: str, tag: str | None,
+    save_dir: Path,
+    env: EnvironmentInfo,
+    model: str,
+    tag: str | None,
 ) -> Path:
     """Build the result JSON save path from environment, model, and tag."""
     backend_slug = env.backend.lower()
@@ -2877,9 +2884,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     )
 
     if is_sweep:
-        console.print(
-            f"  [bold]Concurrency sweep:[/bold] {', '.join(str(c) for c in concurrency_levels)}"
-        )
+        console.print(f"  [bold]Concurrency sweep:[/bold] {', '.join(str(c) for c in concurrency_levels)}")
         console.print()
 
     client = AsyncOpenAI(base_url=base_url, api_key=args.api_key)
