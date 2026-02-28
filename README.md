@@ -49,7 +49,7 @@ pip install vlmbench
 uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct \
   -d hf://vlm-run/FineVision-vlmbench-mini --max-samples 64 \
   --prompt "Describe this image in 80 words or less" \
-  --max-concurrency 8 --backend vllm
+  --concurrency 4,8,16 --backend vllm
 ```
 
 ```
@@ -201,9 +201,13 @@ uvx vlmbench run -m PaddlePaddle/PaddleOCR-VL-1.5 -i ./images/ \
 # Linux + vLLM native (requires pip install vllm)
 uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ --backend vllm
 
-# Concurrency for throughput testing
+# Concurrency sweep (runs at each level, prints comparison table)
 uvx vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./images/ \
-  --max-concurrency 8 --runs 3
+  --concurrency 4,8,16,32,64
+
+# Single concurrency
+uvx vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./images/ \
+  --concurrency 8 --runs 3
 
 # Cloud API
 uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ \
@@ -228,7 +232,7 @@ uvx vlmbench compare results/*.json
 | `--max-tokens` | `2048` | Max completion tokens |
 | `--runs` | `3` | Timed runs per input |
 | `--warmup` | `1` | Warmup runs (not recorded, fail-fast on errors) |
-| `--max-concurrency` | `1` | Max parallel requests |
+| `--concurrency` | `8` | Single value or comma-separated sweep (e.g. `8` or `4,8,16,32,64`) |
 | `--save` | `./results/` | Output directory |
 | `--backend` | `auto` | `auto`, `ollama`, `vllm` (native), `vllm-openai:<tag>` (Docker), `sglang:<tag>` |
 | `--serve/--no-serve` | `--serve` | Auto-start server if none detected |
@@ -275,24 +279,27 @@ Directories processed recursively, sorted alphabetically.
 
 ## Output
 
-Results saved as JSON to `./results/{model-slug}-{timestamp}.json` with model metadata, environment info, benchmark stats (TTFT, TPOT, throughput, latency percentiles), and raw per-run data.
+Results saved as JSON to `./results/{backend}-v{version}-{model}-{gpu}-{tag}.json` with model metadata, environment info, benchmark stats (TTFT, TPOT, throughput, latency percentiles), and raw per-run data. When using `--concurrency`, each level produces a separate file (e.g. `vllm-v0.15.1-qwen3-vl-2b-instruct-a100-80gb-c4.json`, `...-c8.json`, etc.).
 
 ## HuggingFace Jobs
 
-Run benchmarks at scale on HuggingFace infrastructure. Requires a [HuggingFace Pro](https://huggingface.co/pro) account and `HF_TOKEN` exported (or in `.env`).
+Run benchmarks at scale on HuggingFace infrastructure. Each job runs a concurrency sweep (`4,8,16,32,64` by default) and produces one JSON per level. Requires a [HuggingFace Pro](https://huggingface.co/pro) account and `HF_TOKEN` exported (or in `.env`).
 
 ```bash
-# Single GPU job
+# Single GPU job (runs concurrency sweep by default)
 make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1
 
-# Sweep across GPU types
-make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS="t4-small l4x1 a10g-small"
+# Custom concurrency levels
+make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1 CONCURRENCY=8,16
 
-# Run locally on a GPU machine (no HF Jobs, no upload)
-make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct
+# Sweep across GPU types
+make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS="l4x1 a10g-small a100-large"
+
+# Run locally on a GPU machine (no HF Jobs)
+make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--concurrency 4,8,16,32,64"
 ```
 
-Results upload to [`vlm-run/vlmbench-results`](https://huggingface.co/datasets/vlm-run/vlmbench-results) under `results/<gpu-flavor>/`.
+Results upload to [`vlm-run/vlmbench-results`](https://huggingface.co/datasets/vlm-run/vlmbench-results) under `results/`.
 
 <details>
 <summary><b>Available GPU flavors</b></summary>

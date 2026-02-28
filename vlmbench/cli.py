@@ -2209,7 +2209,7 @@ def _format_mpixels(pixels: int) -> str:
     return f"{mp:.2f} MP" if mp >= 0.01 else f"{pixels:,} px"
 
 
-def print_results(result: BenchmarkResult, save_path: str) -> None:
+def print_results(result: BenchmarkResult, save_path: str, *, title_suffix: str = "") -> None:
     """Print the results card as a clean tabular Rich Panel."""
     r = result.results
     concurrency = result.input.max_concurrency
@@ -2225,7 +2225,6 @@ def print_results(result: BenchmarkResult, save_path: str) -> None:
             return "yellow"
         return "red"
 
-    # Upper table: metrics with percentile columns
     upper = Table(
         show_header=True,
         header_style="dim",
@@ -2270,7 +2269,6 @@ def print_results(result: BenchmarkResult, save_path: str) -> None:
         f"{r.latency_s_per_input.p99:.2f} s",
     )
 
-    # Lower table: detail rows (no percentile columns, full width for values)
     lower = Table(
         show_header=False,
         box=None,
@@ -2312,14 +2310,14 @@ def print_results(result: BenchmarkResult, save_path: str) -> None:
     rel_text.append(f"  •  {r.total_duration_s:.1f}s total", style="dim")
     lower.add_row("Reliability", rel_text)
 
-    # Compose both tables into a single renderables group
     from rich.console import Group as RenderGroup
 
     body = RenderGroup(upper, Text(), lower)
 
+    title = f"[bold]Results{title_suffix}[/bold]"
     panel = Panel(
         body,
-        title="[bold]Results[/bold]",
+        title=title,
         title_align="left",
         border_style="green",
         box=box.ROUNDED,
@@ -2327,6 +2325,65 @@ def print_results(result: BenchmarkResult, save_path: str) -> None:
     )
     console.print(panel)
     console.print(f"  [green bold]>[/green bold] Saved [dim]->[/dim] {save_path}")
+    console.print()
+
+
+def print_concurrency_table(results: list[BenchmarkResult], saved_paths: list[str]) -> None:
+    """Print a consolidated table for a concurrency sweep."""
+    max_toks = max(r.results.tokens_per_sec for r in results)
+    _UP = "\u2191"   # higher is better
+    _DN = "\u2193"   # lower is better
+
+    table = Table(
+        show_header=True,
+        header_style="bold white",
+        box=box.ROUNDED,
+        border_style="dim white",
+        padding=(0, 1),
+    )
+    table.add_column("Workers", justify="right", min_width=7)
+    table.add_column(f"Tok/s {_UP}", justify="right", min_width=7)
+    table.add_column(f"Img/s {_UP}", justify="right", min_width=7)
+    table.add_column(f"TTFT (ms) {_DN}", justify="right", min_width=11)
+    table.add_column(f"TPOT (ms) {_DN}", justify="right", min_width=11)
+    table.add_column(f"Latency (s) {_DN}", justify="right", min_width=13)
+    table.add_column(f"Duration (s) {_DN}", justify="right", min_width=13)
+    table.add_column(f"VRAM {_DN}", justify="right", min_width=9)
+    table.add_column(f"Errors {_DN}", justify="right", min_width=8)
+
+    for r in results:
+        c = r.input.max_concurrency
+        toks = r.results.tokens_per_sec
+        is_best = toks == max_toks
+        style = "bold bright_green" if is_best else ""
+        vram_gb = f"{r.results.vram_peak_mib / 1024:.1f} GB" if r.results.vram_peak_mib is not None else "-"
+        err_val = str(r.results.errors)
+        err_style = "red" if r.results.errors > 0 else style
+
+        table.add_row(
+            Text(str(c), style=style),
+            Text(f"{toks:.1f}", style=style),
+            Text(f"{r.results.inputs_per_sec:.2f}", style=style),
+            Text(f"{r.results.ttft_ms.mean:.0f}", style=style),
+            Text(f"{r.results.tpot_ms.mean:.1f}", style=style),
+            Text(f"{r.results.latency_s_per_input.mean:.2f}", style=style),
+            Text(f"{r.results.total_duration_s:.1f}", style=style),
+            Text(vram_gb, style=style),
+            Text(err_val, style=err_style),
+        )
+
+    panel = Panel(
+        table,
+        title="[bold]Concurrency Sweep[/bold]",
+        title_align="left",
+        border_style="green",
+        box=box.ROUNDED,
+        padding=(1, 1),
+    )
+    console.print(panel)
+
+    for path in saved_paths:
+        console.print(f"  [green bold]>[/green bold] Saved [dim]->[/dim] {path}")
     console.print()
 
 
@@ -2546,7 +2603,11 @@ def build_parser() -> argparse.ArgumentParser:
     # Benchmark
     run_parser.add_argument("--runs", type=int, default=DEFAULT_RUNS, help="Timed runs per input")
     run_parser.add_argument("--warmup", type=int, default=1, help="Number of warmup runs (not recorded)")
-    run_parser.add_argument("--max-concurrency", type=int, default=DEFAULT_CONCURRENCY, help="Max parallel requests")
+    run_parser.add_argument(
+        "--concurrency",
+        default=str(DEFAULT_CONCURRENCY),
+        help="Concurrency level or comma-separated sweep (e.g. 8 or 4,8,16,32,64)",
+    )
     run_parser.add_argument(
         "--max-samples", type=int, default=None, help="Limit number of input samples (for dry-runs)"
     )
@@ -2562,9 +2623,179 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _build_save_path(
+    save_dir: Path, env: EnvironmentInfo, model: str, tag: str | None,
+) -> Path:
+    """Build the result JSON save path from environment, model, and tag."""
+    backend_slug = env.backend.lower()
+    ver = env.backend_version
+    version_slug = f"v{ver}" if ver and not ver.startswith("v") else (ver or "")
+    model_slug = re.sub(r"[^a-zA-Z0-9]", "-", model.split("/")[-1]).strip("-").lower()
+    gpu_slug = re.sub(r"[^a-zA-Z0-9]", "-", (env.gpu_name or "")).strip("-").lower() if env.gpu_name else ""
+    gpu_slug = re.sub(r"-+", "-", gpu_slug.removeprefix("nvidia-"))
+    tag_slug = tag or ""
+    parts = [backend_slug, version_slug, model_slug, gpu_slug, tag_slug]
+    filename = "-".join(p for p in parts if p) + ".json"
+    return save_dir / filename
+
+
+def _execute_benchmark(
+    args: argparse.Namespace,
+    client: AsyncOpenAI,
+    env: EnvironmentInfo,
+    inputs: list[list[str]],
+    input_hash: str,
+    image_stats: ImageStats | None,
+    breakdown: dict[str, int],
+    quant_resolved: str | None,
+    server_gpu_idx: int | None,
+    max_concurrency: int,
+    tag: str | None,
+    label: str | None = None,
+) -> tuple[BenchmarkResult, Path]:
+    """Run the benchmark at a single concurrency level. Returns (result, save_path)."""
+    total_inputs = len(inputs)
+    total_tasks = total_inputs * args.runs
+
+    desc_prefix = f"[{label}] " if label else ""
+
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total} images"),
+        TimeElapsedColumn(),
+        TextColumn("eta"),
+        TimeRemainingColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task_id = progress.add_task(f"{desc_prefix}Warmup...", total=total_tasks)
+
+        def progress_callback(phase: str, run_num: int, completed: int) -> None:
+            if phase == "warmup":
+                progress.update(task_id, description=f"{desc_prefix}Warmup...")
+            elif phase == "run":
+                progress.update(task_id, description=f"{desc_prefix}Run {run_num}/{args.runs}")
+            elif phase == "progress":
+                progress.update(task_id, completed=completed)
+
+        t_start = time.perf_counter()
+        runs_raw, retries = asyncio.run(
+            run_benchmark(
+                client=client,
+                model=args.model,
+                inputs=inputs,
+                prompt=args.prompt,
+                max_tokens=args.max_tokens,
+                runs=args.runs,
+                max_concurrency=max_concurrency,
+                warmup=args.warmup,
+                progress_callback=progress_callback,
+            )
+        )
+        t_end = time.perf_counter()
+
+    total_duration_s = round(t_end - t_start, 1)
+
+    successful_runs = [r for r in runs_raw if r.error is None]
+    error_count = len(runs_raw) - len(successful_runs)
+
+    ttft_values = [r.ttft_ms for r in successful_runs if r.ttft_ms is not None]
+    latency_values = [r.latency_s for r in successful_runs]
+    prompt_token_values = [r.prompt_tokens for r in successful_runs if r.prompt_tokens > 0]
+    completion_token_values = [r.completion_tokens for r in successful_runs if r.completion_tokens > 0]
+    cached_token_values = [r.cached_tokens for r in successful_runs]
+    reasoning_token_values = [r.reasoning_tokens for r in successful_runs]
+
+    tpot_values = []
+    for r in successful_runs:
+        if r.completion_tokens > 0 and r.ttft_ms is not None:
+            total_gen_time_s = r.latency_s - (r.ttft_ms / 1000.0)
+            if total_gen_time_s > 0:
+                tpot_ms = (total_gen_time_s / r.completion_tokens) * 1000.0
+                tpot_values.append(tpot_ms)
+
+    total_completion_tokens = sum(r.completion_tokens for r in successful_runs)
+    tokens_per_sec = round(total_completion_tokens / total_duration_s, 1) if total_duration_s > 0 else 0
+    inputs_per_sec = round(len(successful_runs) / total_duration_s, 2) if total_duration_s > 0 else 0
+
+    vram_peak: int | None = None
+    try:
+        if platform.system() == "Linux":
+            gpu_idx = server_gpu_idx if server_gpu_idx is not None else _nvidia_gpu_index()
+            smi_result = subprocess.run(
+                ["nvidia-smi", f"--id={gpu_idx}", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if smi_result.returncode == 0:
+                vram_peak = int(float(smi_result.stdout.strip().split("\n")[0]))
+    except Exception:
+        pass
+
+    run_id = secrets.token_hex(6)
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    result = BenchmarkResult(
+        run_id=run_id,
+        timestamp=timestamp,
+        tag=tag,
+        model=ModelInfo(
+            model_id=args.model,
+            revision=args.revision,
+            quant=quant_resolved,
+        ),
+        environment=env,
+        input=InputInfo(
+            hash=input_hash,
+            total_inputs=total_inputs,
+            breakdown=breakdown,
+            image_stats=image_stats,
+            prompt=args.prompt,
+            max_tokens=args.max_tokens,
+            max_concurrency=max_concurrency,
+        ),
+        results=Results(
+            ttft_ms=compute_stats(ttft_values),
+            tpot_ms=compute_stats(tpot_values),
+            tokens_per_sec=tokens_per_sec,
+            inputs_per_sec=inputs_per_sec,
+            latency_s_per_input=compute_stats(latency_values),
+            prompt_tokens=compute_token_stat(prompt_token_values),
+            completion_tokens=compute_token_stat(completion_token_values),
+            cached_tokens=compute_token_stat(cached_token_values),
+            reasoning_tokens=compute_token_stat(reasoning_token_values),
+            vram_peak_mib=vram_peak,
+            total_inputs_processed=len(runs_raw),
+            total_duration_s=total_duration_s,
+            errors=error_count,
+            retries=retries,
+        ),
+        runs_raw=runs_raw,
+    )
+
+    save_dir = Path(args.save)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    save_path = _build_save_path(save_dir, env, args.model, tag)
+
+    with open(save_path, "w") as f:
+        f.write(json.dumps(dataclasses.asdict(result), indent=2))
+
+    return result, save_path
+
+
+def _parse_concurrency_levels(args: argparse.Namespace) -> list[int]:
+    """Parse --concurrency (single value or comma-separated sweep)."""
+    levels = [int(x.strip()) for x in args.concurrency.split(",") if x.strip()]
+    if not levels:
+        console.print("[red]--concurrency requires at least one value[/red]")
+        sys.exit(1)
+    return sorted(levels)
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     """Run a VLM benchmark."""
-    # Resolve base URL: auto-detect, or auto-start server
     base_url, tmux_session = resolve_server(
         base_url=args.base_url,
         serve=args.serve,
@@ -2573,10 +2804,8 @@ def cmd_run(args: argparse.Namespace) -> None:
         serve_args=args.serve_args,
     )
 
-    # Collect environment
     env = collect_environment(base_url)
 
-    # Detect the server GPU index for VRAM tracking
     server_gpu_idx: int | None = None
     try:
         if platform.system() == "Linux":
@@ -2588,7 +2817,6 @@ def cmd_run(args: argparse.Namespace) -> None:
     except Exception:
         pass
 
-    # Load inputs from dataset, local path, or default URL
     if args.dataset:
         dataset_name = args.dataset.removeprefix("hf://")
         inputs, breakdown, input_hash = load_hf_dataset(
@@ -2612,8 +2840,10 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     total_inputs = len(inputs)
     image_stats = compute_image_stats(inputs)
-
     quant_resolved = args.quant if args.quant != "auto" else None
+
+    concurrency_levels = _parse_concurrency_levels(args)
+    is_sweep = len(concurrency_levels) > 1
 
     print_config(
         model_id=args.model,
@@ -2628,153 +2858,51 @@ def cmd_run(args: argparse.Namespace) -> None:
         input_path=input_source,
         max_tokens=args.max_tokens,
         runs=args.runs,
-        max_concurrency=args.max_concurrency,
+        max_concurrency=concurrency_levels[-1] if is_sweep else concurrency_levels[0],
         tmux_session=tmux_session,
     )
 
-    # Create async client for benchmark
+    if is_sweep:
+        console.print(
+            f"  [bold]Concurrency sweep:[/bold] {', '.join(str(c) for c in concurrency_levels)}"
+        )
+        console.print()
+
     client = AsyncOpenAI(base_url=base_url, api_key=args.api_key)
 
-    # Progress display
-    total_tasks = total_inputs * args.runs
-    with Progress(
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.completed}/{task.total} images"),
-        TimeElapsedColumn(),
-        TextColumn("eta"),
-        TimeRemainingColumn(),
-        console=console,
-        transient=True,
-    ) as progress:
-        task_id = progress.add_task("Warmup...", total=total_tasks)
+    all_results: list[tuple[BenchmarkResult, Path]] = []
+    for idx, c in enumerate(concurrency_levels):
+        tag_parts = [args.tag] if args.tag else []
+        tag_parts.append(f"c{c}")
+        run_tag = "-".join(tag_parts)
 
-        def progress_callback(phase: str, run_num: int, completed: int) -> None:
-            if phase == "warmup":
-                progress.update(task_id, description="Warmup...")
-            elif phase == "run":
-                progress.update(task_id, description=f"Run {run_num}/{args.runs}")
-            elif phase == "progress":
-                progress.update(task_id, completed=completed)
+        label = f"{idx + 1}/{len(concurrency_levels)} c={c}" if is_sweep else None
+        if is_sweep:
+            console.print(f"  [bold cyan]▸ concurrency={c}[/bold cyan]  ({idx + 1}/{len(concurrency_levels)})")
 
-        t_benchmark_start = time.perf_counter()
-        runs_raw, retries = asyncio.run(
-            run_benchmark(
-                client=client,
-                model=args.model,
-                inputs=inputs,
-                prompt=args.prompt,
-                max_tokens=args.max_tokens,
-                runs=args.runs,
-                max_concurrency=args.max_concurrency,
-                warmup=args.warmup,
-                progress_callback=progress_callback,
-            )
-        )
-        t_benchmark_end = time.perf_counter()
-
-    total_duration_s = round(t_benchmark_end - t_benchmark_start, 1)
-
-    # Compute statistics from raw runs
-    successful_runs = [r for r in runs_raw if r.error is None]
-    error_count = len(runs_raw) - len(successful_runs)
-
-    ttft_values = [r.ttft_ms for r in successful_runs if r.ttft_ms is not None]
-    latency_values = [r.latency_s for r in successful_runs]
-    prompt_token_values = [r.prompt_tokens for r in successful_runs if r.prompt_tokens > 0]
-    completion_token_values = [r.completion_tokens for r in successful_runs if r.completion_tokens > 0]
-    cached_token_values = [r.cached_tokens for r in successful_runs]
-    reasoning_token_values = [r.reasoning_tokens for r in successful_runs]
-
-    tpot_values = []
-    for r in successful_runs:
-        if r.completion_tokens > 0 and r.ttft_ms is not None:
-            total_gen_time_s = r.latency_s - (r.ttft_ms / 1000.0)
-            if total_gen_time_s > 0:
-                tpot_ms = (total_gen_time_s / r.completion_tokens) * 1000.0
-                tpot_values.append(tpot_ms)
-
-    # System-wide throughput: total work / wall-clock time (accounts for all concurrent workers)
-    total_completion_tokens = sum(r.completion_tokens for r in successful_runs)
-    tokens_per_sec = round(total_completion_tokens / total_duration_s, 1) if total_duration_s > 0 else 0
-    inputs_per_sec = round(len(successful_runs) / total_duration_s, 2) if total_duration_s > 0 else 0
-
-    # VRAM peak — query the correct server GPU
-    vram_peak: int | None = None
-    try:
-        if platform.system() == "Linux":
-            gpu_idx = server_gpu_idx if server_gpu_idx is not None else _nvidia_gpu_index()
-            smi_result = subprocess.run(
-                ["nvidia-smi", f"--id={gpu_idx}", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if smi_result.returncode == 0:
-                vram_peak = int(float(smi_result.stdout.strip().split("\n")[0]))
-    except Exception:
-        pass
-
-    run_id = secrets.token_hex(6)
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    result = BenchmarkResult(
-        run_id=run_id,
-        timestamp=timestamp,
-        tag=args.tag,
-        model=ModelInfo(
-            model_id=args.model,
-            revision=args.revision,
-            quant=quant_resolved,
-        ),
-        environment=env,
-        input=InputInfo(
-            hash=input_hash,
-            total_inputs=total_inputs,
-            breakdown=breakdown,
+        result, save_path = _execute_benchmark(
+            args=args,
+            client=client,
+            env=env,
+            inputs=inputs,
+            input_hash=input_hash,
             image_stats=image_stats,
-            prompt=args.prompt,
-            max_tokens=args.max_tokens,
-            max_concurrency=args.max_concurrency,
-        ),
-        results=Results(
-            ttft_ms=compute_stats(ttft_values),
-            tpot_ms=compute_stats(tpot_values),
-            tokens_per_sec=tokens_per_sec,
-            inputs_per_sec=inputs_per_sec,
-            latency_s_per_input=compute_stats(latency_values),
-            prompt_tokens=compute_token_stat(prompt_token_values),
-            completion_tokens=compute_token_stat(completion_token_values),
-            cached_tokens=compute_token_stat(cached_token_values),
-            reasoning_tokens=compute_token_stat(reasoning_token_values),
-            vram_peak_mib=vram_peak,
-            total_inputs_processed=len(runs_raw),
-            total_duration_s=total_duration_s,
-            errors=error_count,
-            retries=retries,
-        ),
-        runs_raw=runs_raw,
-    )
+            breakdown=breakdown,
+            quant_resolved=quant_resolved,
+            server_gpu_idx=server_gpu_idx,
+            max_concurrency=c,
+            tag=run_tag,
+            label=label,
+        )
+        all_results.append((result, save_path))
 
-    # Save results
-    save_dir = Path(args.save)
-    save_dir.mkdir(parents=True, exist_ok=True)
+        title_suffix = f"  (concurrency={c})" if is_sweep else ""
+        print_results(result, str(save_path), title_suffix=title_suffix)
 
-    backend_slug = env.backend.lower()
-    ver = env.backend_version
-    version_slug = f"v{ver}" if ver and not ver.startswith("v") else (ver or "")
-    model_slug = re.sub(r"[^a-zA-Z0-9]", "-", args.model.split("/")[-1]).strip("-").lower()
-    gpu_slug = re.sub(r"[^a-zA-Z0-9]", "-", (env.gpu_name or "")).strip("-").lower() if env.gpu_name else ""
-    gpu_slug = re.sub(r"-+", "-", gpu_slug.removeprefix("nvidia-"))
-    tag_slug = args.tag or ""
-    parts = [backend_slug, version_slug, model_slug, gpu_slug, tag_slug]
-    filename = "-".join(p for p in parts if p) + ".json"
-    save_path = save_dir / filename
-
-    with open(save_path, "w") as f:
-        f.write(json.dumps(dataclasses.asdict(result), indent=2))
-
-    print_results(result, str(save_path))
+    if is_sweep:
+        saved = [str(p) for _, p in all_results]
+        results = [r for r, _ in all_results]
+        print_concurrency_table(results, saved)
 
 
 def cmd_compare(args: argparse.Namespace) -> None:

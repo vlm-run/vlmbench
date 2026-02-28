@@ -14,17 +14,17 @@ help:
 	@echo "  serve-stop     Stop and remove the vllm-serve container"
 	@echo ""
 	@echo "Benchmarking:"
-	@echo "  benchmark      Run benchmark locally using local branch (uv run vlmbench)"
-	@echo "  uv-benchmark   Run benchmark via run_benchmark.sh (uvx, mimics HF Jobs)"
+	@echo "  benchmark      Run benchmark locally (uv run, uses local branch)"
+	@echo "  uv-benchmark   Run benchmark via uvx (from PyPI, mimics HF Jobs)"
 	@echo "  hf-benchmark   Submit single HF Jobs benchmark"
 	@echo "  hf-sweep       Submit benchmarks across multiple GPU flavors"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make serve MODEL=Qwen/Qwen3-VL-2B-Instruct"
 	@echo "  make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct"
-	@echo "  make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS='--dataset vlm-run/FineVision-vlmbench-mini --max-concurrency 16'"
-	@echo "  make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1 HF_NAMESPACE=vlm-run"
-	@echo "  make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS='t4-small l4x1 a10g-small'"
+	@echo "  make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS='--concurrency 4,8,16'"
+	@echo "  make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=a100-large"
+	@echo "  make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS='a100-large a10g-small'"
 
 clean: clean-build clean-pyc
 
@@ -64,7 +64,7 @@ BENCHMARK_JOB_TIMEOUT ?= 45m
 HF_NAMESPACE          ?= vlm-run
 REPO_ID               ?= vlm-run/vlmbench-results
 FLAVORS               ?= a100-large
-CONCURRENCY           ?= 8
+CONCURRENCY           ?= 4,8,16,32,64
 
 # ── Serve (vLLM Docker for testing) ──────────────────────────────────
 # Usage: make serve MODEL=Qwen/Qwen3-VL-2B-Instruct
@@ -95,29 +95,28 @@ serve-stop:
 #
 # Examples:
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct
+#   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--concurrency 4,8,16,32"
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--dataset vlm-run/FineVision-vlmbench-mini"
-#   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--max-concurrency 16 --runs 5"
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--input ./images --save ./results --tag my-run"
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--base-url http://localhost:8100/v1 --no-serve"
-#   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--backend vllm-openai:latest --serve"
 benchmark:
 ifndef MODEL
 	$(error MODEL is required. Example: make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct)
 endif
-	uv run vlmbench run --model $(MODEL) $(BENCHMARK_ARGS)
+	uv run vlmbench run --model $(MODEL) --warmup 1 $(BENCHMARK_ARGS)
 
-# Run benchmark via run_benchmark.sh (uvx from PyPI, mimics HF Jobs)
+# Run benchmark via uvx (from PyPI, mimics what HF Jobs runs)
 # Usage: make uv-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct
-#        make uv-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--dataset vlm-run/FineVision-vlmbench-mini"
+#        make uv-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--concurrency 4,8,16"
 uv-benchmark:
 ifndef MODEL
 	$(error MODEL is required. Example: make uv-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct)
 endif
-	bash scripts/run_benchmark.sh --model $(MODEL) --no-upload $(BENCHMARK_ARGS)
+	uvx --with vlmbench==0.3.4 vlmbench run --model $(MODEL) --warmup 1 $(BENCHMARK_ARGS)
 
-# Submit benchmark to HF Jobs
+# Submit benchmark to HF Jobs (runs concurrency sweep by default)
 # Usage: make hf-benchmark FLAVOR=l4x1 MODEL=Qwen/Qwen3-VL-2B-Instruct
-#        make hf-benchmark FLAVOR=l4x1 MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--dataset vlm-run/FineVision-vlmbench-mini"
+#        make hf-benchmark FLAVOR=l4x1 MODEL=Qwen/Qwen3-VL-2B-Instruct CONCURRENCY=8
 hf-benchmark:
 ifndef FLAVOR
 	$(error FLAVOR is required. Example: make hf-benchmark FLAVOR=l4x1)
@@ -140,11 +139,11 @@ endif
 			done \
 			&& curl -sf http://localhost:8000/health > /dev/null 2>&1 \
 			&& echo "vLLM server ready!" \
-			&& vlmbench run --model $(MODEL) --no-serve --base-url http://localhost:8000/v1 --max-concurrency $(CONCURRENCY) --tag c$(CONCURRENCY) $(BENCHMARK_ARGS) \
+			&& vlmbench run --model $(MODEL) --no-serve --base-url http://localhost:8000/v1 --warmup 1 --concurrency $(CONCURRENCY) $(BENCHMARK_ARGS) \
 			|| echo "ERROR: vLLM server failed to start"'
 
 # Sweep across multiple GPU flavors
-# Usage: make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS="t4-small l4x1 a10g-small"
+# Usage: make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS="a100-large a10g-small"
 hf-sweep:
 ifndef MODEL
 	$(error MODEL is required. Example: make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct)
