@@ -2486,9 +2486,15 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
                 Text(f"{r.results.tpot_ms.mean:.1f}", style=_BEST if r.results.tpot_ms.mean == best_tpot else "dim"),
                 Text(f"{total_toks:.1f}", style=_BEST if total_toks == best_toks else "white"),
                 Text(f"{total_imgs:.2f}", style=_BEST if total_imgs == best_imgs else "dim"),
-                Text(f"{r.results.total_duration_s:.1f}", style=_BEST if r.results.total_duration_s == best_dur else "dim"),
+                Text(
+                    f"{r.results.total_duration_s:.1f}",
+                    style=_BEST if r.results.total_duration_s == best_dur else "dim",
+                ),
                 str(r.input.max_concurrency),
-                Text(vram_gb, style=_BEST if vram_mib is not None and best_vram is not None and vram_mib == best_vram else "dim"),
+                Text(
+                    vram_gb,
+                    style=_BEST if vram_mib is not None and best_vram is not None and vram_mib == best_vram else "dim",
+                ),
             ]
             if show_quant:
                 cells.append(r.model.quant or "-")
