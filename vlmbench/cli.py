@@ -45,6 +45,7 @@ from typing import Any, Protocol, get_args, get_origin, get_type_hints, runtime_
 
 import yaml
 from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
+from openai.types.create_embedding_response import CreateEmbeddingResponse
 from PIL import Image
 from rich import box
 from rich.console import Console
@@ -150,6 +151,7 @@ class InputInfo:
     prompt: str = ""
     max_tokens: int = 0
     max_concurrency: int = 1
+    task: str = "completion"
 
 
 @dataclass
@@ -179,6 +181,7 @@ class Results:
     cached_tokens: TokenStat | None = None
     reasoning_tokens: TokenStat | None = None
     vram_peak_mib: int | None = None
+    embedding_dim: int | None = None
     total_inputs_processed: int = 0
     total_duration_s: float = 0.0
     errors: int = 0
@@ -195,6 +198,7 @@ class RunRaw:
     completion_tokens: int = 0
     cached_tokens: int = 0
     reasoning_tokens: int = 0
+    embedding_dim: int = 0
     error: str | None = None
 
 
@@ -1933,6 +1937,123 @@ def build_messages(prompt: str, image_uris: list[str]) -> list[dict]:
     return [{"role": "user", "content": content}]
 
 
+def build_embedding_messages(
+    prompt: str,
+    image_uris: list[str],
+    *,
+    system_instruction: str | None = None,
+) -> list[dict]:
+    """Build chat-style messages for the vLLM embeddings API.
+
+    When system_instruction is set, uses the system/user/assistant pattern
+    required by models like Qwen3-VL-Embedding.
+    """
+    messages: list[dict] = []
+    if system_instruction:
+        messages.append({"role": "system", "content": [{"type": "text", "text": system_instruction}]})
+
+    content: list[dict] = []
+    for uri in image_uris:
+        content.append({"type": "image_url", "image_url": {"url": uri}})
+    content.append({"type": "text", "text": prompt})
+    messages.append({"role": "user", "content": content})
+
+    if system_instruction:
+        messages.append({"role": "assistant", "content": [{"type": "text", "text": ""}]})
+
+    return messages
+
+
+async def call_embedding_async(
+    client: AsyncOpenAI,
+    model: str,
+    messages: list[dict],
+    *,
+    continue_final_message: bool = False,
+    add_special_tokens: bool = False,
+) -> dict[str, Any]:
+    """Call the vLLM embeddings API (async) and measure timing."""
+    t_start = time.perf_counter()
+
+    body: dict[str, Any] = {
+        "messages": messages,
+        "model": model,
+        "encoding_format": "float",
+    }
+    if continue_final_message:
+        body["continue_final_message"] = True
+    if add_special_tokens:
+        body["add_special_tokens"] = True
+
+    response: CreateEmbeddingResponse = await client.post(  # type: ignore[misc]
+        "/embeddings",
+        cast_to=CreateEmbeddingResponse,
+        body=body,
+    )
+
+    t_end = time.perf_counter()
+    latency_s = t_end - t_start
+
+    prompt_tokens = response.usage.prompt_tokens if response.usage else 0
+    embedding_dim = len(response.data[0].embedding) if response.data else 0
+
+    return {
+        "ttft_ms": None,
+        "latency_s": latency_s,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": 0,
+        "cached_tokens": 0,
+        "reasoning_tokens": 0,
+        "embedding_dim": embedding_dim,
+        "error": None,
+    }
+
+
+def call_embedding(
+    client: OpenAI,
+    model: str,
+    messages: list[dict],
+    *,
+    continue_final_message: bool = False,
+    add_special_tokens: bool = False,
+) -> dict[str, Any]:
+    """Synchronous call_embedding for warmup only."""
+    t_start = time.perf_counter()
+
+    body: dict[str, Any] = {
+        "messages": messages,
+        "model": model,
+        "encoding_format": "float",
+    }
+    if continue_final_message:
+        body["continue_final_message"] = True
+    if add_special_tokens:
+        body["add_special_tokens"] = True
+
+    response: CreateEmbeddingResponse = client.post(  # type: ignore[misc]
+        "/embeddings",
+        cast_to=CreateEmbeddingResponse,
+        body=body,
+    )
+
+    t_end = time.perf_counter()
+    latency_s = t_end - t_start
+
+    prompt_tokens = response.usage.prompt_tokens if response.usage else 0
+    embedding_dim = len(response.data[0].embedding) if response.data else 0
+
+    return {
+        "ttft_ms": None,
+        "latency_s": latency_s,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": 0,
+        "cached_tokens": 0,
+        "reasoning_tokens": 0,
+        "embedding_dim": embedding_dim,
+        "error": None,
+    }
+
+
 def compute_stats(values: list[float]) -> StatBlock:
     """Compute mean, p50, p95, p99 from a list of values."""
     if not values:
@@ -1977,6 +2098,33 @@ async def _call_with_retry_async(
     raise RuntimeError("unreachable")
 
 
+async def _call_embedding_with_retry_async(
+    client: AsyncOpenAI,
+    model: str,
+    messages: list[dict],
+    *,
+    continue_final_message: bool = False,
+    add_special_tokens: bool = False,
+    max_attempts: int = 5,
+) -> tuple[dict[str, Any], int]:
+    """Call embedding with exponential-backoff retry, return (result, retry_count)."""
+    for attempt in range(max_attempts):
+        try:
+            result = await call_embedding_async(
+                client,
+                model,
+                messages,
+                continue_final_message=continue_final_message,
+                add_special_tokens=add_special_tokens,
+            )
+            return result, attempt
+        except (RateLimitError, APITimeoutError, APIConnectionError):
+            if attempt == max_attempts - 1:
+                raise
+            await asyncio.sleep(min(2**attempt, 60))
+    raise RuntimeError("unreachable")
+
+
 async def run_benchmark(
     client: AsyncOpenAI,
     model: str,
@@ -1987,6 +2135,8 @@ async def run_benchmark(
     max_concurrency: int,
     warmup: int = 1,
     progress_callback: Any = None,
+    task: str = "completion",
+    embedding_options: dict[str, Any] | None = None,
 ) -> tuple[list[RunRaw], int]:
     """Run the benchmark with true async concurrency: warmup + N timed runs.
 
@@ -1997,6 +2147,16 @@ async def run_benchmark(
     runs_raw: list[RunRaw] = []
     retries = 0
     retries_lock = asyncio.Lock()
+    is_embedding = task == "embedding"
+    eopts = embedding_options or {}
+    emb_continue = eopts.get("continue_final_message", False)
+    emb_special = eopts.get("add_special_tokens", False)
+    emb_system = eopts.get("system_instruction")
+
+    def _build_msgs(p: str, uris: list[str]) -> list[dict]:
+        if is_embedding:
+            return build_embedding_messages(p, uris, system_instruction=emb_system)
+        return build_messages(p, uris)
 
     # Synchronous warmup via a temporary sync client
     sync_client = OpenAI(base_url=str(client.base_url), api_key=client.api_key)
@@ -2005,8 +2165,17 @@ async def run_benchmark(
             progress_callback("warmup", w + 1, 0)
         try:
             warmup_prompt = prompt[0] if isinstance(prompt, list) else prompt
-            messages = build_messages(warmup_prompt, inputs[0])
-            call_completion(sync_client, model, messages, max_tokens)
+            messages = _build_msgs(warmup_prompt, inputs[0])
+            if is_embedding:
+                call_embedding(
+                    sync_client,
+                    model,
+                    messages,
+                    continue_final_message=emb_continue,
+                    add_special_tokens=emb_special,
+                )
+            else:
+                call_completion(sync_client, model, messages, max_tokens)
         except Exception as e:
             err_str = str(e).lower()
             if any(
@@ -2024,22 +2193,32 @@ async def run_benchmark(
     async def execute_single(input_idx: int, run_num: int) -> RunRaw:
         nonlocal retries
         input_prompt = prompt[input_idx] if isinstance(prompt, list) else prompt
-        messages = build_messages(input_prompt, inputs[input_idx])
+        messages = _build_msgs(input_prompt, inputs[input_idx])
         async with sem:
             try:
-                result, retry_count = await _call_with_retry_async(client, model, messages, max_tokens)
+                if is_embedding:
+                    result, retry_count = await _call_embedding_with_retry_async(
+                        client,
+                        model,
+                        messages,
+                        continue_final_message=emb_continue,
+                        add_special_tokens=emb_special,
+                    )
+                else:
+                    result, retry_count = await _call_with_retry_async(client, model, messages, max_tokens)
                 if retry_count:
                     async with retries_lock:
                         retries += retry_count
                 return RunRaw(
                     input_idx=input_idx,
                     run=run_num,
-                    ttft_ms=round(result["ttft_ms"], 1),
+                    ttft_ms=round(result["ttft_ms"], 1) if result["ttft_ms"] is not None else None,
                     latency_s=round(result["latency_s"], 3),
                     prompt_tokens=result["prompt_tokens"],
                     completion_tokens=result["completion_tokens"],
                     cached_tokens=result["cached_tokens"],
                     reasoning_tokens=result["reasoning_tokens"],
+                    embedding_dim=result.get("embedding_dim", 0),
                     error=result["error"],
                 )
             except Exception as e:
@@ -2253,36 +2432,50 @@ def print_results(result: BenchmarkResult, save_path: str, *, title_suffix: str 
     upper.add_column("p95", style=_H, justify="right", width=10)
     upper.add_column("p99", style=_H, justify="right", width=10)
 
-    upper.add_row("Throughput", f"{r.inputs_per_sec:.2f} img/s", "—", "—", "—")
-    upper.add_row(
-        "Tokens/sec",
-        Text(f"{r.tokens_per_sec:.0f} tok/s", style=_tok_style(r.tokens_per_sec)),
-        "—",
-        "—",
-        "—",
-    )
-    upper.add_row("Workers", str(concurrency), "—", "—", "—")
-    upper.add_row(
-        "TTFT",
-        f"{r.ttft_ms.mean:.0f} ms",
-        f"{r.ttft_ms.p50:.0f} ms",
-        f"{r.ttft_ms.p95:.0f} ms",
-        f"{r.ttft_ms.p99:.0f} ms",
-    )
-    upper.add_row(
-        "TPOT",
-        f"{r.tpot_ms.mean:.1f} ms",
-        f"{r.tpot_ms.p50:.1f} ms",
-        f"{r.tpot_ms.p95:.1f} ms",
-        f"{r.tpot_ms.p99:.1f} ms",
-    )
-    upper.add_row(
-        "Latency (per worker)",
-        f"{r.latency_s_per_input.mean:.2f} s/img",
-        f"{r.latency_s_per_input.p50:.2f} s",
-        f"{r.latency_s_per_input.p95:.2f} s",
-        f"{r.latency_s_per_input.p99:.2f} s",
-    )
+    is_embedding = r.embedding_dim is not None
+
+    if is_embedding:
+        upper.add_row("Throughput", f"{r.inputs_per_sec:.2f} emb/s", "—", "—", "—")
+        upper.add_row("Embedding dim", str(r.embedding_dim), "—", "—", "—")
+        upper.add_row("Workers", str(concurrency), "—", "—", "—")
+        upper.add_row(
+            "Latency (per worker)",
+            f"{r.latency_s_per_input.mean:.2f} s/emb",
+            f"{r.latency_s_per_input.p50:.2f} s",
+            f"{r.latency_s_per_input.p95:.2f} s",
+            f"{r.latency_s_per_input.p99:.2f} s",
+        )
+    else:
+        upper.add_row("Throughput", f"{r.inputs_per_sec:.2f} img/s", "—", "—", "—")
+        upper.add_row(
+            "Tokens/sec",
+            Text(f"{r.tokens_per_sec:.0f} tok/s", style=_tok_style(r.tokens_per_sec)),
+            "—",
+            "—",
+            "—",
+        )
+        upper.add_row("Workers", str(concurrency), "—", "—", "—")
+        upper.add_row(
+            "TTFT",
+            f"{r.ttft_ms.mean:.0f} ms",
+            f"{r.ttft_ms.p50:.0f} ms",
+            f"{r.ttft_ms.p95:.0f} ms",
+            f"{r.ttft_ms.p99:.0f} ms",
+        )
+        upper.add_row(
+            "TPOT",
+            f"{r.tpot_ms.mean:.1f} ms",
+            f"{r.tpot_ms.p50:.1f} ms",
+            f"{r.tpot_ms.p95:.1f} ms",
+            f"{r.tpot_ms.p99:.1f} ms",
+        )
+        upper.add_row(
+            "Latency (per worker)",
+            f"{r.latency_s_per_input.mean:.2f} s/img",
+            f"{r.latency_s_per_input.p50:.2f} s",
+            f"{r.latency_s_per_input.p95:.2f} s",
+            f"{r.latency_s_per_input.p99:.2f} s",
+        )
 
     lower = Table(
         show_header=False,
@@ -2293,15 +2486,20 @@ def print_results(result: BenchmarkResult, save_path: str, *, title_suffix: str 
     lower.add_column("Metric", style="bold cyan", no_wrap=True, width=20)
     lower.add_column("Value", style="bold", no_wrap=True)
 
-    tok_val = f"prompt {r.prompt_tokens.mean:,}  •  completion {r.completion_tokens.mean:,}"
-    lower.add_row("Tokens (avg)", tok_val)
-
-    tok_range = f"prompt {r.prompt_tokens.min:,}–{r.prompt_tokens.max:,}  •  completion {r.completion_tokens.min:,}–{r.completion_tokens.max:,}"
-    if r.cached_tokens is not None and r.cached_tokens.mean > 0:
-        tok_range += f"  •  {r.cached_tokens.mean:,} cached"
-    if r.reasoning_tokens is not None and r.reasoning_tokens.mean > 0:
-        tok_range += f"  •  {r.reasoning_tokens.mean:,} reasoning"
-    lower.add_row("Token ranges", tok_range)
+    if is_embedding:
+        tok_val = f"prompt {r.prompt_tokens.mean:,}"
+        lower.add_row("Tokens (avg)", tok_val)
+        tok_range = f"prompt {r.prompt_tokens.min:,}–{r.prompt_tokens.max:,}"
+        lower.add_row("Token ranges", tok_range)
+    else:
+        tok_val = f"prompt {r.prompt_tokens.mean:,}  •  completion {r.completion_tokens.mean:,}"
+        lower.add_row("Tokens (avg)", tok_val)
+        tok_range = f"prompt {r.prompt_tokens.min:,}–{r.prompt_tokens.max:,}  •  completion {r.completion_tokens.min:,}–{r.completion_tokens.max:,}"
+        if r.cached_tokens is not None and r.cached_tokens.mean > 0:
+            tok_range += f"  •  {r.cached_tokens.mean:,} cached"
+        if r.reasoning_tokens is not None and r.reasoning_tokens.mean > 0:
+            tok_range += f"  •  {r.reasoning_tokens.mean:,} reasoning"
+        lower.add_row("Token ranges", tok_range)
 
     if img_stats and img_stats.count > 0:
         img_val = f"{img_stats.count:,}  •  avg {img_stats.avg_width}×{img_stats.avg_height} ({_format_mpixels(img_stats.avg_pixels)})"
@@ -2651,6 +2849,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--quant", default="auto", help="Quantization: fp16, bf16, awq, gptq, fp8, q4_0, q4_K_M, etc."
     )
     run_parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="Prompt sent with each input")
+    run_parser.add_argument(
+        "--task",
+        default="completion",
+        choices=["completion", "embedding"],
+        help="Task type: completion (default) or embedding (vLLM pooling models)",
+    )
     run_parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Max completion tokens")
     run_parser.add_argument(
         "--max-size",
@@ -2732,13 +2936,16 @@ def _execute_benchmark(
     """Run the benchmark at a single concurrency level. Returns (result, save_path)."""
     total_inputs = len(inputs)
     total_tasks = total_inputs * args.runs
+    task_type = getattr(args, "task", "completion")
+    embedding_options = getattr(args, "embedding_options", None)
 
     desc_prefix = f"[{label}] " if label else ""
+    progress_unit = "embeddings" if task_type == "embedding" else "images"
 
     with Progress(
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
-        TextColumn("{task.completed}/{task.total} images"),
+        TextColumn("{task.completed}/{task.total} " + progress_unit),
         TimeElapsedColumn(),
         TextColumn("eta"),
         TimeRemainingColumn(),
@@ -2767,6 +2974,8 @@ def _execute_benchmark(
                 max_concurrency=max_concurrency,
                 warmup=args.warmup,
                 progress_callback=progress_callback,
+                task=task_type,
+                embedding_options=embedding_options,
             )
         )
         t_end = time.perf_counter()
@@ -2810,6 +3019,10 @@ def _execute_benchmark(
     except Exception:
         pass
 
+    # Embedding dimension from successful runs (constant per model)
+    emb_dims = [r.embedding_dim for r in successful_runs if r.embedding_dim > 0]
+    embedding_dim = emb_dims[0] if emb_dims else None
+
     run_id = secrets.token_hex(6)
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -2831,6 +3044,7 @@ def _execute_benchmark(
             prompt=args.prompt,
             max_tokens=args.max_tokens,
             max_concurrency=max_concurrency,
+            task=task_type,
         ),
         results=Results(
             ttft_ms=compute_stats(ttft_values),
@@ -2843,6 +3057,7 @@ def _execute_benchmark(
             cached_tokens=compute_token_stat(cached_token_values),
             reasoning_tokens=compute_token_stat(reasoning_token_values),
             vram_peak_mib=vram_peak,
+            embedding_dim=embedding_dim,
             total_inputs_processed=len(runs_raw),
             total_duration_s=total_duration_s,
             errors=error_count,
@@ -2909,6 +3124,8 @@ def cmd_profiles() -> None:
         with open(p) as f:
             d = yaml.safe_load(f)
         notes: list[str] = []
+        if d.get("task") == "embedding":
+            notes.append("embedding")
         if d.get("setup"):
             notes.append("custom setup")
         if "image" in d:
@@ -2946,9 +3163,15 @@ def cmd_run(args: argparse.Namespace) -> None:
             args.prompt = profile["prompt"]
         if args.serve_args is None and "serve_args" in profile:
             args.serve_args = profile["serve_args"]
+        if args.task == "completion" and "task" in profile:
+            args.task = profile["task"]
+        if "embedding" in profile:
+            args.embedding_options = profile["embedding"]
         if args.serve and profile.get("setup"):
             console.print(f"  [cyan]Running profile setup for '{args.profile}'...[/cyan]")
             _run_profile_setup(profile["setup"])
+    if not hasattr(args, "embedding_options"):
+        args.embedding_options = None
     if not args.model:
         console.print("[red]--model or --profile is required.[/red]")
         sys.exit(1)

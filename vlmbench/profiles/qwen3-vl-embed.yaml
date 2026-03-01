@@ -1,0 +1,8 @@
+model: Qwen/Qwen3-VL-Embedding-2B
+task: embedding
+prompt: ""
+serve_args: --runner pooling --max-model-len 8192
+embedding:
+  continue_final_message: true
+  add_special_tokens: true
+  system_instruction: "Represent the user's input."
