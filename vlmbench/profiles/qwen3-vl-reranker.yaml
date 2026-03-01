@@ -1,0 +1,7 @@
+model: Qwen/Qwen3-VL-Reranker-2B
+task: score
+prompt: "Describe this image."
+serve_args: >-
+  --runner pooling
+  --max-model-len 4096
+  --hf_overrides '{"architectures":["Qwen3VLForSequenceClassification"],"classifier_from_token":["no","yes"],"is_original_qwen3_reranker":true}'

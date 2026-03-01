@@ -40,3 +40,4 @@ Available profiles:
 | `glm-ocr` | `zai-org/GLM-OCR` | completion | `vllm/vllm-openai:nightly` | transformers from source |
 | `qwen3-vl-embed` | `Qwen/Qwen3-VL-Embedding-2B` | embedding | — | — |
 | `dse-qwen2-vl` | `MrLight/dse-qwen2-2b-mrl-v1` | embedding | — | — |
+| `qwen3-vl-reranker` | `Qwen/Qwen3-VL-Reranker-2B` | score | — | — |

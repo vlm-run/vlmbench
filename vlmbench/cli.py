@@ -43,6 +43,7 @@ from pathlib import Path
 from types import UnionType
 from typing import Any, Protocol, get_args, get_origin, get_type_hints, runtime_checkable
 
+import httpx
 import yaml
 from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, OpenAI, RateLimitError
 from openai.types.create_embedding_response import CreateEmbeddingResponse
@@ -2054,6 +2055,72 @@ def call_embedding(
     }
 
 
+async def call_score_async(
+    http_client: httpx.AsyncClient,
+    rerank_url: str,
+    model: str,
+    query: str,
+    image_uris: list[str],
+) -> dict[str, Any]:
+    """Call the vLLM /rerank API (async) and measure timing."""
+    content: list[dict] = [{"type": "image_url", "image_url": {"url": uri}} for uri in image_uris]
+
+    t_start = time.perf_counter()
+    resp = await http_client.post(
+        rerank_url,
+        json={"model": model, "query": query, "documents": [{"content": content}]},
+    )
+    resp.raise_for_status()
+    t_end = time.perf_counter()
+
+    data = resp.json()
+    prompt_tokens = data.get("usage", {}).get("prompt_tokens", 0)
+
+    return {
+        "ttft_ms": None,
+        "latency_s": t_end - t_start,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": 0,
+        "cached_tokens": 0,
+        "reasoning_tokens": 0,
+        "embedding_dim": 0,
+        "error": None,
+    }
+
+
+def call_score(
+    rerank_url: str,
+    model: str,
+    query: str,
+    image_uris: list[str],
+) -> dict[str, Any]:
+    """Synchronous call_score for warmup only."""
+    content: list[dict] = [{"type": "image_url", "image_url": {"url": uri}} for uri in image_uris]
+
+    t_start = time.perf_counter()
+    resp = httpx.post(
+        rerank_url,
+        json={"model": model, "query": query, "documents": [{"content": content}]},
+        timeout=300,
+    )
+    resp.raise_for_status()
+    t_end = time.perf_counter()
+
+    data = resp.json()
+    prompt_tokens = data.get("usage", {}).get("prompt_tokens", 0)
+
+    return {
+        "ttft_ms": None,
+        "latency_s": t_end - t_start,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": 0,
+        "cached_tokens": 0,
+        "reasoning_tokens": 0,
+        "embedding_dim": 0,
+        "error": None,
+    }
+
+
 def compute_stats(values: list[float]) -> StatBlock:
     """Compute mean, p50, p95, p99 from a list of values."""
     if not values:
@@ -2125,6 +2192,30 @@ async def _call_embedding_with_retry_async(
     raise RuntimeError("unreachable")
 
 
+async def _call_score_with_retry_async(
+    http_client: httpx.AsyncClient,
+    rerank_url: str,
+    model: str,
+    query: str,
+    image_uris: list[str],
+    max_attempts: int = 5,
+) -> tuple[dict[str, Any], int]:
+    """Call score/rerank with exponential-backoff retry, return (result, retry_count)."""
+    for attempt in range(max_attempts):
+        try:
+            result = await call_score_async(http_client, rerank_url, model, query, image_uris)
+            return result, attempt
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code not in (429, 503, 504) or attempt == max_attempts - 1:
+                raise
+            await asyncio.sleep(min(2**attempt, 60))
+        except (httpx.ConnectError, httpx.TimeoutException):
+            if attempt == max_attempts - 1:
+                raise
+            await asyncio.sleep(min(2**attempt, 60))
+    raise RuntimeError("unreachable")
+
+
 async def run_benchmark(
     client: AsyncOpenAI,
     model: str,
@@ -2148,10 +2239,15 @@ async def run_benchmark(
     retries = 0
     retries_lock = asyncio.Lock()
     is_embedding = task == "embedding"
+    is_score = task == "score"
     eopts = embedding_options or {}
     emb_continue = eopts.get("continue_final_message", False)
     emb_special = eopts.get("add_special_tokens", False)
     emb_system = eopts.get("system_instruction")
+
+    # For score/rerank tasks, derive the rerank URL from the OpenAI client base
+    rerank_url = f"{str(client.base_url).rstrip('/')}/rerank" if is_score else ""
+    score_http: httpx.AsyncClient | None = None
 
     def _build_msgs(p: str, uris: list[str]) -> list[dict]:
         if is_embedding:
@@ -2165,8 +2261,10 @@ async def run_benchmark(
             progress_callback("warmup", w + 1, 0)
         try:
             warmup_prompt = prompt[0] if isinstance(prompt, list) else prompt
-            messages = _build_msgs(warmup_prompt, inputs[0])
-            if is_embedding:
+            if is_score:
+                call_score(rerank_url, model, warmup_prompt, inputs[0])
+            elif is_embedding:
+                messages = _build_msgs(warmup_prompt, inputs[0])
                 call_embedding(
                     sync_client,
                     model,
@@ -2175,6 +2273,7 @@ async def run_benchmark(
                     add_special_tokens=emb_special,
                 )
             else:
+                messages = _build_msgs(warmup_prompt, inputs[0])
                 call_completion(sync_client, model, messages, max_tokens)
         except Exception as e:
             err_str = str(e).lower()
@@ -2189,14 +2288,25 @@ async def run_benchmark(
                 console.print(f"  [yellow]Warmup warning: {e}[/yellow]")
 
     sem = asyncio.Semaphore(max_concurrency)
+    if is_score:
+        score_http = httpx.AsyncClient(timeout=httpx.Timeout(300))
 
     async def execute_single(input_idx: int, run_num: int) -> RunRaw:
         nonlocal retries
         input_prompt = prompt[input_idx] if isinstance(prompt, list) else prompt
-        messages = _build_msgs(input_prompt, inputs[input_idx])
         async with sem:
             try:
-                if is_embedding:
+                if is_score:
+                    assert score_http is not None
+                    result, retry_count = await _call_score_with_retry_async(
+                        score_http,
+                        rerank_url,
+                        model,
+                        input_prompt,
+                        inputs[input_idx],
+                    )
+                elif is_embedding:
+                    messages = _build_msgs(input_prompt, inputs[input_idx])
                     result, retry_count = await _call_embedding_with_retry_async(
                         client,
                         model,
@@ -2205,6 +2315,7 @@ async def run_benchmark(
                         add_special_tokens=emb_special,
                     )
                 else:
+                    messages = _build_msgs(input_prompt, inputs[input_idx])
                     result, retry_count = await _call_with_retry_async(client, model, messages, max_tokens)
                 if retry_count:
                     async with retries_lock:
@@ -2234,29 +2345,35 @@ async def run_benchmark(
 
     completed = 0
 
-    for run_num in range(1, runs + 1):
-        if progress_callback:
-            progress_callback("run", run_num, completed)
-
-        tasks = [asyncio.create_task(execute_single(i, run_num)) for i in range(len(inputs))]
-
-        error_count_run = 0
-        for coro in asyncio.as_completed(tasks):
-            run_result = await coro
-            runs_raw.append(run_result)
-            completed += 1
-            if run_result.error:
-                error_count_run += 1
+    try:
+        for run_num in range(1, runs + 1):
             if progress_callback:
-                progress_callback("progress", run_num, completed)
+                progress_callback("run", run_num, completed)
 
-        if error_count_run == len(tasks):
-            console.print()
-            first_err = next(r.error for r in runs_raw if r.error)
-            print_error("Benchmark aborted", f"All requests failed: {first_err}")
-            sys.exit(1)
-        elif error_count_run > 0:
-            console.print(f"  [yellow]Run {run_num}: {error_count_run}/{len(tasks)} samples failed (skipped)[/yellow]")
+            tasks = [asyncio.create_task(execute_single(i, run_num)) for i in range(len(inputs))]
+
+            error_count_run = 0
+            for coro in asyncio.as_completed(tasks):
+                run_result = await coro
+                runs_raw.append(run_result)
+                completed += 1
+                if run_result.error:
+                    error_count_run += 1
+                if progress_callback:
+                    progress_callback("progress", run_num, completed)
+
+            if error_count_run == len(tasks):
+                console.print()
+                first_err = next(r.error for r in runs_raw if r.error)
+                print_error("Benchmark aborted", f"All requests failed: {first_err}")
+                sys.exit(1)
+            elif error_count_run > 0:
+                console.print(
+                    f"  [yellow]Run {run_num}: {error_count_run}/{len(tasks)} samples failed (skipped)[/yellow]"
+                )
+    finally:
+        if score_http:
+            await score_http.aclose()
 
     return runs_raw, retries
 
@@ -2433,14 +2550,19 @@ def print_results(result: BenchmarkResult, save_path: str, *, title_suffix: str 
     upper.add_column("p99", style=_H, justify="right", width=10)
 
     is_embedding = r.embedding_dim is not None
+    is_score = result.input.task == "score"
+    is_pooling = is_embedding or is_score
 
-    if is_embedding:
-        upper.add_row("Throughput", f"{r.inputs_per_sec:.2f} emb/s", "—", "—", "—")
-        upper.add_row("Embedding dim", str(r.embedding_dim), "—", "—", "—")
+    if is_pooling:
+        unit = "emb/s" if is_embedding else "score/s"
+        lat_unit = "s/emb" if is_embedding else "s/score"
+        upper.add_row("Throughput", f"{r.inputs_per_sec:.2f} {unit}", "—", "—", "—")
+        if is_embedding and r.embedding_dim:
+            upper.add_row("Embedding dim", str(r.embedding_dim), "—", "—", "—")
         upper.add_row("Workers", str(concurrency), "—", "—", "—")
         upper.add_row(
             "Latency (per worker)",
-            f"{r.latency_s_per_input.mean:.2f} s/emb",
+            f"{r.latency_s_per_input.mean:.2f} {lat_unit}",
             f"{r.latency_s_per_input.p50:.2f} s",
             f"{r.latency_s_per_input.p95:.2f} s",
             f"{r.latency_s_per_input.p99:.2f} s",
@@ -2486,7 +2608,7 @@ def print_results(result: BenchmarkResult, save_path: str, *, title_suffix: str 
     lower.add_column("Metric", style="bold cyan", no_wrap=True, width=20)
     lower.add_column("Value", style="bold", no_wrap=True)
 
-    if is_embedding:
+    if is_pooling:
         tok_val = f"prompt {r.prompt_tokens.mean:,}"
         lower.add_row("Tokens (avg)", tok_val)
         tok_range = f"prompt {r.prompt_tokens.min:,}–{r.prompt_tokens.max:,}"
@@ -2852,8 +2974,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--task",
         default="completion",
-        choices=["completion", "embedding"],
-        help="Task type: completion (default) or embedding (vLLM pooling models)",
+        choices=["completion", "embedding", "score"],
+        help="Task type: completion (default), embedding, or score/rerank (vLLM pooling models)",
     )
     run_parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Max completion tokens")
     run_parser.add_argument(
@@ -2940,7 +3062,7 @@ def _execute_benchmark(
     embedding_options = getattr(args, "embedding_options", None)
 
     desc_prefix = f"[{label}] " if label else ""
-    progress_unit = "embeddings" if task_type == "embedding" else "images"
+    progress_unit = {"embedding": "embeddings", "score": "scores"}.get(task_type, "images")
 
     with Progress(
         TextColumn("[progress.description]{task.description}"),
@@ -3124,8 +3246,8 @@ def cmd_profiles() -> None:
         with open(p) as f:
             d = yaml.safe_load(f)
         notes: list[str] = []
-        if d.get("task") == "embedding":
-            notes.append("embedding")
+        if d.get("task") in ("embedding", "score"):
+            notes.append(d["task"])
         if d.get("setup"):
             notes.append("custom setup")
         if "image" in d:
