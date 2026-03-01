@@ -9,9 +9,32 @@ vlmbench run --serve --backend vllm --model <model-id> --serve-args '<args>' -i 
 | Model | Params | vLLM `--serve-args` | Notes |
 |---|---|---|---|
 | `lightonai/LightOnOCR-2-1B` | 1B | `--limit-mm-per-prompt '{"image": 1}' --mm-processor-cache-gb 0 --no-enable-prefix-caching` | |
-| `zai-org/GLM-OCR` | 0.9B | `--allowed-local-media-path /` | Requires transformers >= 5.0.0 |
+| `zai-org/GLM-OCR` | 0.9B | `--allowed-local-media-path /` | **Profile: `glm-ocr`** — requires transformers >= 5.0.0, vLLM nightly, MTP speculative decoding. Use `--profile glm-ocr` or `PROFILE=glm-ocr`. |
 | `rednote-hilab/dots.ocr` | 3B | `--trust-remote-code --gpu-memory-utilization 0.95` | |
 | `allenai/olmOCR-2-7B-1025-FP8` | 8B (FP8) | `--max-model-len 16384` | Based on Qwen2.5-VL-7B |
 | `Qwen/Qwen3-VL-8B-Instruct` | 9B | `--mm-encoder-tp-mode "data"` | |
 | `Qwen/Qwen3-VL-8B-Instruct-FP8` | 9B (FP8) | `--mm-encoder-tp-mode "data"` | |
 | `deepseek-ai/DeepSeek-OCR-2` | 3B | N/A | Not supported in upstream vLLM; requires [custom wheel](https://github.com/deepseek-ai/DeepSeek-OCR-2) |
+
+## Model Profiles
+
+Some models need custom environments (non-standard vLLM images, extra pip installs, special serve args). These are defined as profile directories in `vlmbench/profiles/<name>/` containing `config.toml` + `setup.sh`, shipped via PyPI.
+
+```bash
+# List available profiles
+vlmbench profiles
+
+# Local: build once, serve, benchmark
+make build PROFILE=glm-ocr
+make serve PROFILE=glm-ocr
+make benchmark PROFILE=glm-ocr BENCHMARK_ARGS="--no-serve --base-url http://localhost:8000/v1"
+
+# HF Jobs (setup.sh runs at container start)
+make hf-benchmark PROFILE=glm-ocr FLAVOR=a100-large
+```
+
+Available profiles:
+
+| Profile | Model | Custom Image | Custom Setup |
+|---|---|---|---|
+| `glm-ocr` | `zai-org/GLM-OCR` | `vllm/vllm-openai:nightly` | transformers from source |

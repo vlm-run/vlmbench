@@ -10,6 +10,8 @@ help:
 	@echo "  dist           Build distribution"
 	@echo ""
 	@echo "Server:"
+	@echo "  dockerfile     Generate Dockerfile for a profile (~/.vlmbench/profiles/<name>/)"
+	@echo "  build          Build a profile Docker image (runs dockerfile first)"
 	@echo "  serve          Start a vLLM Docker server for testing"
 	@echo "  serve-stop     Stop and remove the vllm-serve container"
 	@echo ""
@@ -24,6 +26,9 @@ help:
 	@echo "  make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct"
 	@echo "  make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS='--concurrency 4,8,16'"
 	@echo "  make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=a100-large"
+	@echo "  make build PROFILE=glm-ocr"
+	@echo "  make serve PROFILE=glm-ocr"
+	@echo "  make hf-benchmark PROFILE=glm-ocr FLAVOR=a100-large"
 	@echo "  make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS='a100-large a10g-small'"
 
 clean: clean-build clean-pyc
@@ -47,6 +52,18 @@ test:
 dist: clean
 	uv run python -m build --sdist --wheel
 
+# ── Profile support ───────────────────────────────────────────────────
+# Usage: make build PROFILE=glm-ocr && make serve PROFILE=glm-ocr
+#        make hf-benchmark PROFILE=glm-ocr FLAVOR=a100-large
+ifdef PROFILE
+PROFILE_YAML  := vlmbench/profiles/$(PROFILE).yaml
+_read_yaml     = $(shell uv run python3 -c "import yaml; d=yaml.safe_load(open('$(PROFILE_YAML)')); print(d.get('$(1)','$(2)'))")
+VLLM_IMAGE    := $(call _read_yaml,image,vllm/vllm-openai:v0.15.1)
+PROFILE_MODEL := $(call _read_yaml,model,)
+SERVE_ARGS    := $(call _read_yaml,serve_args,)
+LOCAL_IMAGE   := vlmbench-$(PROFILE)
+endif
+
 # ── Serve settings ────────────────────────────────────────────────────
 VLLM_IMAGE ?= vllm/vllm-openai:v0.15.1
 SERVE_PORT ?= 8000
@@ -68,6 +85,21 @@ FLAVORS               ?= a100-large
 CONCURRENCY           ?= 4,8,16,32,64
 MAX_MODEL_LEN         ?= 16384
 
+# ── Dockerfile (generate self-contained Dockerfile for a profile) ────
+# Usage: make dockerfile PROFILE=glm-ocr
+#        → writes ~/.vlmbench/profiles/glm-ocr/Dockerfile
+dockerfile:
+ifndef PROFILE
+	$(error PROFILE is required. Example: make dockerfile PROFILE=glm-ocr)
+endif
+	@uv run python -c "from vlmbench.cli import generate_dockerfile; p = generate_dockerfile('$(PROFILE)'); print(f'  Generated {p}')"
+
+# ── Build (profile Docker image) ─────────────────────────────────────
+# Usage: make build PROFILE=glm-ocr
+build: dockerfile
+	docker build -t $(LOCAL_IMAGE) $(HOME)/.vlmbench/profiles/$(PROFILE)
+	@echo "Built image: $(LOCAL_IMAGE)"
+
 # ── Serve (vLLM Docker for testing) ──────────────────────────────────
 # Usage:
 #   make serve MODEL=Qwen/Qwen3-VL-2B-Instruct
@@ -75,6 +107,19 @@ MAX_MODEL_LEN         ?= 16384
 #   make serve SERVE_PORT=8100 GPU_DEVICE=0
 #   make serve MODEL=lightonai/LightOnOCR-2-1B GPU_DEVICE=1 SERVE_ARGS="--max-model-len 16384 --limit-mm-per-prompt '{\"image\": 1}' --mm-processor-cache-gb 0 --no-enable-prefix-caching"
 serve:
+ifdef PROFILE
+	@echo "Starting $(LOCAL_IMAGE) on :$(SERVE_PORT) (GPU $(GPU_DEVICE))..."
+	docker run -d --name vllm-serve \
+		--runtime nvidia --gpus '"device=$(GPU_DEVICE)"' \
+		-e LD_LIBRARY_PATH=$(LD_FIX) \
+		-e CUDA_DEVICE_ORDER=PCI_BUS_ID \
+		-v $(HF_CACHE):/root/.cache/huggingface \
+		-v $(VLLM_CACHE):/root/.cache/vllm \
+		-p $(SERVE_PORT):8000 --ipc=host \
+		$(LOCAL_IMAGE) \
+		$(PROFILE_MODEL) $(SERVE_ARGS)
+	@echo "Container 'vllm-serve' started. Logs: docker logs -f vllm-serve"
+else
 ifndef MODEL
 	$(error MODEL is required. Example: make serve MODEL=Qwen/Qwen3-VL-2B-Instruct)
 endif
@@ -87,8 +132,9 @@ endif
 		-v $(VLLM_CACHE):/root/.cache/vllm \
 		-p $(SERVE_PORT):8000 --ipc=host \
 		$(VLLM_IMAGE) \
-		--model $(MODEL) $(SERVE_ARGS)
+		$(MODEL) $(SERVE_ARGS)
 	@echo "Container 'vllm-serve' started. Logs: docker logs -f vllm-serve"
+endif
 
 serve-stop:
 	docker rm -f vllm-serve 2>/dev/null || true
@@ -101,16 +147,20 @@ serve-stop:
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--concurrency 4,8,16,32"
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--dataset vlm-run/FineVision-vlmbench-mini"
-#   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--input ./images --save ./results --tag my-run"
+#   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--input ./images --output-directory ./results --tag my-run"
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--base-url http://localhost:8100/v1 --no-serve"
 #
 # Local reproduction (start server first with `make serve`, then benchmark with --no-serve):
 #   make benchmark MODEL=<model-id> BENCHMARK_ARGS="--no-serve --base-url http://localhost:8000/v1 --concurrency 1,2,4,8,16,32,64,128 --dataset hf://vlm-run/FineVision-vlmbench-mini"
 benchmark:
+ifdef PROFILE
+	uv run vlmbench run --profile $(PROFILE) --warmup 1 --upload --upload-repo $(REPO_ID) $(BENCHMARK_ARGS)
+else
 ifndef MODEL
 	$(error MODEL is required. Example: make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct)
 endif
 	uv run vlmbench run --model $(MODEL) --warmup 1 --upload --upload-repo $(REPO_ID) $(BENCHMARK_ARGS)
+endif
 
 # Run benchmark via uvx (from PyPI, mimics what HF Jobs runs)
 # Usage: make uv-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct
@@ -127,6 +177,22 @@ endif
 #   make hf-benchmark FLAVOR=a100-large MODEL=Qwen/Qwen3-VL-2B-Instruct CONCURRENCY=4,8,16,32,64,128
 #   make hf-benchmark FLAVOR=a100-large MODEL=Qwen/Qwen3-VL-8B-Instruct CONCURRENCY=4,8,16,32,64,128 SERVE_ARGS='--mm-encoder-tp-mode "data"'
 #   make hf-benchmark FLAVOR=a100-large MODEL=lightonai/LightOnOCR-2-1B CONCURRENCY=1,2,4,8,16,32,64,128 SERVE_ARGS='--limit-mm-per-prompt '"'"'{"image": 1}'"'"' --mm-processor-cache-gb 0 --no-enable-prefix-caching'
+ifdef PROFILE
+hf-benchmark:
+ifndef FLAVOR
+	$(error FLAVOR is required. Example: make hf-benchmark PROFILE=glm-ocr FLAVOR=a100-large)
+endif
+	uvx hf jobs run \
+		--namespace $(HF_NAMESPACE) \
+		--flavor $(FLAVOR) \
+		--secrets HF_TOKEN \
+		--timeout $(BENCHMARK_JOB_TIMEOUT) \
+		-- $(VLLM_IMAGE) \
+		bash -c 'pip install -q "vlmbench[hf]" \
+			&& vlmbench run --profile $(PROFILE) --serve --backend vllm \
+				--warmup 1 --concurrency $(CONCURRENCY) --dataset $(DATASET) \
+				--upload --upload-repo $(REPO_ID) $(BENCHMARK_ARGS)'
+else
 hf-benchmark:
 ifndef FLAVOR
 	$(error FLAVOR is required. Example: make hf-benchmark FLAVOR=l4x1)
@@ -140,7 +206,7 @@ endif
 		--secrets HF_TOKEN \
 		--timeout $(BENCHMARK_JOB_TIMEOUT) \
 		-- $(VLLM_IMAGE) \
-		bash -c 'pip install -q "vlmbench[hf]==0.4.0" \
+		bash -c 'pip install -q "vlmbench[hf]" \
 			&& vllm serve $(MODEL) --max-model-len $(MAX_MODEL_LEN) $(SERVE_ARGS) & \
 			echo "Starting vLLM server in background..." \
 			&& for i in $$(seq 1 120); do \
@@ -151,6 +217,7 @@ endif
 			&& echo "vLLM server ready!" \
 			&& vlmbench run --model $(MODEL) --no-serve --base-url http://localhost:8000/v1 --warmup 1 --concurrency $(CONCURRENCY) --dataset $(DATASET) --upload --upload-repo $(REPO_ID) $(BENCHMARK_ARGS) \
 			|| echo "ERROR: vLLM server failed to start"'
+endif
 
 
-.PHONY: default help clean clean-build clean-pyc lint test dist serve serve-stop benchmark uv-benchmark hf-benchmark
+.PHONY: default help clean clean-build clean-pyc lint test dist dockerfile build serve serve-stop benchmark uv-benchmark hf-benchmark
