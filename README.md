@@ -27,21 +27,29 @@ Benchmark any vision-language model on your own hardware with a single command. 
 No install needed — just run with [`uvx`](https://docs.astral.sh/uv/):
 
 ```bash
-# Local images/PDFs
+# Local images/PDFs (macOS Ollama)
 uvx vlmbench run -m qwen3-vl:2b -i ./images/
 
+# Linux + vLLM Docker (auto-starts with --gpus all)
+uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/
+
 # HuggingFace dataset
-uvx vlmbench run -m qwen3-vl:2b -d hf://vlm-run/FineVision-vlmbench-mini
+uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct \
+  -d hf://vlm-run/FineVision-vlmbench-mini --max-samples 64
 
-# Dry-run with limited samples (uses streaming, no full download)
-uvx vlmbench run -m qwen3-vl:2b -d hf://vlm-run/FineVision-vlmbench-mini --max-samples 5
+# Concurrency sweep
+uvx vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./images/ \
+  --concurrency 4,8,16,32,64
+
+# Use a model profile (custom serve args + setup)
+uvx vlmbench run --profile deepseek-ocr -i ./images/
+
+# Cloud API
+uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ \
+  --base-url https://api.openai.com/v1 --api-key $OPENAI_API_KEY
 ```
 
-Or install it:
-
-```bash
-pip install vlmbench
-```
+Or install it: `pip install vlmbench`
 
 ## Example Run
 
@@ -93,23 +101,132 @@ uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct \
 │  Reliability           192/192 ok  •  14.4s total                            │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  > Saved -> results/vllm-qwen3-vl-2b-instruct.json
 ```
 
-## Behind the Scenes
+## Leaderboard
 
-When you run `uvx vlmbench run`, here's what happens automatically:
+Best peak throughput per model on NVIDIA RTX PRO 6000 Blackwell (vLLM v0.15.1, 39 runs across concurrency sweeps):
 
-1. **Detects your platform**: macOS routes to Ollama, Linux to vLLM Docker
-2. **Pulls the Docker image**: `docker pull vllm/vllm-openai:latest` (cached after first run)
-3. **Starts the server in tmux**: `docker run --gpus all` in a named tmux session (`vlmbench-vllm`)
-4. **Launches a GPU monitor**: `nvitop` (Linux) or `macmon` (macOS) in a split pane
-5. **Waits for the server**: polls `/v1/models` until ready (up to 600s for large models)
-6. **Runs warmup requests**: fail-fast validation before timed runs
-7. **Benchmarks with concurrency**: streams completions via the OpenAI API, measures TTFT/TPOT/throughput
-8. **Saves results as JSON**: one file per run in `./results/`, ready for `vlmbench compare`
+| # | Model | Best Tok/s | Workers | TTFT | TPOT |
+|---|-------|-----------|---------|------|------|
+| 1 | `lightonai/LightOnOCR-2-1B` | **2,439.8** | 32 | 1,439 ms | 22.1 ms |
+| 2 | `Qwen/Qwen3-VL-2B-Instruct` | 2,409.3 | 64 | 440 ms | 14.3 ms |
+| 3 | `PaddlePaddle/PaddleOCR-VL` | 2,341.9 | 64 | 6,385 ms | 49.0 ms |
+| 4 | `deepseek-ai/DeepSeek-OCR` | 1,195.8 | 32 | 3,571 ms | 15.9 ms |
+| 5 | `Qwen/Qwen3-VL-8B-Instruct` | 953.8 | 64 | 448 ms | 25.7 ms |
 
-Attach to the live session anytime with `tmux attach -t vlmbench-vllm`.
+Compare your own results:
+
+```bash
+uvx vlmbench compare                       # auto-discovers ~/.vlmbench/benchmarks/
+uvx vlmbench compare results/*.json        # or pass files explicitly
+```
+
+See [MODELS.md](.claude/skills/vlmbench/MODELS.md) for all tested models and their required `--serve-args`.
+
+## Profiles
+
+Some models need custom Docker images, extra pip installs, or special serve args. Profiles bundle all of this into a single YAML file — just pass `--profile` and vlmbench handles the rest.
+
+```bash
+uvx vlmbench profiles                                  # list available profiles
+uvx vlmbench run --profile deepseek-ocr -i ./images/   # run with a profile
+```
+
+When you use `--profile`, it sets `--model`, `--prompt`, `--serve-args`, and (for Docker builds) the base image and setup commands. You can still override any flag explicitly.
+
+| Profile | Model | Base Image | Custom Setup |
+|---------|-------|------------|--------------|
+| `glm-ocr` | `zai-org/GLM-OCR` | `vllm/vllm-openai:nightly` | vLLM nightly + transformers >= 5.1.0, MTP speculative decoding |
+| `deepseek-ocr` | `deepseek-ai/DeepSeek-OCR` | `vllm/vllm-openai:v0.15.1` | Custom logits processor, no prefix caching |
+| `paddleocr-vl` | `PaddlePaddle/PaddleOCR-VL` | `vllm/vllm-openai:v0.15.1` | Trust remote code, no prefix caching |
+| `qwen3-vl-2b` | `Qwen/Qwen3-VL-2B-Instruct` | `vllm/vllm-openai:v0.15.1` | — |
+| `qwen3-vl-8b` | `Qwen/Qwen3-VL-8B-Instruct` | `vllm/vllm-openai:v0.15.1` | — |
+
+Profiles live in `vlmbench/profiles/*.yaml` and ship with the package. For local Docker workflows:
+
+```bash
+make build PROFILE=glm-ocr        # generates Dockerfile + docker build
+make serve PROFILE=glm-ocr        # start server in tmux
+make benchmark PROFILE=glm-ocr    # run benchmark against the server
+```
+
+## CLI Reference
+
+| Flag | Default | Description |
+|---|---|---|
+| `--model` / `-m` | required | Model ID. Optional if `--profile` is set. |
+| `--profile` | none | Model profile (e.g. `glm-ocr`). Sets model, prompt, serve-args. See `vlmbench profiles`. |
+| `--input` / `-i` | sample URL | File, directory, or URL (images, PDFs, videos) |
+| `--dataset` / `-d` | none | HuggingFace dataset (e.g. `vlm-run/FineVision-vlmbench-mini`) |
+| `--base-url` | auto-detect | OpenAI-compatible base URL |
+| `--api-key` | `no-key` | API key (also reads `OPENAI_API_KEY` env) |
+| `--prompt` | `"Extract all text..."` | Prompt sent with each input |
+| `--max-tokens` | `2048` | Max completion tokens |
+| `--runs` | `3` | Timed runs per input |
+| `--warmup` | `1` | Warmup runs (not recorded, fail-fast on errors) |
+| `--concurrency` | `8` | Single value or comma-separated sweep (e.g. `4,8,16,32,64`) |
+| `--max-samples` | all | Limit number of input samples (useful for dry-runs) |
+| `--output-directory` | `~/.vlmbench/benchmarks/` | Output directory |
+| `--tag` | none | Custom label (used in result filename and metadata) |
+| `--upload` | off | Upload results to HuggingFace (requires `HF_TOKEN`) |
+| `--upload-repo` | `vlm-run/vlmbench-results` | HuggingFace dataset repo for uploads |
+| `--backend` | `auto` | `auto`, `ollama`, `vllm`, `vllm-openai:<tag>`, `sglang:<tag>` |
+| `--serve/--no-serve` | `--serve` | Auto-start server if none detected |
+| `--serve-args` | none | Extra args passed to server |
+| `--quant` | `auto` | Quantization metadata: `fp16`, `bf16`, `q4_K_M`, etc. |
+| `--revision` | `main` | Model revision metadata |
+
+### Backends
+
+| `--backend` | Resolves to | Serving |
+|---|---|---|
+| `auto` | `ollama` on macOS, `vllm-openai:latest` on Linux | Native / Docker |
+| `ollama` | Ollama native | `ollama serve` in tmux |
+| `vllm` | Native vLLM | `vllm serve` in tmux |
+| `vllm-openai:latest` | `vllm/vllm-openai:latest` | `docker run --gpus all` |
+| `vllm-openai:nightly` | `vllm/vllm-openai:nightly` | `docker run --gpus all` |
+| `sglang:latest` | `lmsysorg/sglang:latest` | `docker run --gpus all` (coming soon) |
+
+All Docker backends run with `--gpus all --ipc=host` and a deterministic container name for easy log access.
+
+### Input Types
+
+| Type | Extensions | Processing |
+|---|---|---|
+| Image | `.png`, `.jpg`, `.jpeg`, `.webp`, `.tiff`, `.bmp` | Base64 encode |
+| PDF | `.pdf` | `pypdfium2` per-page -> base64 |
+| Video | `.mp4`, `.mov`, `.avi`, `.mkv`, `.webm` | `ffmpeg` 1fps -> frames -> base64 |
+
+Directories are processed recursively, sorted alphabetically.
+
+### Output
+
+Results are saved as JSON to `~/.vlmbench/benchmarks/` with model metadata, environment info, benchmark stats (TTFT, TPOT, throughput, latency percentiles), and raw per-run data. Each concurrency level produces a separate file.
+
+Upload results to HuggingFace with `--upload`:
+
+```bash
+uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -d hf://vlm-run/FineVision-vlmbench-mini \
+  --concurrency 4,8,16,32,64 --upload
+```
+
+Browse uploaded results at [`vlm-run/vlmbench-results`](https://huggingface.co/datasets/vlm-run/vlmbench-results).
+
+## How It Works
+
+When you run `vlmbench run`, here's what happens:
+
+1. **Detects your platform** — macOS routes to Ollama, Linux to vLLM Docker
+2. **Pulls the Docker image** — `docker pull vllm/vllm-openai:latest` (cached after first run)
+3. **Starts the server in tmux** — `docker run --gpus all` in a named session (`vlmbench-vllm`)
+4. **Launches a GPU monitor** — `nvitop` (Linux) or `macmon` (macOS) in a split pane
+5. **Waits for the server** — polls `/v1/models` until ready (up to 600s)
+6. **Runs warmup requests** — fail-fast validation before timed runs
+7. **Benchmarks with concurrency** — streams completions via the OpenAI API, measures TTFT/TPOT/throughput
+8. **Saves results as JSON** — one file per concurrency level in `~/.vlmbench/benchmarks/`
+
+Attach to the live session anytime: `tmux attach -t vlmbench-vllm`
 
 <details>
 <summary><b>tmux session capture</b> — server logs + GPU monitor side by side</summary>
@@ -158,203 +275,9 @@ NVITOP 1.6.2      Driver Version: 580.126.09      CUDA Driver Version: 13.0
 
 </details>
 
-## Compare
-
-```bash
-uvx vlmbench compare results/*.json
-```
-
-```
-╭───────────────────────────────┬──────────┬──────────┬─────────┬────────┬──────────────┬─────────────┬──────────┬────────────┬──────────────────────────────────────────────────────╮
-│                               │     TTFT │     TPOT │         │        │ Duration (s) │ num_workers │     VRAM │            │                                                      │
-│ Model                         │     (ms) │     (ms) │ Tok/s ↓ │  Img/s │              │             │          │ Backend    │ Hardware                                             │
-├───────────────────────────────┼──────────┼──────────┼─────────┼────────┼──────────────┼─────────────┼──────────┼────────────┼──────────────────────────────────────────────────────┤
-│ lightonai/LightOnOCR-2-1B     │      467 │      6.0 │  1664.8 │   9.20 │        162.4 │           8 │  5.78 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition    │
-├───────────────────────────────┼──────────┼──────────┼─────────┼────────┼──────────────┼─────────────┼──────────┼────────────┼──────────────────────────────────────────────────────┤
-│ rednote-hilab/dots.ocr        │     1424 │     10.2 │   477.6 │   7.76 │        190.8 │           8 │  9.42 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition    │
-├───────────────────────────────┼──────────┼──────────┼─────────┼────────┼──────────────┼─────────────┼──────────┼────────────┼──────────────────────────────────────────────────────┤
-│ Qwen/Qwen3-VL-8B-Instruct-FP8 │      698 │     17.2 │   461.6 │   6.40 │        232.0 │           8 │ 11.75 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition    │
-├───────────────────────────────┼──────────┼──────────┼─────────┼────────┼──────────────┼─────────────┼──────────┼────────────┼──────────────────────────────────────────────────────┤
-│ Qwen/Qwen3-VL-8B-Instruct     │      638 │     17.9 │   448.0 │   6.40 │        233.6 │           8 │ 17.41 GB │ vLLM 0.15.1│ NVIDIA RTX PRO 6000 Blackwell Workstation Edition    │
-╰───────────────────────────────┴──────────┴──────────┴─────────┴────────┴──────────────┴─────────────┴──────────┴────────────┴──────────────────────────────────────────────────────╯
-
-╭─ Summary ────────────────────────────────────────────────────────────────────╮
-│  Runs       4 across 4 model(s)  total duration 818.8s                       │
-│  Tok/s      1664.8 best   448.0 worst   763.0 avg                            │
-│  Errors     0                                                                │
-╰──────────────────────────────────────────────────────────── vlmbench v0.3.1 ─╯
-```
-
-## Usage
-
-```bash
-# Mac + Ollama
-uvx vlmbench run -m qwen3-vl:2b -i ./images/
-
-# Linux + vLLM Docker (auto-starts with --gpus all)
-uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/
-
-# Linux + vLLM Docker (nightly image)
-uvx vlmbench run -m PaddlePaddle/PaddleOCR-VL-1.5 -i ./images/ \
-  --backend vllm-openai:nightly
-
-# Linux + vLLM native (requires pip install vllm)
-uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ --backend vllm
-
-# Concurrency sweep (runs at each level, prints comparison table)
-uvx vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./images/ \
-  --concurrency 4,8,16,32,64
-
-# Single concurrency
-uvx vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./images/ \
-  --concurrency 8 --runs 3
-
-# Cloud API
-uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ \
-  --base-url https://api.openai.com/v1 --api-key $OPENAI_API_KEY
-```
-
-### Compare
-
-```bash
-uvx vlmbench compare results/*.json
-```
-
-## CLI Flags
-
-| Flag | Default | Description |
-|---|---|---|
-| `--model` / `-m` | required | Model ID (vLLM: `Qwen/Qwen3-VL-2B-Instruct`, Ollama: `qwen3-vl:2b`) |
-| `--input` / `-i` | sample URL | File, directory, or URL (images, PDFs, videos) |
-| `--dataset` / `-d` | none | HuggingFace dataset (e.g. `vlm-run/FineVision-vlmbench-mini`) |
-| `--base-url` | auto-detect | OpenAI-compatible base URL |
-| `--api-key` | `no-key` | API key (also reads `OPENAI_API_KEY` env) |
-| `--prompt` | `"Extract all text..."` | Prompt sent with each input |
-| `--max-tokens` | `2048` | Max completion tokens |
-| `--runs` | `3` | Timed runs per input |
-| `--warmup` | `1` | Warmup runs (not recorded, fail-fast on errors) |
-| `--concurrency` | `8` | Single value or comma-separated sweep (e.g. `8` or `4,8,16,32,64`) |
-| `--max-samples` | all | Limit number of input samples (useful for dry-runs) |
-| `--save` | `./results/` | Output directory |
-| `--tag` | none | Custom label (used in result filename and metadata) |
-| `--upload` | off | Upload results to a HuggingFace dataset repo (requires `HF_TOKEN`) |
-| `--upload-repo` | `vlm-run/vlmbench-results` | HuggingFace dataset repo for uploads |
-| `--backend` | `auto` | `auto`, `ollama`, `vllm` (native), `vllm-openai:<tag>` (Docker), `sglang:<tag>` |
-| `--serve/--no-serve` | `--serve` | Auto-start server if none detected |
-| `--serve-args` | none | Extra args passed to server (Docker or native) |
-| `--quant` | `auto` | Quantization metadata: `fp16`, `bf16`, `q4_K_M`, etc. |
-| `--revision` | `main` | Model revision metadata |
-
-## Backends
-
-| `--backend` | Resolves to | Serving |
-|---|---|---|
-| `auto` | `ollama` on macOS, `vllm-openai:latest` on Linux | Native / Docker |
-| `ollama` | Ollama native | `ollama serve` in tmux |
-| `vllm` | Native vLLM | `vllm serve` in tmux |
-| `vllm-openai:latest` | `vllm/vllm-openai:latest` | `docker run --gpus all` |
-| `vllm-openai:nightly` | `vllm/vllm-openai:nightly` | `docker run --gpus all` |
-| `sglang:latest` | `lmsysorg/sglang:latest` | `docker run --gpus all` (coming soon) |
-
-All Docker backends run with `--gpus all --ipc=host` and a deterministic container name (`vlmbench-vllm-openai`, `vlmbench-sglang`) for easy log access.
-
-## Monitoring
-
-Every run starts a tmux session with two panes:
-
-- **Top**: server logs (`tail -f ~/.ollama/logs/server.log` or `docker logs -f`)
-- **Bottom**: GPU monitor (`macmon` on macOS, `nvitop` on Linux)
-
-Attach with `tmux attach -t vlmbench-vllm`.
-
-## Supported Models
-
-See [MODELS.md](.claude/skills/vlmbench/MODELS.md) for tested models and their required `--serve-args`.
-
-## Input Types
-
-| Type | Extensions | Processing |
-|---|---|---|
-| Image | `.png`, `.jpg`, `.jpeg`, `.webp`, `.tiff`, `.bmp` | Base64 encode |
-| PDF | `.pdf` | `pypdfium2` per-page -> base64 |
-| Video | `.mp4`, `.mov`, `.avi`, `.mkv`, `.webm` | `ffmpeg` 1fps -> frames -> base64 |
-
-Directories processed recursively, sorted alphabetically.
-
-## Output
-
-Results saved as JSON to `./results/{backend}-v{version}-{model}-{gpu}-{tag}.json` with model metadata, environment info, benchmark stats (TTFT, TPOT, throughput, latency percentiles), and raw per-run data. When using `--concurrency`, each level produces a separate file (e.g. `vllm-v0.15.1-qwen3-vl-2b-instruct-a100-80gb-c4.json`, `...-c8.json`, etc.).
-
-## Uploading Results
-
-Upload benchmark results directly to a HuggingFace dataset repo with `--upload`. Requires `HF_TOKEN` in your environment (or `.env` file).
-
-```bash
-# Upload to default repo (vlm-run/vlmbench-results)
-uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -d hf://vlm-run/FineVision-vlmbench-mini \
-  --concurrency 4,8,16,32,64 --upload
-
-# Upload to a custom repo
-uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ \
-  --upload --upload-repo my-org/my-benchmark-results
-```
-
-Results are saved locally first, then each JSON file is uploaded to `results/<filename>` in the dataset repo. For concurrency sweeps, all result files are uploaded after the sweep completes.
-
-Browse uploaded results at [`vlm-run/vlmbench-results`](https://huggingface.co/datasets/vlm-run/vlmbench-results).
-
-## HuggingFace Jobs
-
-Run benchmarks at scale on HuggingFace infrastructure. Each job runs a concurrency sweep (`4,8,16,32,64` by default), produces one JSON per level, and uploads results to the HuggingFace dataset repo. Requires a [HuggingFace Pro](https://huggingface.co/pro) account and `HF_TOKEN` exported (or in `.env`).
-
-All `make` targets enable `--upload` by default (repo: `vlm-run/vlmbench-results`). Override with `REPO_ID=my-org/my-results`.
-
-```bash
-# Single GPU job (runs concurrency sweep by default)
-make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1
-
-# Custom concurrency levels
-make hf-benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVOR=l4x1 CONCURRENCY=8,16
-
-# Sweep across GPU types
-make hf-sweep MODEL=Qwen/Qwen3-VL-2B-Instruct FLAVORS="l4x1 a10g-small a100-large"
-
-# Run locally on a GPU machine (no HF Jobs)
-make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--concurrency 4,8,16,32,64"
-```
-
-Results upload to [`vlm-run/vlmbench-results`](https://huggingface.co/datasets/vlm-run/vlmbench-results) under `results/`.
-
-<details>
-<summary><b>Available GPU flavors</b></summary>
-
-| Flavor | GPU | VRAM |
-|--------|-----|------|
-| `t4-small` | T4 | 16 GB |
-| `t4-medium` | T4 | 16 GB |
-| `l4x1` | L4 | 24 GB |
-| `l4x4` | 4x L4 | 96 GB |
-| `a10g-small` | A10G | 24 GB |
-| `a10g-large` | A10G | 24 GB |
-| `a10g-largex2` | 2x A10G | 48 GB |
-| `a10g-largex4` | 4x A10G | 96 GB |
-| `a100-large` | A100 | 80 GB |
-
-</details>
-
 ## Requirements
 
-**Core:**
-- Python >= 3.11
-- [uv](https://docs.astral.sh/uv/) (recommended)
-
-**Linux (vLLM/SGLang Docker backends):**
-- Docker + NVIDIA GPU support
-- Native vLLM: `uv pip install vllm`
-
-**Monitoring:**
-- `tmux`: server management and session control
-- `nvitop` (Linux) or `macmon` (macOS, `brew install macmon`)
-
-**Optional:**
-- `ffmpeg`: video frame extraction
+- **Python >= 3.11**, [uv](https://docs.astral.sh/uv/) recommended
+- **Linux**: Docker + NVIDIA GPU support (or native vLLM via `uv pip install vllm`)
+- **Monitoring**: `tmux`, `nvitop` (Linux) or `macmon` (macOS)
+- **Optional**: `ffmpeg` (video frame extraction)

@@ -10,7 +10,7 @@ help:
 	@echo "  dist           Build distribution"
 	@echo ""
 	@echo "Server:"
-	@echo "  dockerfile     Generate a self-contained Dockerfile for a profile"
+	@echo "  dockerfile     Generate Dockerfile for a profile (~/.vlmbench/profiles/<name>/)"
 	@echo "  build          Build a profile Docker image (runs dockerfile first)"
 	@echo "  serve          Start a vLLM Docker server for testing"
 	@echo "  serve-stop     Stop and remove the vllm-serve container"
@@ -92,7 +92,7 @@ dockerfile:
 ifndef PROFILE
 	$(error PROFILE is required. Example: make dockerfile PROFILE=glm-ocr)
 endif
-	@uv run vlmbench dockerfile $(PROFILE)
+	@uv run python -c "from vlmbench.cli import generate_dockerfile; p = generate_dockerfile('$(PROFILE)'); print(f'  Generated {p}')"
 
 # ── Build (profile Docker image) ─────────────────────────────────────
 # Usage: make build PROFILE=glm-ocr
@@ -147,7 +147,7 @@ serve-stop:
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--concurrency 4,8,16,32"
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--dataset vlm-run/FineVision-vlmbench-mini"
-#   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--input ./images --save ./results --tag my-run"
+#   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--input ./images --output-directory ./results --tag my-run"
 #   make benchmark MODEL=Qwen/Qwen3-VL-2B-Instruct BENCHMARK_ARGS="--base-url http://localhost:8100/v1 --no-serve"
 #
 # Local reproduction (start server first with `make serve`, then benchmark with --no-serve):
