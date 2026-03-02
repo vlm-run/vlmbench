@@ -35,6 +35,9 @@ make hf-benchmark PROFILE=glm-ocr FLAVOR=a100-large
 
 Available profiles:
 
-| Profile | Model | Custom Image | Custom Setup |
-|---|---|---|---|
-| `glm-ocr` | `zai-org/GLM-OCR` | `vllm/vllm-openai:nightly` | transformers from source |
+| Profile | Model | Task | Custom Image | Custom Setup |
+|---|---|---|---|---|
+| `glm-ocr` | `zai-org/GLM-OCR` | completion | `vllm/vllm-openai:nightly` | transformers from source |
+| `qwen3-vl-2b-embed` | `Qwen/Qwen3-VL-Embedding-2B` | embedding | — | — |
+| `dse-qwen2-vl` | `MrLight/dse-qwen2-2b-mrl-v1` | embedding | — | — |
+| `qwen3-vl-2b-reranker` | `Qwen/Qwen3-VL-Reranker-2B` | score | — | — |

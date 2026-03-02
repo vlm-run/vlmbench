@@ -1,0 +1,7 @@
+model: MrLight/dse-qwen2-2b-mrl-v1
+task: embedding
+prompt: "What is shown in this image?"
+serve_args: >-
+  --runner pooling
+  --trust-remote-code
+  --max-model-len 8192
