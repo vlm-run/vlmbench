@@ -63,10 +63,10 @@ uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct \
 ```
 ╭─ Configuration ──────────────────────────────────────────────────────────────╮
 │                                                                              │
-│  model        Qwen/Qwen3-VL-2B-Instruct                                     │
+│  model        Qwen/Qwen3-VL-2B-Instruct                                      │
 │  revision     main                                                           │
 │  backend      vLLM 0.11.2                                                    │
-│  endpoint     http://localhost:8000/v1                                        │
+│  endpoint     http://localhost:8000/v1                                       │
 │                                                                              │
 │  gpu          NVIDIA RTX PRO 6000 Blackwell Workstation Edition              │
 │  vram         97,887 MiB                                                     │

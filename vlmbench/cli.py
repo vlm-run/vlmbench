@@ -2723,9 +2723,14 @@ def print_concurrency_table(results: list[BenchmarkResult], saved_paths: list[st
     console.print()
 
 
-def print_compare_table(results: list[BenchmarkResult]) -> None:
-    """Print the compare table grouped by model, sorted by tok/s descending."""
-    console.print(f"  [bold]compare[/bold] [dim]({len(results)} runs)[/dim]")
+def print_compare_table(
+    results: list[BenchmarkResult],
+    *,
+    max_rows_per_model: int | None = None,
+    sort_by: str = "img/s",
+) -> None:
+    """Print the compare table grouped by model, sorted by the chosen metric descending."""
+    console.print(f"  [bold]compare[/bold] [dim]({len(results)} runs, sorted by {sort_by})[/dim]")
     console.print()
 
     _UP = "\u2191"
@@ -2739,12 +2744,17 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
         be, ver = r.environment.backend, r.environment.backend_version or ""
         return f"vLLM {ver}".strip() if be == "vllm" else f"{be.capitalize()} {ver}".strip()
 
-    # Group by model_id, sort groups by best tok/s descending
-    sorted_results = sorted(results, key=lambda r: (r.model.model_id, -_total_tok_s(r)))
+    def _img_s(r: BenchmarkResult) -> float:
+        return r.results.inputs_per_sec
+
+    _sort_key = _img_s if sort_by == "img/s" else _total_tok_s
+
+    # Group by model_id, sort groups by best of chosen metric descending
+    sorted_results = sorted(results, key=lambda r: (r.model.model_id, -_sort_key(r)))
     groups: list[tuple[str, list[BenchmarkResult]]] = [
         (model_id, list(runs)) for model_id, runs in groupby(sorted_results, key=lambda r: r.model.model_id)
     ]
-    groups.sort(key=lambda g: max(_total_tok_s(r) for r in g[1]), reverse=True)
+    groups.sort(key=lambda g: max(_sort_key(r) for r in g[1]), reverse=True)
 
     # Global bests per metric (for per-cell highlighting)
     best_ttft = min(r.results.ttft_ms.mean for r in results)
@@ -2783,7 +2793,8 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
         if group_idx > 0:
             table.add_section()
 
-        for row_idx, r in enumerate(runs):
+        visible_runs = runs[:max_rows_per_model] if max_rows_per_model else runs
+        for row_idx, r in enumerate(visible_runs):
             total_toks = _total_tok_s(r)
             total_imgs = r.results.inputs_per_sec
             vram_mib = r.results.vram_peak_mib
@@ -2827,19 +2838,22 @@ def print_compare_table(results: list[BenchmarkResult]) -> None:
     lb = Table(show_header=True, header_style="bold white", box=None, padding=(0, 1), show_edge=False)
     lb.add_column("#", justify="right", style="dim", width=3)
     lb.add_column("Model", no_wrap=True, style=f"bold {STEEL_BLUE}", min_width=20)
+    lb.add_column(f"Best Img/s {_UP}\n", justify="right", min_width=10)
     lb.add_column(f"Best Tok/s {_UP}\n", justify="right", min_width=10)
     lb.add_column("@ Workers\n", justify="right", style="dim", min_width=9)
     lb.add_column(f"TTFT {_DN}\n", justify="right", min_width=8)
     lb.add_column(f"TPOT {_DN}\n", justify="right", min_width=8)
 
     for rank, (model_id, runs) in enumerate(groups, 1):
-        best_run = max(runs, key=_total_tok_s)
+        best_run = max(runs, key=_sort_key)
         br = best_run.results
+        img_style = _BEST if _img_s(best_run) == best_imgs else "white"
         tok_style = _BEST if _total_tok_s(best_run) == best_toks else "white"
 
         lb.add_row(
             str(rank),
             model_id,
+            Text(f"{_img_s(best_run):.2f}", style=img_style),
             Text(f"{_total_tok_s(best_run):.1f}", style=tok_style),
             str(best_run.input.max_concurrency),
             f"{br.ttft_ms.mean:.0f} ms",
@@ -3015,6 +3029,18 @@ def build_parser() -> argparse.ArgumentParser:
     # ── compare subcommand ──
     compare_parser = subparsers.add_parser("compare", help="Compare benchmark results from multiple JSON files.")
     compare_parser.add_argument("files", nargs="*", help=f"JSON result files (default: all in {DEFAULT_SAVE_DIR}/)")
+    compare_parser.add_argument(
+        "--max-rows-per-model",
+        type=int,
+        default=None,
+        help="Limit number of rows shown per model (default: all)",
+    )
+    compare_parser.add_argument(
+        "--sort-by",
+        choices=["img/s", "tok/s"],
+        default="img/s",
+        help="Metric to sort results by (default: img/s)",
+    )
 
     # ── profiles subcommand ──
     subparsers.add_parser("profiles", help="List available model profiles.")
@@ -3443,10 +3469,10 @@ def cmd_compare(args: argparse.Namespace) -> None:
         console.print("[red]No result files found.[/red]")
         sys.exit(1)
 
-    # Sort by total tokens_per_sec (across workers) descending
-    results.sort(key=lambda r: r.results.tokens_per_sec, reverse=True)
+    # Sort by chosen metric descending
+    results.sort(key=lambda r: r.results.inputs_per_sec, reverse=True)
 
-    print_compare_table(results)
+    print_compare_table(results, max_rows_per_model=args.max_rows_per_model, sort_by=args.sort_by)
 
 
 def main() -> None:
