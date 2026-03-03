@@ -2577,20 +2577,26 @@ def print_results(result: BenchmarkResult, save_path: str, *, title_suffix: str 
             "—",
         )
         upper.add_row("Workers", str(concurrency), "—", "—", "—")
-        upper.add_row(
-            "TTFT",
-            f"{r.ttft_ms.mean:.0f} ms",
-            f"{r.ttft_ms.p50:.0f} ms",
-            f"{r.ttft_ms.p95:.0f} ms",
-            f"{r.ttft_ms.p99:.0f} ms",
-        )
-        upper.add_row(
-            "TPOT",
-            f"{r.tpot_ms.mean:.1f} ms",
-            f"{r.tpot_ms.p50:.1f} ms",
-            f"{r.tpot_ms.p95:.1f} ms",
-            f"{r.tpot_ms.p99:.1f} ms",
-        )
+        if r.ttft_ms.mean == 0:
+            upper.add_row("TTFT", "-", "-", "-", "-")
+        else:
+            upper.add_row(
+                "TTFT",
+                f"{r.ttft_ms.mean:.0f} ms",
+                f"{r.ttft_ms.p50:.0f} ms",
+                f"{r.ttft_ms.p95:.0f} ms",
+                f"{r.ttft_ms.p99:.0f} ms",
+            )
+        if r.tpot_ms.mean == 0:
+            upper.add_row("TPOT", "-", "-", "-", "-")
+        else:
+            upper.add_row(
+                "TPOT",
+                f"{r.tpot_ms.mean:.1f} ms",
+                f"{r.tpot_ms.p50:.1f} ms",
+                f"{r.tpot_ms.p95:.1f} ms",
+                f"{r.tpot_ms.p99:.1f} ms",
+            )
         upper.add_row(
             "Latency (per worker)",
             f"{r.latency_s_per_input.mean:.2f} s/img",
@@ -2701,8 +2707,12 @@ def print_concurrency_table(results: list[BenchmarkResult], saved_paths: list[st
             Text(samples_text, style=samples_style),
             Text(f"{toks:.1f}", style=style),
             Text(f"{r.results.inputs_per_sec:.2f}", style=style),
-            Text(f"{r.results.ttft_ms.mean:.0f}", style=style),
-            Text(f"{r.results.tpot_ms.mean:.1f}", style=style),
+            Text("-", style="dim")
+            if r.results.ttft_ms.mean == 0
+            else Text(f"{r.results.ttft_ms.mean:.0f}", style=style),
+            Text("-", style="dim")
+            if r.results.tpot_ms.mean == 0
+            else Text(f"{r.results.tpot_ms.mean:.1f}", style=style),
             Text(f"{r.results.latency_s_per_input.mean:.2f}", style=style),
             Text(f"{r.results.total_duration_s:.1f}", style=style),
             Text(vram_gb, style=style),
@@ -2756,9 +2766,11 @@ def print_compare_table(
     ]
     groups.sort(key=lambda g: max(_sort_key(r) for r in g[1]), reverse=True)
 
-    # Global bests per metric (for per-cell highlighting)
-    best_ttft = min(r.results.ttft_ms.mean for r in results)
-    best_tpot = min(r.results.tpot_ms.mean for r in results)
+    # Global bests per metric (for per-cell highlighting); ignore zeros
+    ttft_vals = [r.results.ttft_ms.mean for r in results if r.results.ttft_ms.mean > 0]
+    tpot_vals = [r.results.tpot_ms.mean for r in results if r.results.tpot_ms.mean > 0]
+    best_ttft = min(ttft_vals) if ttft_vals else 0.0
+    best_tpot = min(tpot_vals) if tpot_vals else 0.0
     best_toks = max(_total_tok_s(r) for r in results)
     best_imgs = max(r.results.inputs_per_sec for r in results)
     best_dur = min(r.results.total_duration_s for r in results)
@@ -2802,10 +2814,17 @@ def print_compare_table(
 
             model_cell = model_id if row_idx == 0 else ""
 
+            ttft_v = r.results.ttft_ms.mean
+            tpot_v = r.results.tpot_ms.mean
+
             cells: list[Any] = [
                 model_cell,
-                Text(f"{r.results.ttft_ms.mean:.0f}", style=_BEST if r.results.ttft_ms.mean == best_ttft else "dim"),
-                Text(f"{r.results.tpot_ms.mean:.1f}", style=_BEST if r.results.tpot_ms.mean == best_tpot else "dim"),
+                Text("-", style="dim")
+                if ttft_v == 0
+                else Text(f"{ttft_v:.0f}", style=_BEST if ttft_v == best_ttft else "dim"),
+                Text("-", style="dim")
+                if tpot_v == 0
+                else Text(f"{tpot_v:.1f}", style=_BEST if tpot_v == best_tpot else "dim"),
                 Text(f"{total_toks:.1f}", style=_BEST if total_toks == best_toks else "white"),
                 Text(f"{total_imgs:.2f}", style=_BEST if total_imgs == best_imgs else "dim"),
                 Text(
@@ -2856,8 +2875,8 @@ def print_compare_table(
             Text(f"{_img_s(best_run):.2f}", style=img_style),
             Text(f"{_total_tok_s(best_run):.1f}", style=tok_style),
             str(best_run.input.max_concurrency),
-            f"{br.ttft_ms.mean:.0f} ms",
-            f"{br.tpot_ms.mean:.1f} ms",
+            "-" if br.ttft_ms.mean == 0 else f"{br.ttft_ms.mean:.0f} ms",
+            "-" if br.tpot_ms.mean == 0 else f"{br.tpot_ms.mean:.1f} ms",
         )
 
     from rich.console import Group as RenderGroup
