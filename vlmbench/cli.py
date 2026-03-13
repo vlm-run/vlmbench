@@ -2824,6 +2824,7 @@ def print_compare_table(
     *,
     max_rows_per_model: int | None = None,
     sort_by: str = "img/s",
+    add_columns: set[str] | None = None,
 ) -> None:
     """Print the compare table grouped by model, sorted by the chosen metric descending."""
     console.print(f"  [bold]compare[/bold] [dim]({len(results)} runs, sorted by {sort_by})[/dim]")
@@ -2870,6 +2871,10 @@ def print_compare_table(
     all_quants = {r.model.quant or "-" for r in results}
     show_quant = len(all_quants) > 1
 
+    extra = add_columns or set()
+    # auto-show quant column when multiple quant values are present
+    show_quant_col = "quant" in extra or show_quant
+
     table = Table(
         show_header=True,
         header_style="bold white",
@@ -2879,19 +2884,26 @@ def print_compare_table(
     )
     model_width = min(max(len(r.model.model_id) for r in results), 80)
     table.add_column("Model", width=model_width, no_wrap=True, style=f"bold {STEEL_BLUE}")
+    # Throughput first
+    table.add_column(f"Tok/s {_UP}\n", justify="right", min_width=7)
+    table.add_column(f"Img/s {_UP}\n", justify="right", min_width=6)
+    table.add_column(f"Duration {_DN}\n(s)", justify="right", min_width=8)
+    # Latency metrics
     table.add_column(f"TTFT {_DN}\n(ms)", justify="right", min_width=8)
     table.add_column(f"TPOT {_DN}\n(ms)", justify="right", min_width=8)
     table.add_column(f"ITL {_DN}\n(ms)", justify="right", min_width=8)
     table.add_column(f"E2EL {_DN}\n(ms)", justify="right", min_width=8)
-    table.add_column(f"Tok/s {_UP}\n", justify="right", min_width=7)
-    table.add_column(f"Img/s {_UP}\n", justify="right", min_width=6)
-    table.add_column(f"Duration {_DN}\n(s)", justify="right", min_width=8)
-    table.add_column("Workers", justify="right", min_width=4, style="dim")
-    table.add_column(f"VRAM {_DN}\n", justify="right", min_width=9)
-    if show_quant:
+    # Optional columns
+    if "workers" in extra:
+        table.add_column("Workers", justify="right", min_width=4, style="dim")
+    if "vram" in extra:
+        table.add_column(f"VRAM {_DN}\n", justify="right", min_width=9)
+    if show_quant_col:
         table.add_column("Quant", min_width=6, style="dim")
-    table.add_column("Backend", min_width=7, style="dim")
-    table.add_column("Hardware", min_width=14, style="dim")
+    if "backend" in extra:
+        table.add_column("Backend", min_width=7, style="dim")
+    if "hw" in extra:
+        table.add_column("Hardware", min_width=14, style="dim")
 
     for group_idx, (model_id, runs) in enumerate(groups):
         if group_idx > 0:
@@ -2918,32 +2930,40 @@ def print_compare_table(
 
             cells: list[Any] = [
                 model_cell,
-                _cmp_cell(ttft_v, best_ttft, ".0f"),
-                _cmp_cell(tpot_v, best_tpot, ".1f"),
-                _cmp_cell(itl_v, best_itl, ".1f"),
-                _cmp_cell(e2el_v, best_e2el, ".0f"),
                 Text(f"{total_toks:.1f}", style=_BEST if total_toks == best_toks else "white"),
                 Text(f"{total_imgs:.2f}", style=_BEST if total_imgs == best_imgs else "dim"),
                 Text(
                     f"{r.results.total_duration_s:.1f}",
                     style=_BEST if r.results.total_duration_s == best_dur else "dim",
                 ),
-                str(r.input.max_concurrency),
-                Text(
-                    vram_gb,
-                    style=_BEST if vram_mib is not None and best_vram is not None and vram_mib == best_vram else "dim",
-                ),
+                _cmp_cell(ttft_v, best_ttft, ".0f"),
+                _cmp_cell(tpot_v, best_tpot, ".1f"),
+                _cmp_cell(itl_v, best_itl, ".1f"),
+                _cmp_cell(e2el_v, best_e2el, ".0f"),
             ]
-            if show_quant:
+            if "workers" in extra:
+                cells.append(str(r.input.max_concurrency))
+            if "vram" in extra:
+                cells.append(
+                    Text(
+                        vram_gb,
+                        style=_BEST
+                        if vram_mib is not None and best_vram is not None and vram_mib == best_vram
+                        else "dim",
+                    )
+                )
+            if show_quant_col:
                 cells.append(r.model.quant or "-")
-            cells.append(_be_label(r))
-            if r.environment.gpu_name:
-                hw = r.environment.gpu_name.replace("NVIDIA ", "")
-            else:
-                # Remote API — use the host:port as the hardware identifier
-                _p = urlparse(r.environment.base_url)
-                hw = _p.netloc or r.environment.base_url or "-"
-            cells.append(hw[:20] + "…" if len(hw) > 20 else hw)
+            if "backend" in extra:
+                cells.append(_be_label(r))
+            if "hw" in extra:
+                if r.environment.gpu_name:
+                    hw = r.environment.gpu_name.replace("NVIDIA ", "")
+                else:
+                    # Remote API — use the host:port as the hardware identifier
+                    _p = urlparse(r.environment.base_url)
+                    hw = _p.netloc or r.environment.base_url or "-"
+                cells.append(hw[:20] + "…" if len(hw) > 20 else hw)
 
             table.add_row(*cells)
 
@@ -3170,6 +3190,14 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["img/s", "tok/s"],
         default="img/s",
         help="Metric to sort results by (default: img/s)",
+    )
+    compare_parser.add_argument(
+        "-c",
+        "--add-column",
+        dest="add_columns",
+        default="",
+        metavar="COLS",
+        help="Comma-separated extra columns to show: vram,backend,hw,workers,quant",
     )
 
     # ── profiles subcommand ──
@@ -3626,7 +3654,13 @@ def cmd_compare(args: argparse.Namespace) -> None:
     # Sort by chosen metric descending
     results.sort(key=lambda r: r.results.inputs_per_sec, reverse=True)
 
-    print_compare_table(results, max_rows_per_model=args.max_rows_per_model, sort_by=args.sort_by)
+    add_columns = {c.strip().lower() for c in args.add_columns.split(",") if c.strip()}
+    print_compare_table(
+        results,
+        max_rows_per_model=args.max_rows_per_model,
+        sort_by=args.sort_by,
+        add_columns=add_columns,
+    )
 
 
 def main() -> None:
