@@ -3017,6 +3017,8 @@ def print_compare_table(
     if total_retries > 0:
         footer.append(f" ({total_retries} retries)", style="dim")
 
+    lb_width = console.measure(lb).maximum + 4  # +4 for panel border + padding
+    panel_width = max(table_width, lb_width)
     panel = Panel(
         RenderGroup(lb, footer),
         title="[bold]Results[/bold]",
@@ -3026,7 +3028,7 @@ def print_compare_table(
         border_style="dim white",
         box=box.ROUNDED,
         padding=(1, 0),
-        width=table_width,
+        width=panel_width,
     )
     console.print(panel)
     console.print()
