@@ -79,6 +79,8 @@ STEEL_BLUE = "#4682B4"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".tiff", ".bmp"}
 PDF_EXTENSIONS = {".pdf"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+# Sentinel prefix used to carry plain-text payloads through the inputs pipeline
+TEXT_URI_PREFIX = "text:"
 
 console = Console()
 
@@ -671,9 +673,8 @@ class DockerServerManager:
 
     def is_running(self) -> bool:
         try:
-            req = urllib.request.Request(f"http://localhost:{self.port}/v1/models", method="GET")
-            with urllib.request.urlopen(req, timeout=2) as resp:
-                return resp.status == 200
+            OpenAI(base_url=self._base_url, api_key=DEFAULT_API_KEY, timeout=2).models.list()
+            return True
         except Exception:
             return False
 
@@ -861,9 +862,8 @@ class NativeVllmServerManager:
 
     def is_running(self) -> bool:
         try:
-            req = urllib.request.Request(f"http://localhost:{self.port}/v1/models", method="GET")
-            with urllib.request.urlopen(req, timeout=2) as resp:
-                return resp.status == 200
+            OpenAI(base_url=self._base_url, api_key=DEFAULT_API_KEY, timeout=2).models.list()
+            return True
         except Exception:
             return False
 
@@ -1150,11 +1150,27 @@ def _start_monitor_session(backend: str) -> str | None:
     return session_name
 
 
+def _fetch_model_from_server(base_url: str, api_key: str | None = None) -> str | None:
+    """Return the first model id from the server's model list, or None on failure."""
+    try:
+        client = OpenAI(
+            base_url=base_url,
+            api_key=api_key or DEFAULT_API_KEY,
+            timeout=5,
+        )
+        models = client.models.list().data
+        if models:
+            return models[0].id
+    except Exception:
+        pass
+    return None
+
+
 def resolve_server(
     base_url: str | None,
     serve: bool,
     backend: str,
-    model: str,
+    model: str | None,
     serve_args: str | None,
 ) -> tuple[str, str | None]:
     """Resolve the base URL, optionally starting a server.
@@ -1182,9 +1198,11 @@ def resolve_server(
 
     # No server running and --serve not requested → show setup instructions
     if not serve:
-        server_cmd, server_url = _build_server_cmd(backend, model, serve_args)
+        server_cmd, server_url = _build_server_cmd(backend, model or "<model>", serve_args)
         resolved_backend = backend if backend != "auto" else _auto_detect_backend()
-        post_cmd = f"ollama pull {shlex.quote(model)}" if _backend_category(resolved_backend) == "ollama" else None
+        post_cmd = (
+            f"ollama pull {shlex.quote(model)}" if model and _backend_category(resolved_backend) == "ollama" else None
+        )
         _print_server_instructions(
             server_cmd,
             server_url,
@@ -1194,6 +1212,10 @@ def resolve_server(
         sys.exit(1)
 
     # --serve requested, no server found → start one
+    if not model:
+        console.print("[red]--model is required when using --serve to start a new server.[/red]")
+        sys.exit(1)
+
     if backend == "auto":
         backend = _auto_detect_backend()
 
@@ -1223,23 +1245,16 @@ def _try_detect_running_server() -> tuple[str | None, str]:
 
     Returns (base_url | None, backend_name).
     """
-    # Try vLLM default
-    try:
-        req = urllib.request.Request("http://localhost:8000/v1/models", method="GET")
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            if resp.status == 200:
-                return "http://localhost:8000/v1", "vllm"
-    except Exception:
-        pass
-
-    # Try Ollama default
-    try:
-        req = urllib.request.Request("http://localhost:11434/v1/models", method="GET")
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            if resp.status == 200:
-                return "http://localhost:11434/v1", "ollama"
-    except Exception:
-        pass
+    for base_url, backend in [
+        ("http://localhost:8000/v1", "vllm"),
+        ("http://localhost:11434/v1", "ollama"),
+    ]:
+        try:
+            client = OpenAI(base_url=base_url, api_key=DEFAULT_API_KEY, timeout=2)
+            client.models.list()
+            return base_url, backend
+        except Exception:
+            pass
 
     return None, "unknown"
 
@@ -1518,28 +1533,33 @@ def _detect_image_column(ds: Any, columns: list[str]) -> tuple[str | None, bool]
     return None, False
 
 
+_HF_TEXT_COL_NAMES = {"text", "prompt", "input", "content", "query", "question", "instruction"}
+
+
 def load_hf_dataset(
     dataset_path: str,
     image_col: str | None = None,
+    text_col: str | None = None,
     split: str = "train",
     max_samples: int | None = None,
     max_size: int = DEFAULT_MAX_IMAGE_SIZE,
 ) -> tuple[list[list[str]], dict[str, int], str]:
     """Load inputs from a HuggingFace dataset.
 
-    Supports datasets with image columns containing:
-    - PIL.Image.Image
-    - numpy.ndarray
-    - base64-encoded strings (with or without data URI prefix)
-    - bytes
-    - dict with 'bytes' key (HF native format)
+    Supports image columns (PIL / numpy / base64 / bytes) and plain-text columns.
+    Text values are stored as ``text:<value>`` sentinels so they travel through
+    the same pipeline as visual inputs.  Pass ``text_col`` to load a text column;
+    if neither ``image_col`` nor ``text_col`` is given, image columns are
+    auto-detected first, then text columns as a fallback.
 
     When max_samples is specified, uses streaming mode to avoid downloading
     the entire dataset.
 
     Args:
         dataset_path: HuggingFace dataset path (org/name or org/name:config)
-        image_col: Optional column name containing images. If None, auto-detect.
+        image_col: Column name containing images. If None, auto-detect.
+        text_col: Column name containing text prompts/documents. Takes precedence
+                  over image_col when both are given.
         split: Dataset split to load (default: train)
         max_samples: Maximum number of samples to load. If set, uses streaming.
         max_size: Maximum image dimension (width or height)
@@ -1593,50 +1613,76 @@ def load_hf_dataset(
     else:
         first_row = ds[0]
 
-    if image_col is not None:
+    is_list_col = False
+    is_text_col = False
+
+    if text_col is not None:
+        # Explicit text column requested
+        if text_col not in columns:
+            console.print(f"[red]Text column '{text_col}' not found. Available: {columns}[/red]")
+            sys.exit(1)
+        is_text_col = True
+        active_col = text_col
+    elif image_col is not None:
         if image_col not in columns:
             console.print(f"[red]Column '{image_col}' not found. Available: {columns}[/red]")
             sys.exit(1)
         first_val = first_row[image_col]
         is_list_col = isinstance(first_val, list)
+        active_col = image_col
     else:
-        # Auto-detect from first row
-        detected_col = None
+        # Auto-detect: try image columns first, then fall back to known text column names
+        active_col = None
         for col in columns:
             val = first_row[col]
             if val is None:
                 continue
             if isinstance(val, list) and len(val) > 0:
                 if _is_pil_image(val[0]) or _is_numpy_image(val[0]) or _is_base64_image(val[0]):
-                    detected_col = col
+                    active_col = col
                     is_list_col = True
                     break
             elif _is_pil_image(val) or _is_numpy_image(val) or _is_base64_image(val):
-                detected_col = col
-                is_list_col = False
+                active_col = col
                 break
             elif isinstance(val, dict) and "bytes" in val:
-                detected_col = col
-                is_list_col = False
+                active_col = col
                 break
 
-        if detected_col is None:
-            console.print(f"[red]No image column found. Columns: {columns}[/red]")
-            console.print("[dim]Use --dataset-image-col to specify the column name.[/dim]")
-            sys.exit(1)
-        image_col = detected_col
+        if active_col is None:
+            # Fall back to a well-known text column name
+            for col in columns:
+                if col.lower() in _HF_TEXT_COL_NAMES and isinstance(first_row[col], str):
+                    active_col = col
+                    is_text_col = True
+                    break
 
-    console.print(f"  [dim]Using column: {image_col} ({'list' if is_list_col else 'single'})[/dim]")
+        if active_col is None:
+            console.print(f"[red]No image or text column found. Columns: {columns}[/red]")
+            console.print("[dim]Use --dataset-image-col or --dataset-text-col to specify the column.[/dim]")
+            sys.exit(1)
+
+    col_type = "text" if is_text_col else ("image list" if is_list_col else "image")
+    console.print(f"  [dim]Using column: {active_col} ({col_type})[/dim]")
 
     inputs: list[list[str]] = []
-    breakdown = {"images": 0, "pdf_pages": 0, "video_frames": 0, "hf_images": 0}
+    breakdown = {"images": 0, "pdf_pages": 0, "video_frames": 0, "hf_images": 0, "text_inputs": 0}
     hasher = hashlib.sha256()
 
     def process_row(row: dict) -> bool:
         """Process a single row, return True if processed successfully."""
-        val = row[image_col]
+        val = row[active_col]
         if val is None:
             return False
+
+        if is_text_col:
+            text = str(val).strip()
+            if not text:
+                return False
+            inputs.append([f"{TEXT_URI_PREFIX}{text}"])
+            breakdown["text_inputs"] += 1
+            hasher.update(text.encode("utf-8"))
+            return True
 
         if is_list_col:
             if len(val) > 0:
@@ -1692,10 +1738,13 @@ def load_hf_dataset(
                 progress.update(task, completed=i + 1)
 
     if not inputs:
-        console.print("[red]No images found in dataset.[/red]")
+        console.print("[red]No inputs found in dataset.[/red]")
         sys.exit(1)
 
-    console.print(f"  [green]Loaded [bold]{len(inputs)}[/bold] inputs ({breakdown['hf_images']} images)[/green]")
+    summary = (
+        f"{breakdown['text_inputs']} text inputs" if breakdown["text_inputs"] else f"{breakdown['hf_images']} images"
+    )
+    console.print(f"  [green]Loaded [bold]{len(inputs)}[/bold] inputs ({summary})[/green]")
 
     input_hash = f"sha256:{hasher.hexdigest()[:16]}"
     return inputs, breakdown, input_hash
@@ -1714,7 +1763,7 @@ def load_local_inputs(
 
     Returns:
         (inputs, breakdown, hash)
-        - inputs: list of lists of base64 data URIs (each inner list = one "input")
+        - inputs: list of lists of data-URI strings (each inner list = one "input")
         - breakdown: {"images": N, "pdf_pages": N, "video_frames": N}
         - hash: SHA256 hex of all input contents
     """
@@ -1735,7 +1784,6 @@ def load_local_inputs(
     for f in files:
         ext = f.suffix.lower()
 
-        # Update hash
         with open(f, "rb") as fh:
             hasher.update(fh.read())
 
@@ -1745,14 +1793,12 @@ def load_local_inputs(
             breakdown["images"] += 1
         elif ext in PDF_EXTENSIONS:
             pages = pdf_to_base64(f, max_size=max_size)
-            # Each page is a separate input
             for page in pages:
                 inputs.append([page])
             breakdown["pdf_pages"] += len(pages)
         elif ext in VIDEO_EXTENSIONS:
             frames = video_to_base64_frames(f)
             if frames:
-                # All frames from one video = one input
                 inputs.append(frames)
                 breakdown["video_frames"] += len(frames)
         # else: skip unsupported file types
@@ -1924,17 +1970,23 @@ def call_completion(
     }
 
 
+def _uri_to_content_block(uri: str) -> dict:
+    """Convert a URI (data URI, HTTP URL, or text: sentinel) to an OpenAI content block."""
+    if uri.startswith(TEXT_URI_PREFIX):
+        return {"type": "text", "text": uri[len(TEXT_URI_PREFIX) :]}
+    return {"type": "image_url", "image_url": {"url": uri}}
+
+
 def build_messages(prompt: str, image_uris: list[str]) -> list[dict]:
-    """Build OpenAI-compatible messages with image content."""
-    content: list[dict] = []
-    for uri in image_uris:
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": uri},
-            }
-        )
-    content.append({"type": "text", "text": prompt})
+    """Build OpenAI-compatible messages.
+
+    Supports visual inputs (base64 data URIs / HTTP URLs) and plain-text inputs
+    (stored as ``text:<content>`` sentinels).  When ``image_uris`` is empty the
+    message contains only the prompt text, enabling pure text-only benchmarks.
+    """
+    content: list[dict] = [_uri_to_content_block(uri) for uri in image_uris]
+    if prompt:
+        content.append({"type": "text", "text": prompt})
     return [{"role": "user", "content": content}]
 
 
@@ -1947,16 +1999,15 @@ def build_embedding_messages(
     """Build chat-style messages for the vLLM embeddings API.
 
     When system_instruction is set, uses the system/user/assistant pattern
-    required by models like Qwen3-VL-Embedding.
+    required by models like Qwen3-VL-Embedding.  Supports text: sentinels.
     """
     messages: list[dict] = []
     if system_instruction:
         messages.append({"role": "system", "content": [{"type": "text", "text": system_instruction}]})
 
-    content: list[dict] = []
-    for uri in image_uris:
-        content.append({"type": "image_url", "image_url": {"url": uri}})
-    content.append({"type": "text", "text": prompt})
+    content: list[dict] = [_uri_to_content_block(uri) for uri in image_uris]
+    if prompt:
+        content.append({"type": "text", "text": prompt})
     messages.append({"role": "user", "content": content})
 
     if system_instruction:
@@ -2487,8 +2538,12 @@ def print_config(
         parts.append(f"{breakdown['pdf_pages']} PDF pages")
     if breakdown.get("video_frames"):
         parts.append(f"{breakdown['video_frames']} video frames")
-    breakdown_str = ", ".join(parts) if parts else "mixed"
-    tbl.add_row("images", f"{total_inputs} ({breakdown_str})")
+    if breakdown.get("text_inputs"):
+        parts.append(f"{breakdown['text_inputs']} text inputs")
+    if breakdown.get("hf_images"):
+        parts.append(f"{breakdown['hf_images']} images")
+    breakdown_str = ", ".join(parts) if parts else str(total_inputs)
+    tbl.add_row("inputs", f"{total_inputs} ({breakdown_str})")
 
     # Blank separator
     tbl.add_row("", "")
@@ -2507,7 +2562,7 @@ def print_config(
         tbl,
         title="[bold]Configuration[/bold]",
         title_align="left",
-        border_style="bright_magenta",
+        border_style=STEEL_BLUE,
         box=box.ROUNDED,
         padding=(1, 1),
     )
@@ -2977,6 +3032,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Image column name in dataset (auto-detected if not specified)",
     )
     run_parser.add_argument(
+        "--dataset-text-col",
+        default=None,
+        help="Text column name in dataset to use as prompt/document input (e.g. 'prompt', 'text')",
+    )
+    run_parser.add_argument(
         "--dataset-split",
         default="train",
         help="Dataset split to use (default: train)",
@@ -3339,9 +3399,6 @@ def cmd_run(args: argparse.Namespace) -> None:
             _run_profile_setup(profile["setup"])
     if not hasattr(args, "embedding_options"):
         args.embedding_options = None
-    if not args.model:
-        console.print("[red]--model or --profile is required.[/red]")
-        sys.exit(1)
 
     if args.upload and not os.environ.get("HF_TOKEN"):
         console.print("[red]--upload requires HF_TOKEN environment variable.[/red]")
@@ -3355,6 +3412,17 @@ def cmd_run(args: argparse.Namespace) -> None:
         model=args.model,
         serve_args=args.serve_args,
     )
+
+    # Auto-detect model from the server when --model is not provided
+    if not args.model:
+        args.model = _fetch_model_from_server(base_url, api_key=args.api_key)
+        if args.model:
+            console.print(f"  [dim]Auto-detected model: {args.model}[/dim]")
+        else:
+            console.print(
+                "[red]Could not determine model: specify --model or ensure the server exposes GET /v1/models.[/red]"
+            )
+            sys.exit(1)
 
     env = collect_environment(base_url)
 
@@ -3374,6 +3442,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         inputs, breakdown, input_hash = load_hf_dataset(
             dataset_name,
             image_col=args.dataset_image_col,
+            text_col=args.dataset_text_col,
             split=args.dataset_split,
             max_samples=args.max_samples,
             max_size=args.max_size,

@@ -33,9 +33,13 @@ uvx vlmbench run -m qwen3-vl:2b -i ./images/
 # Linux + vLLM Docker (auto-starts with --gpus all)
 uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/
 
-# HuggingFace dataset
+# HuggingFace dataset (images)
 uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct \
   -d hf://vlm-run/FineVision-vlmbench-mini --max-samples 64
+
+# HuggingFace dataset (text-only — use a column as the prompt)
+uvx vlmbench run -m meta-llama/Llama-3.1-8B-Instruct \
+  -d hf://my-org/my-prompts --dataset-text-col prompt --prompt ""
 
 # Concurrency sweep
 uvx vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./images/ \
@@ -44,7 +48,11 @@ uvx vlmbench run -m Qwen/Qwen3-VL-8B-Instruct -i ./images/ \
 # Use a model profile (custom serve args + setup)
 uvx vlmbench run --profile deepseek-ocr -i ./images/
 
-# Cloud API
+# Cloud / remote API (model auto-detected from server)
+uvx vlmbench run -i ./images/ \
+  --base-url https://my-server.example.com/v1 --api-key $API_KEY
+
+# Cloud API with explicit model
 uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ \
   --base-url https://api.openai.com/v1 --api-key $OPENAI_API_KEY
 ```
@@ -155,13 +163,16 @@ make benchmark PROFILE=glm-ocr    # run benchmark against the server
 
 | Flag | Default | Description |
 |---|---|---|
-| `--model` / `-m` | required | Model ID. Optional if `--profile` is set. |
+| `--model` / `-m` | auto-detect | Model ID. Auto-detected from server if omitted; required only with `--serve`. |
 | `--profile` | none | Model profile (e.g. `glm-ocr`). Sets model, prompt, serve-args. See `vlmbench profiles`. |
 | `--input` / `-i` | sample URL | File, directory, or URL (images, PDFs, videos) |
-| `--dataset` / `-d` | none | HuggingFace dataset (e.g. `vlm-run/FineVision-vlmbench-mini`) |
+| `--dataset` / `-d` | none | HuggingFace dataset (e.g. `hf://vlm-run/FineVision-vlmbench-mini`) |
+| `--dataset-image-col` | auto-detect | Image column name in HF dataset |
+| `--dataset-text-col` | none | Text column name in HF dataset to use as prompt/document input |
+| `--dataset-split` | `train` | Dataset split to load |
 | `--base-url` | auto-detect | OpenAI-compatible base URL |
 | `--api-key` | `no-key` | API key (also reads `OPENAI_API_KEY` env) |
-| `--prompt` | `"Extract all text..."` | Prompt sent with each input |
+| `--prompt` | `"Extract all text..."` | Prompt/instruction sent with each input. Pass `""` to use the text column as the full message. |
 | `--max-tokens` | `2048` | Max completion tokens |
 | `--runs` | `3` | Timed runs per input |
 | `--warmup` | `1` | Warmup runs (not recorded, fail-fast on errors) |
@@ -192,13 +203,32 @@ All Docker backends run with `--gpus all --ipc=host` and a deterministic contain
 
 ### Input Types
 
-| Type | Extensions | Processing |
+| Type | Source | Processing |
 |---|---|---|
-| Image | `.png`, `.jpg`, `.jpeg`, `.webp`, `.tiff`, `.bmp` | Base64 encode |
-| PDF | `.pdf` | `pypdfium2` per-page -> base64 |
-| Video | `.mp4`, `.mov`, `.avi`, `.mkv`, `.webm` | `ffmpeg` 1fps -> frames -> base64 |
+| Image | `--input` (`.png`, `.jpg`, `.jpeg`, `.webp`, `.tiff`, `.bmp`) | Base64 encode |
+| PDF | `--input` (`.pdf`) | `pypdfium2` per-page → base64 |
+| Video | `--input` (`.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`) | `ffmpeg` 1fps → frames → base64 |
+| HF image dataset | `--dataset hf://...` | Auto-detect image column, base64 encode |
+| HF text dataset | `--dataset hf://... --dataset-text-col <col>` | Each row's value sent as a text content block |
 
 Directories are processed recursively, sorted alphabetically.
+
+### Text-only benchmarks
+
+For LLM (non-vision) benchmarks, use an HF dataset with a text column:
+
+```bash
+# Each row's "prompt" column is the full message (--prompt "" = no instruction appended)
+uvx vlmbench run -m meta-llama/Llama-3.1-8B-Instruct \
+  -d hf://my-org/my-prompts --dataset-text-col prompt --prompt ""
+
+# Each row's "text" column is the document; --prompt is the instruction
+uvx vlmbench run -m meta-llama/Llama-3.1-8B-Instruct \
+  -d hf://my-org/my-docs --dataset-text-col text \
+  --prompt "Summarize the above in one sentence."
+```
+
+Auto-detection falls back to text columns (named `text`, `prompt`, `input`, `content`, `query`, `question`, `instruction`) when no image column is found.
 
 ### Output
 
