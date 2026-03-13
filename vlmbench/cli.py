@@ -176,7 +176,11 @@ class TokenStat:
 class Results:
     ttft_ms: StatBlock = field(default_factory=StatBlock)
     tpot_ms: StatBlock = field(default_factory=StatBlock)
+    itl_ms: StatBlock = field(default_factory=StatBlock)
+    e2el_ms: StatBlock = field(default_factory=StatBlock)
     tokens_per_sec: float = 0.0
+    input_tokens_per_sec: float = 0.0
+    total_tokens_per_sec: float = 0.0
     inputs_per_sec: float = 0.0
     latency_s_per_input: StatBlock = field(default_factory=StatBlock)
     prompt_tokens: TokenStat = field(default_factory=TokenStat)
@@ -202,6 +206,7 @@ class RunRaw:
     cached_tokens: int = 0
     reasoning_tokens: int = 0
     embedding_dim: int = 0
+    itl_ms: list[float] = field(default_factory=list)
     error: str | None = None
 
 
@@ -1833,6 +1838,8 @@ async def call_completion_async(
 
     t_start = time.perf_counter()
     ttft: float | None = None
+    most_recent_ts: float | None = None
+    itl_values: list[float] = []
     completion_tokens = 0
     prompt_tokens = 0
     cached_tokens = 0
@@ -1863,10 +1870,13 @@ async def call_completion_async(
         _stream_options_supported = True
 
     async for chunk in stream:
-        if ttft is None and chunk.choices and chunk.choices[0].delta.content:
-            ttft = (time.perf_counter() - t_start) * 1000
-
+        now = time.perf_counter()
         if chunk.choices and chunk.choices[0].delta.content:
+            if ttft is None:
+                ttft = (now - t_start) * 1000
+            elif most_recent_ts is not None:
+                itl_values.append((now - most_recent_ts) * 1000)
+            most_recent_ts = now
             full_content += chunk.choices[0].delta.content
 
         if hasattr(chunk, "usage") and chunk.usage is not None:
@@ -1892,6 +1902,7 @@ async def call_completion_async(
         "completion_tokens": completion_tokens,
         "cached_tokens": cached_tokens,
         "reasoning_tokens": reasoning_tokens,
+        "itl_ms": itl_values,
         "error": None,
     }
 
@@ -1907,6 +1918,8 @@ def call_completion(
 
     t_start = time.perf_counter()
     ttft: float | None = None
+    most_recent_ts: float | None = None
+    itl_values: list[float] = []
     completion_tokens = 0
     prompt_tokens = 0
     cached_tokens = 0
@@ -1937,10 +1950,13 @@ def call_completion(
         _stream_options_supported = True
 
     for chunk in stream:
-        if ttft is None and chunk.choices and chunk.choices[0].delta.content:
-            ttft = (time.perf_counter() - t_start) * 1000
-
+        now = time.perf_counter()
         if chunk.choices and chunk.choices[0].delta.content:
+            if ttft is None:
+                ttft = (now - t_start) * 1000
+            elif most_recent_ts is not None:
+                itl_values.append((now - most_recent_ts) * 1000)
+            most_recent_ts = now
             full_content += chunk.choices[0].delta.content
 
         if hasattr(chunk, "usage") and chunk.usage is not None:
@@ -1966,6 +1982,7 @@ def call_completion(
         "completion_tokens": completion_tokens,
         "cached_tokens": cached_tokens,
         "reasoning_tokens": reasoning_tokens,
+        "itl_ms": itl_values,
         "error": None,
     }
 
@@ -2381,6 +2398,7 @@ async def run_benchmark(
                     cached_tokens=result["cached_tokens"],
                     reasoning_tokens=result["reasoning_tokens"],
                     embedding_dim=result.get("embedding_dim", 0),
+                    itl_ms=[round(v, 2) for v in result.get("itl_ms", [])],
                     error=result["error"],
                 )
             except Exception as e:
@@ -2591,108 +2609,116 @@ def print_results(result: BenchmarkResult, save_path: str, *, title_suffix: str 
             return "yellow"
         return "red"
 
-    upper = Table(
+    is_embedding = r.embedding_dim is not None
+    is_score = result.input.task == "score"
+    is_pooling = is_embedding or is_score
+
+    # ── Throughput section ────────────────────────────────────────────────
+    throughput_tbl = Table(
         show_header=True,
         header_style="dim",
         box=None,
         padding=(0, 1),
         show_edge=False,
     )
-    upper.add_column("Metric", style="bold cyan", no_wrap=True, width=20)
-    upper.add_column("Value", style="bold", no_wrap=True, width=16)
-    upper.add_column("p50", style=_H, justify="right", width=10)
-    upper.add_column("p95", style=_H, justify="right", width=10)
-    upper.add_column("p99", style=_H, justify="right", width=10)
-
-    is_embedding = r.embedding_dim is not None
-    is_score = result.input.task == "score"
-    is_pooling = is_embedding or is_score
+    throughput_tbl.add_column("Metric", style="bold cyan", no_wrap=True, width=20)
+    throughput_tbl.add_column("Value", style="bold", no_wrap=True, width=16)
+    throughput_tbl.add_column("p50", style=_H, justify="right", width=10)
+    throughput_tbl.add_column("p95", style=_H, justify="right", width=10)
+    throughput_tbl.add_column("p99", style=_H, justify="right", width=10)
 
     if is_pooling:
         unit = "emb/s" if is_embedding else "score/s"
-        lat_unit = "s/emb" if is_embedding else "s/score"
-        upper.add_row("Throughput", f"{r.inputs_per_sec:.2f} {unit}", "—", "—", "—")
+        throughput_tbl.add_row("Throughput", f"{r.inputs_per_sec:.2f} {unit}", "—", "—", "—")
         if is_embedding and r.embedding_dim:
-            upper.add_row("Embedding dim", str(r.embedding_dim), "—", "—", "—")
-        upper.add_row("Workers", str(concurrency), "—", "—", "—")
-        upper.add_row(
-            "Latency (per worker)",
+            throughput_tbl.add_row("Embedding dim", str(r.embedding_dim), "—", "—", "—")
+    else:
+        throughput_tbl.add_row("Throughput", f"{r.inputs_per_sec:.2f} req/s", "—", "—", "—")
+        throughput_tbl.add_row(
+            "Output tok/s",
+            Text(f"{r.tokens_per_sec:.1f} tok/s", style=_tok_style(r.tokens_per_sec)),
+            "—",
+            "—",
+            "—",
+        )
+        throughput_tbl.add_row("Total tok/s", f"{r.total_tokens_per_sec:.1f} tok/s", "—", "—", "—")
+
+    # ── Latency section ───────────────────────────────────────────────────
+    latency_tbl = Table(
+        show_header=True,
+        header_style="dim",
+        box=None,
+        padding=(0, 1),
+        show_edge=False,
+    )
+    latency_tbl.add_column("Metric", style="bold cyan", no_wrap=True, width=20)
+    latency_tbl.add_column("Mean", style="bold", no_wrap=True, width=16)
+    latency_tbl.add_column("p50", style=_H, justify="right", width=10)
+    latency_tbl.add_column("p95", style=_H, justify="right", width=10)
+    latency_tbl.add_column("p99", style=_H, justify="right", width=10)
+
+    if is_pooling:
+        lat_unit = "s/emb" if is_embedding else "s/score"
+        latency_tbl.add_row(
+            "E2E Latency",
             f"{r.latency_s_per_input.mean:.2f} {lat_unit}",
             f"{r.latency_s_per_input.p50:.2f} s",
             f"{r.latency_s_per_input.p95:.2f} s",
             f"{r.latency_s_per_input.p99:.2f} s",
         )
     else:
-        upper.add_row("Throughput", f"{r.inputs_per_sec:.2f} img/s", "—", "—", "—")
-        upper.add_row(
-            "Tokens/sec",
-            Text(f"{r.tokens_per_sec:.0f} tok/s", style=_tok_style(r.tokens_per_sec)),
-            "—",
-            "—",
-            "—",
-        )
-        upper.add_row("Workers", str(concurrency), "—", "—", "—")
-        if r.ttft_ms.mean == 0:
-            upper.add_row("TTFT", "-", "-", "-", "-")
-        else:
-            upper.add_row(
-                "TTFT",
-                f"{r.ttft_ms.mean:.0f} ms",
-                f"{r.ttft_ms.p50:.0f} ms",
-                f"{r.ttft_ms.p95:.0f} ms",
-                f"{r.ttft_ms.p99:.0f} ms",
-            )
-        if r.tpot_ms.mean == 0:
-            upper.add_row("TPOT", "-", "-", "-", "-")
-        else:
-            upper.add_row(
-                "TPOT",
-                f"{r.tpot_ms.mean:.1f} ms",
-                f"{r.tpot_ms.p50:.1f} ms",
-                f"{r.tpot_ms.p95:.1f} ms",
-                f"{r.tpot_ms.p99:.1f} ms",
-            )
-        upper.add_row(
-            "Latency (per worker)",
-            f"{r.latency_s_per_input.mean:.2f} s/img",
-            f"{r.latency_s_per_input.p50:.2f} s",
-            f"{r.latency_s_per_input.p95:.2f} s",
-            f"{r.latency_s_per_input.p99:.2f} s",
-        )
 
-    lower = Table(
+        def _lat_row(label: str, sb: StatBlock, fmt: str = ".0f", unit: str = "ms") -> None:
+            if sb.mean == 0:
+                latency_tbl.add_row(label, "-", "-", "-", "-")
+            else:
+                latency_tbl.add_row(
+                    label,
+                    f"{sb.mean:{fmt}} {unit}",
+                    f"{sb.p50:{fmt}} {unit}",
+                    f"{sb.p95:{fmt}} {unit}",
+                    f"{sb.p99:{fmt}} {unit}",
+                )
+
+        _lat_row("TTFT", r.ttft_ms, ".0f", "ms")
+        _lat_row("TPOT", r.tpot_ms, ".1f", "ms")
+        _lat_row("ITL", r.itl_ms, ".1f", "ms")
+        _lat_row("E2E Latency", r.e2el_ms, ".0f", "ms")
+
+    # ── Details section ───────────────────────────────────────────────────
+    details_tbl = Table(
         show_header=False,
         box=None,
         padding=(0, 1),
         show_edge=False,
     )
-    lower.add_column("Metric", style="bold cyan", no_wrap=True, width=20)
-    lower.add_column("Value", style="bold", no_wrap=True)
+    details_tbl.add_column("Metric", style="bold cyan", no_wrap=True, width=20)
+    details_tbl.add_column("Value", style="bold", no_wrap=True)
 
     if is_pooling:
         tok_val = f"prompt {r.prompt_tokens.mean:,}"
-        lower.add_row("Tokens (avg)", tok_val)
+        details_tbl.add_row("Tokens (avg)", tok_val)
         tok_range = f"prompt {r.prompt_tokens.min:,}–{r.prompt_tokens.max:,}"
-        lower.add_row("Token ranges", tok_range)
+        details_tbl.add_row("Token ranges", tok_range)
     else:
         tok_val = f"prompt {r.prompt_tokens.mean:,}  •  completion {r.completion_tokens.mean:,}"
-        lower.add_row("Tokens (avg)", tok_val)
+        details_tbl.add_row("Tokens (avg)", tok_val)
         tok_range = f"prompt {r.prompt_tokens.min:,}–{r.prompt_tokens.max:,}  •  completion {r.completion_tokens.min:,}–{r.completion_tokens.max:,}"
         if r.cached_tokens is not None and r.cached_tokens.mean > 0:
             tok_range += f"  •  {r.cached_tokens.mean:,} cached"
         if r.reasoning_tokens is not None and r.reasoning_tokens.mean > 0:
             tok_range += f"  •  {r.reasoning_tokens.mean:,} reasoning"
-        lower.add_row("Token ranges", tok_range)
+        details_tbl.add_row("Token ranges", tok_range)
 
     if img_stats and img_stats.count > 0:
         img_val = f"{img_stats.count:,}  •  avg {img_stats.avg_width}×{img_stats.avg_height} ({_format_mpixels(img_stats.avg_pixels)})"
-        lower.add_row("Images", img_val)
+        details_tbl.add_row("Images", img_val)
         res_val = f"min {img_stats.min_width}×{img_stats.min_height}  •  median {img_stats.median_width}×{img_stats.median_height}  •  max {img_stats.max_width}×{img_stats.max_height}"
-        lower.add_row("Resolution", res_val)
+        details_tbl.add_row("Resolution", res_val)
 
     if r.vram_peak_mib is not None:
         vram_gb = r.vram_peak_mib / 1024
-        lower.add_row("VRAM peak", f"{vram_gb:.1f} GB")
+        details_tbl.add_row("VRAM peak", f"{vram_gb:.1f} GB")
 
     total_ok = r.total_inputs_processed - r.errors
     if r.errors == 0:
@@ -2704,17 +2730,20 @@ def print_results(result: BenchmarkResult, save_path: str, *, title_suffix: str 
     if r.retries > 0:
         rel_text.append(f", {r.retries} retries", style="yellow")
     rel_text.append(f"  •  {r.total_duration_s:.1f}s total", style="dim")
-    lower.add_row("Reliability", rel_text)
+    details_tbl.add_row("Reliability", rel_text)
 
     from rich.console import Group as RenderGroup
 
-    body = RenderGroup(upper, Text(), lower)
+    body = RenderGroup(throughput_tbl, Text(), latency_tbl, Text(), details_tbl)
 
     title = f"[bold]Results{title_suffix}[/bold]"
+    subtitle = f"[dim]workers: {concurrency}[/dim]"
     panel = Panel(
         body,
         title=title,
         title_align="left",
+        subtitle=subtitle,
+        subtitle_align="right",
         border_style="green",
         box=box.ROUNDED,
         padding=(1, 1),
@@ -2743,7 +2772,8 @@ def print_concurrency_table(results: list[BenchmarkResult], saved_paths: list[st
     table.add_column(f"Img/s {_UP}\n", justify="right", min_width=7)
     table.add_column(f"TTFT {_DN}\n(ms)", justify="right", min_width=8)
     table.add_column(f"TPOT {_DN}\n(ms)", justify="right", min_width=8)
-    table.add_column(f"Latency {_DN}\n(s)", justify="right", min_width=8)
+    table.add_column(f"ITL {_DN}\n(ms)", justify="right", min_width=8)
+    table.add_column(f"E2EL {_DN}\n(ms)", justify="right", min_width=8)
     table.add_column(f"Duration {_DN}\n(s)", justify="right", min_width=8)
     table.add_column(f"VRAM {_DN}\n", justify="right", min_width=9)
 
@@ -2757,18 +2787,18 @@ def print_concurrency_table(results: list[BenchmarkResult], saved_paths: list[st
         samples_text = f"{total_ok}/{r.results.total_inputs_processed}"
         samples_style = "red" if r.results.errors > 0 else style
 
+        def _ms_cell(sb: StatBlock, fmt: str = ".0f") -> Text:
+            return Text("-", style="dim") if sb.mean == 0 else Text(f"{sb.mean:{fmt}}", style=style)
+
         table.add_row(
             Text(str(c), style=style),
             Text(samples_text, style=samples_style),
             Text(f"{toks:.1f}", style=style),
             Text(f"{r.results.inputs_per_sec:.2f}", style=style),
-            Text("-", style="dim")
-            if r.results.ttft_ms.mean == 0
-            else Text(f"{r.results.ttft_ms.mean:.0f}", style=style),
-            Text("-", style="dim")
-            if r.results.tpot_ms.mean == 0
-            else Text(f"{r.results.tpot_ms.mean:.1f}", style=style),
-            Text(f"{r.results.latency_s_per_input.mean:.2f}", style=style),
+            _ms_cell(r.results.ttft_ms, ".0f"),
+            _ms_cell(r.results.tpot_ms, ".1f"),
+            _ms_cell(r.results.itl_ms, ".1f"),
+            _ms_cell(r.results.e2el_ms, ".0f"),
             Text(f"{r.results.total_duration_s:.1f}", style=style),
             Text(vram_gb, style=style),
         )
@@ -2824,8 +2854,12 @@ def print_compare_table(
     # Global bests per metric (for per-cell highlighting); ignore zeros
     ttft_vals = [r.results.ttft_ms.mean for r in results if r.results.ttft_ms.mean > 0]
     tpot_vals = [r.results.tpot_ms.mean for r in results if r.results.tpot_ms.mean > 0]
+    itl_vals = [r.results.itl_ms.mean for r in results if r.results.itl_ms.mean > 0]
+    e2el_vals = [r.results.e2el_ms.mean for r in results if r.results.e2el_ms.mean > 0]
     best_ttft = min(ttft_vals) if ttft_vals else 0.0
     best_tpot = min(tpot_vals) if tpot_vals else 0.0
+    best_itl = min(itl_vals) if itl_vals else 0.0
+    best_e2el = min(e2el_vals) if e2el_vals else 0.0
     best_toks = max(_total_tok_s(r) for r in results)
     best_imgs = max(r.results.inputs_per_sec for r in results)
     best_dur = min(r.results.total_duration_s for r in results)
@@ -2846,6 +2880,8 @@ def print_compare_table(
     table.add_column("Model", width=model_width, no_wrap=True, style=f"bold {STEEL_BLUE}")
     table.add_column(f"TTFT {_DN}\n(ms)", justify="right", min_width=8)
     table.add_column(f"TPOT {_DN}\n(ms)", justify="right", min_width=8)
+    table.add_column(f"ITL {_DN}\n(ms)", justify="right", min_width=8)
+    table.add_column(f"E2EL {_DN}\n(ms)", justify="right", min_width=8)
     table.add_column(f"Tok/s {_UP}\n", justify="right", min_width=7)
     table.add_column(f"Img/s {_UP}\n", justify="right", min_width=6)
     table.add_column(f"Duration {_DN}\n(s)", justify="right", min_width=8)
@@ -2871,15 +2907,20 @@ def print_compare_table(
 
             ttft_v = r.results.ttft_ms.mean
             tpot_v = r.results.tpot_ms.mean
+            itl_v = r.results.itl_ms.mean
+            e2el_v = r.results.e2el_ms.mean
+
+            def _cmp_cell(val: float, best: float, fmt: str = ".0f") -> Text:
+                if val == 0:
+                    return Text("-", style="dim")
+                return Text(f"{val:{fmt}}", style=_BEST if val == best else "dim")
 
             cells: list[Any] = [
                 model_cell,
-                Text("-", style="dim")
-                if ttft_v == 0
-                else Text(f"{ttft_v:.0f}", style=_BEST if ttft_v == best_ttft else "dim"),
-                Text("-", style="dim")
-                if tpot_v == 0
-                else Text(f"{tpot_v:.1f}", style=_BEST if tpot_v == best_tpot else "dim"),
+                _cmp_cell(ttft_v, best_ttft, ".0f"),
+                _cmp_cell(tpot_v, best_tpot, ".1f"),
+                _cmp_cell(itl_v, best_itl, ".1f"),
+                _cmp_cell(e2el_v, best_e2el, ".0f"),
                 Text(f"{total_toks:.1f}", style=_BEST if total_toks == best_toks else "white"),
                 Text(f"{total_imgs:.2f}", style=_BEST if total_imgs == best_imgs else "dim"),
                 Text(
@@ -2917,6 +2958,8 @@ def print_compare_table(
     lb.add_column("@ Workers\n", justify="right", style="dim", min_width=9)
     lb.add_column(f"TTFT {_DN}\n", justify="right", min_width=8)
     lb.add_column(f"TPOT {_DN}\n", justify="right", min_width=8)
+    lb.add_column(f"ITL {_DN}\n", justify="right", min_width=8)
+    lb.add_column(f"E2EL {_DN}\n", justify="right", min_width=8)
 
     for rank, (model_id, runs) in enumerate(groups, 1):
         best_run = max(runs, key=_sort_key)
@@ -2932,6 +2975,8 @@ def print_compare_table(
             str(best_run.input.max_concurrency),
             "-" if br.ttft_ms.mean == 0 else f"{br.ttft_ms.mean:.0f} ms",
             "-" if br.tpot_ms.mean == 0 else f"{br.tpot_ms.mean:.1f} ms",
+            "-" if br.itl_ms.mean == 0 else f"{br.itl_ms.mean:.1f} ms",
+            "-" if br.e2el_ms.mean == 0 else f"{br.e2el_ms.mean:.0f} ms",
         )
 
     from rich.console import Group as RenderGroup
@@ -3221,14 +3266,27 @@ def _execute_benchmark(
 
     tpot_values = []
     for r in successful_runs:
-        if r.completion_tokens > 0 and r.ttft_ms is not None:
+        if r.completion_tokens > 1 and r.ttft_ms is not None:
             total_gen_time_s = r.latency_s - (r.ttft_ms / 1000.0)
             if total_gen_time_s > 0:
-                tpot_ms = (total_gen_time_s / r.completion_tokens) * 1000.0
+                tpot_ms = (total_gen_time_s / (r.completion_tokens - 1)) * 1000.0
                 tpot_values.append(tpot_ms)
 
+    # ITL: flatten per-token latencies across all successful requests (per-token, not per-request)
+    itl_all: list[float] = []
+    for r in successful_runs:
+        itl_all.extend(r.itl_ms)
+
+    # E2EL: end-to-end latency in milliseconds
+    e2el_values = [r.latency_s * 1000.0 for r in successful_runs]
+
     total_completion_tokens = sum(r.completion_tokens for r in successful_runs)
+    total_prompt_tokens = sum(r.prompt_tokens for r in successful_runs)
     tokens_per_sec = round(total_completion_tokens / total_duration_s, 1) if total_duration_s > 0 else 0
+    input_tokens_per_sec = round(total_prompt_tokens / total_duration_s, 1) if total_duration_s > 0 else 0
+    total_tokens_per_sec = (
+        round((total_prompt_tokens + total_completion_tokens) / total_duration_s, 1) if total_duration_s > 0 else 0
+    )
     inputs_per_sec = round(len(successful_runs) / total_duration_s, 2) if total_duration_s > 0 else 0
 
     vram_peak: int | None = None
@@ -3276,7 +3334,11 @@ def _execute_benchmark(
         results=Results(
             ttft_ms=compute_stats(ttft_values),
             tpot_ms=compute_stats(tpot_values),
+            itl_ms=compute_stats(itl_all),
+            e2el_ms=compute_stats(e2el_values),
             tokens_per_sec=tokens_per_sec,
+            input_tokens_per_sec=input_tokens_per_sec,
+            total_tokens_per_sec=total_tokens_per_sec,
             inputs_per_sec=inputs_per_sec,
             latency_s_per_input=compute_stats(latency_values),
             prompt_tokens=compute_token_stat(prompt_token_values),
