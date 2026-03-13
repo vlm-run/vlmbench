@@ -42,9 +42,7 @@ make test
 
 ## Versioning
 
-- **Every PR must bump the version** in `vlmbench/version.py` (`__version__ = "X.Y.Z"`).
-- **Patch bump by default**: Increment the patch version (e.g., `0.1.1` → `0.1.2`) for all PRs — bug fixes, new features, refactors, docs, etc.
-- **Minor bump exception**: Only bump the minor version (e.g., `0.1.2` → `0.2.0`) when the PR explicitly states it is a minor release (e.g., breaking changes, large new capabilities). Reset patch to `0` on minor bumps.
+- **Every PR must bump the version** in `vlmbench/version.py` (`__version__ = "X.Y.Z"`). If the version is already bumped, do not bump it again.
 - Do **not** bump the major version without explicit instruction.
 - The version is defined **only** in `vlmbench/version.py`. `pyproject.toml` reads it dynamically via `setuptools.dynamic` attr. Do not duplicate it elsewhere.
 
