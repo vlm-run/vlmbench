@@ -559,9 +559,14 @@ def collect_environment(base_url: str) -> EnvironmentInfo:
     }
 
     # GPU info based on platform and backend
+    from urllib.parse import urlparse
+
+    _parsed_url = urlparse(base_url)
+    _is_local = _parsed_url.hostname in (None, "localhost", "127.0.0.1", "::1")
+
     match (backend, platform.system()):
-        case ("openai" | "together", _):
-            # Cloud APIs — no local GPU info
+        case _ if not _is_local:
+            # Remote server (including cloud APIs) — GPU info is not available locally
             env_data["accelerator"] = None
             env_data["gpu_name"] = None
             env_data["gpu_vram_mib"] = None
@@ -571,10 +576,7 @@ def collect_environment(base_url: str) -> EnvironmentInfo:
         case (_, "Linux"):
             # Try to detect which GPU the server is using
             try:
-                from urllib.parse import urlparse
-
-                parsed = urlparse(base_url)
-                port = parsed.port or 8000
+                port = _parsed_url.port or 8000
                 server_gpu_idx = get_gpu_for_server_port(port)
             except Exception:
                 server_gpu_idx = None
@@ -2641,7 +2643,7 @@ def print_results(result: BenchmarkResult, save_path: str, *, title_suffix: str 
             "—",
             "—",
         )
-        throughput_tbl.add_row("Total tok/s", f"{r.total_tokens_per_sec:.1f} tok/s", "—", "—", "—")
+        throughput_tbl.add_row("Input tok/s", f"{r.input_tokens_per_sec:.1f} tok/s", "—", "—", "—")
 
     # ── Latency section ───────────────────────────────────────────────────
     latency_tbl = Table(
