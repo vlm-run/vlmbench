@@ -42,6 +42,7 @@ from itertools import groupby
 from pathlib import Path
 from types import UnionType
 from typing import Any, Protocol, get_args, get_origin, get_type_hints, runtime_checkable
+from urllib.parse import urlparse
 
 import httpx
 import yaml
@@ -559,8 +560,6 @@ def collect_environment(base_url: str) -> EnvironmentInfo:
     }
 
     # GPU info based on platform and backend
-    from urllib.parse import urlparse
-
     _parsed_url = urlparse(base_url)
     _is_local = _parsed_url.hostname in (None, "localhost", "127.0.0.1", "::1")
 
@@ -2938,7 +2937,12 @@ def print_compare_table(
             if show_quant:
                 cells.append(r.model.quant or "-")
             cells.append(_be_label(r))
-            hw = (r.environment.gpu_name or "-").replace("NVIDIA ", "")
+            if r.environment.gpu_name:
+                hw = r.environment.gpu_name.replace("NVIDIA ", "")
+            else:
+                # Remote API — use the host:port as the hardware identifier
+                _p = urlparse(r.environment.base_url)
+                hw = _p.netloc or r.environment.base_url or "-"
             cells.append(hw[:20] + "…" if len(hw) > 20 else hw)
 
             table.add_row(*cells)
@@ -3493,8 +3497,6 @@ def cmd_run(args: argparse.Namespace) -> None:
     server_gpu_idx: int | None = None
     try:
         if platform.system() == "Linux":
-            from urllib.parse import urlparse
-
             parsed = urlparse(base_url)
             port = parsed.port or 8000
             server_gpu_idx = get_gpu_for_server_port(port)
