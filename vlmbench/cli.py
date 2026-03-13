@@ -673,9 +673,8 @@ class DockerServerManager:
 
     def is_running(self) -> bool:
         try:
-            req = urllib.request.Request(f"http://localhost:{self.port}/v1/models", method="GET")
-            with urllib.request.urlopen(req, timeout=2) as resp:
-                return resp.status == 200
+            OpenAI(base_url=self._base_url, api_key=DEFAULT_API_KEY, timeout=2).models.list()
+            return True
         except Exception:
             return False
 
@@ -863,9 +862,8 @@ class NativeVllmServerManager:
 
     def is_running(self) -> bool:
         try:
-            req = urllib.request.Request(f"http://localhost:{self.port}/v1/models", method="GET")
-            with urllib.request.urlopen(req, timeout=2) as resp:
-                return resp.status == 200
+            OpenAI(base_url=self._base_url, api_key=DEFAULT_API_KEY, timeout=2).models.list()
+            return True
         except Exception:
             return False
 
@@ -1153,24 +1151,16 @@ def _start_monitor_session(backend: str) -> str | None:
 
 
 def _fetch_model_from_server(base_url: str, api_key: str | None = None) -> str | None:
-    """Query GET /v1/models and return the first model id, or None on failure."""
+    """Return the first model id from the server's model list, or None on failure."""
     try:
-        # Normalise: strip trailing slash, strip /v1 suffix if present, then append /v1/models
-        base = base_url.rstrip("/")
-        if base.endswith("/v1/models"):
-            url = base
-        else:
-            url = base.removesuffix("/v1") + "/v1/models"
-        headers: dict[str, str] = {}
-        if api_key and api_key != DEFAULT_API_KEY:
-            headers["Authorization"] = f"Bearer {api_key}"
-        req = urllib.request.Request(url, method="GET", headers=headers)
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            if resp.status == 200:
-                data = json.loads(resp.read())
-                models = data.get("data", [])
-                if models:
-                    return models[0]["id"]
+        client = OpenAI(
+            base_url=base_url,
+            api_key=api_key or DEFAULT_API_KEY,
+            timeout=5,
+        )
+        models = client.models.list().data
+        if models:
+            return models[0].id
     except Exception:
         pass
     return None
@@ -1255,23 +1245,16 @@ def _try_detect_running_server() -> tuple[str | None, str]:
 
     Returns (base_url | None, backend_name).
     """
-    # Try vLLM default
-    try:
-        req = urllib.request.Request("http://localhost:8000/v1/models", method="GET")
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            if resp.status == 200:
-                return "http://localhost:8000/v1", "vllm"
-    except Exception:
-        pass
-
-    # Try Ollama default
-    try:
-        req = urllib.request.Request("http://localhost:11434/v1/models", method="GET")
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            if resp.status == 200:
-                return "http://localhost:11434/v1", "ollama"
-    except Exception:
-        pass
+    for base_url, backend in [
+        ("http://localhost:8000/v1", "vllm"),
+        ("http://localhost:11434/v1", "ollama"),
+    ]:
+        try:
+            client = OpenAI(base_url=base_url, api_key=DEFAULT_API_KEY, timeout=2)
+            client.models.list()
+            return base_url, backend
+        except Exception:
+            pass
 
     return None, "unknown"
 
