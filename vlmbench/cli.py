@@ -2894,8 +2894,7 @@ def print_compare_table(
     table.add_column(f"ITL {_DN}\n(ms)", justify="right", min_width=8)
     table.add_column(f"E2EL {_DN}\n(ms)", justify="right", min_width=8)
     # Optional columns
-    if "workers" in extra:
-        table.add_column("Workers", justify="right", min_width=4, style="dim")
+    table.add_column("Workers", justify="right", min_width=4, style="dim")
     if "vram" in extra:
         table.add_column(f"VRAM {_DN}\n", justify="right", min_width=9)
     if show_quant_col:
@@ -2941,8 +2940,7 @@ def print_compare_table(
                 _cmp_cell(itl_v, best_itl, ".1f"),
                 _cmp_cell(e2el_v, best_e2el, ".0f"),
             ]
-            if "workers" in extra:
-                cells.append(str(r.input.max_concurrency))
+            cells.append(str(r.input.max_concurrency))
             if "vram" in extra:
                 cells.append(
                     Text(
@@ -3199,7 +3197,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="add_columns",
         default="",
         metavar="COLS",
-        help="Comma-separated extra columns to show: vram,backend,hw,workers,quant",
+        help="Comma-separated extra columns to show: vram,backend,hw,quant",
     )
 
     # ── profiles subcommand ──
