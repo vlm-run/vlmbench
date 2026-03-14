@@ -156,6 +156,7 @@ class InputInfo:
     max_tokens: int = 0
     max_concurrency: int = 1
     task: str = "completion"
+    reasoning_effort: str | None = None
 
 
 @dataclass
@@ -1829,6 +1830,7 @@ async def call_completion_async(
     model: str,
     messages: list[dict],
     max_tokens: int,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     """Call the completion API with async streaming and measure timing.
 
@@ -1853,6 +1855,8 @@ async def call_completion_async(
         "max_tokens": max_tokens,
         "stream": True,
     }
+    if reasoning_effort is not None:
+        kwargs["reasoning"] = {"effort": reasoning_effort}
     if _stream_options_supported is not False:
         kwargs["stream_options"] = {"include_usage": True}
 
@@ -1913,6 +1917,7 @@ def call_completion(
     model: str,
     messages: list[dict],
     max_tokens: int,
+    reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     """Synchronous call_completion for warmup only."""
     global _stream_options_supported
@@ -1933,6 +1938,8 @@ def call_completion(
         "max_tokens": max_tokens,
         "stream": True,
     }
+    if reasoning_effort is not None:
+        kwargs["reasoning"] = {"effort": reasoning_effort}
     if _stream_options_supported is not False:
         kwargs["stream_options"] = {"include_usage": True}
 
@@ -2221,11 +2228,12 @@ async def _call_with_retry_async(
     messages: list[dict],
     max_tokens: int,
     max_attempts: int = 5,
+    reasoning_effort: str | None = None,
 ) -> tuple[dict[str, Any], int]:
     """Call completion with exponential-backoff retry, return (result, retry_count)."""
     for attempt in range(max_attempts):
         try:
-            result = await call_completion_async(client, model, messages, max_tokens)
+            result = await call_completion_async(client, model, messages, max_tokens, reasoning_effort=reasoning_effort)
             return result, attempt
         except (RateLimitError, APITimeoutError, APIConnectionError):
             if attempt == max_attempts - 1:
@@ -2297,6 +2305,7 @@ async def run_benchmark(
     progress_callback: Any = None,
     task: str = "completion",
     embedding_options: dict[str, Any] | None = None,
+    reasoning_effort: str | None = None,
 ) -> tuple[list[RunRaw], int]:
     """Run the benchmark with true async concurrency: warmup + N timed runs.
 
@@ -2343,7 +2352,7 @@ async def run_benchmark(
                 )
             else:
                 messages = _build_msgs(warmup_prompt, inputs[0])
-                call_completion(sync_client, model, messages, max_tokens)
+                call_completion(sync_client, model, messages, max_tokens, reasoning_effort=reasoning_effort)
         except Exception as e:
             err_str = str(e).lower()
             if any(
@@ -2385,7 +2394,9 @@ async def run_benchmark(
                     )
                 else:
                     messages = _build_msgs(input_prompt, inputs[input_idx])
-                    result, retry_count = await _call_with_retry_async(client, model, messages, max_tokens)
+                    result, retry_count = await _call_with_retry_async(
+                        client, model, messages, max_tokens, reasoning_effort=reasoning_effort
+                    )
                 if retry_count:
                     async with retries_lock:
                         retries += retry_count
@@ -2507,6 +2518,7 @@ def print_config(
     runs: int,
     max_concurrency: int,
     tmux_session: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> None:
     """Print the configuration block in a Rich Panel."""
     tbl = Table(
@@ -2569,6 +2581,8 @@ def print_config(
 
     # Config
     tbl.add_row("max_tokens", str(max_tokens))
+    if reasoning_effort is not None:
+        tbl.add_row("reasoning", reasoning_effort)
     tbl.add_row("runs", str(runs))
     tbl.add_row("concurrency", str(max_concurrency))
 
@@ -3143,6 +3157,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS, help="Max completion tokens")
     run_parser.add_argument(
+        "--reasoning-effort",
+        default=None,
+        choices=["none", "low", "medium", "high"],
+        help="Reasoning effort level (sets reasoning.effort in the API call)",
+    )
+    run_parser.add_argument(
         "--max-size",
         type=int,
         default=DEFAULT_MAX_IMAGE_SIZE,
@@ -3282,6 +3302,7 @@ def _execute_benchmark(
                 progress_callback=progress_callback,
                 task=task_type,
                 embedding_options=embedding_options,
+                reasoning_effort=getattr(args, "reasoning_effort", None),
             )
         )
         t_end = time.perf_counter()
@@ -3364,6 +3385,7 @@ def _execute_benchmark(
             max_tokens=args.max_tokens,
             max_concurrency=max_concurrency,
             task=task_type,
+            reasoning_effort=getattr(args, "reasoning_effort", None),
         ),
         results=Results(
             ttft_ms=compute_stats(ttft_values),
@@ -3575,6 +3597,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         runs=args.runs,
         max_concurrency=concurrency_levels[-1] if is_sweep else concurrency_levels[0],
         tmux_session=tmux_session,
+        reasoning_effort=getattr(args, "reasoning_effort", None),
     )
 
     if is_sweep:
