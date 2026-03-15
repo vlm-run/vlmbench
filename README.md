@@ -305,6 +305,20 @@ NVITOP 1.6.2      Driver Version: 580.126.09      CUDA Driver Version: 13.0
 
 </details>
 
+## Claude Code Installation
+
+Install vlmbench as a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) plugin:
+
+```bash
+# 1. Register the marketplace
+/plugin marketplace add vlm-run/vlmbench
+
+# 2. Install the skill
+/plugin install vlmbench@vlm-run/vlmbench
+```
+
+After restarting Claude Code, the `vlmbench` skill will be available. Mention it directly in your instructions to benchmark models, compare results, or debug server issues.
+
 ## Requirements
 
 - **Python >= 3.11**, [uv](https://docs.astral.sh/uv/) recommended

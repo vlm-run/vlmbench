@@ -1,0 +1,18 @@
+{
+  "name": "vlmbench",
+  "owner": {
+    "name": "VLM Run"
+  },
+  "metadata": {
+    "description": "VLM benchmark CLI — run, compare, and reproduce VLM inference benchmarks. Benchmark throughput, latency, TTFT, TPOT, and VRAM usage across models and backends.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "vlmbench",
+      "source": "./.claude/skills/vlmbench",
+      "skills": "./",
+      "description": "VLM benchmark CLI for running, comparing, and reproducing VLM inference benchmarks. Supports vLLM, Ollama, and SGLang backends with automatic platform detection, concurrency sweeps, and HuggingFace dataset integration."
+    }
+  ]
+}

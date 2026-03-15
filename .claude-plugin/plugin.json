@@ -1,0 +1,26 @@
+{
+  "name": "vlmbench",
+  "description": "VLM benchmark CLI — run, compare, and reproduce VLM inference benchmarks. Benchmark throughput, latency, TTFT, TPOT, and VRAM usage across models and backends.",
+  "version": "1.0.0",
+  "author": {
+    "name": "VLM Run"
+  },
+  "homepage": "https://vlm.run",
+  "repository": "https://github.com/vlm-run/vlmbench",
+  "license": "Apache-2.0",
+  "keywords": [
+    "vlmbench",
+    "vlm",
+    "benchmarking",
+    "inference",
+    "throughput",
+    "latency",
+    "ttft",
+    "tpot",
+    "vram",
+    "ocr",
+    "vllm",
+    "ollama",
+    "sglang"
+  ]
+}
