@@ -122,6 +122,7 @@ Best peak throughput per model on NVIDIA RTX PRO 6000 Blackwell (vLLM v0.15.1, 3
 | 3 | `PaddlePaddle/PaddleOCR-VL` | 2,341.9 | 64 | 6,385 ms | 49.0 ms |
 | 4 | `deepseek-ai/DeepSeek-OCR` | 1,195.8 | 32 | 3,571 ms | 15.9 ms |
 | 5 | `Qwen/Qwen3-VL-8B-Instruct` | 953.8 | 64 | 448 ms | 25.7 ms |
+| 6 | `Qwen/Qwen3.6-35B-A3B-FP8` (DFlash spec) | 523.1 | 16 | 18,399 ms | 0.3 ms |
 
 Compare your own results:
 
