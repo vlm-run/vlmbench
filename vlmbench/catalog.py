@@ -134,10 +134,10 @@ class Markdown(Prompt):
 class MarkdownTuned(Prompt):
     """Baseline plus one clause per column the suites score weakest.
 
-    Line by line: completeness (omnidocbench `text`, parsebench `content`),
-    column flow (`order`, the lowest column in every suite), marginal text that
-    ground truth keeps but models drop, flat table rows the cell-neighbour
-    checks can align (`tables`), and no preamble (parsebench `noise`).
+    Written against the observed weak columns: completeness, column flow,
+    marginal text models drop, flat table rows the cell-neighbour checks can
+    align, and no preamble. Measured against `markdown` on qwen3.8-27b at 10
+    stratified pages it did NOT reliably win — see `MarkdownLean`.
     """
 
     name = "markdown-tuned"
@@ -151,15 +151,20 @@ class MarkdownTuned(Prompt):
 
 
 class MarkdownLean(Prompt):
-    """`markdown-tuned` cut to the clauses that measurably paid, at half the tokens.
+    """`markdown-tuned` with the clauses that cost or did nothing removed.
 
-    Dropped, each for a measured reason: the "keep headers, footers, page
-    numbers" clause fights olmOCR-bench's `headers_footers` split, whose
-    `absent` rules exist to check those are *excluded* (absent 100.0 -> 83.3);
-    the reading-order clause moved no `order` column anywhere; and the
-    no-commentary clause is redundant with `normalize()`, which strips fences
-    before scoring. Kept: verbatim-and-complete, and the table shape that took
-    OmniDocBench `tables` from 47.1 to 79.0.
+    One clause was dropped on evidence: "keep headers, footers, page numbers"
+    fights olmOCR-bench's `headers_footers` split, whose `absent` rules exist
+    to check those are *excluded*. Tuned scored 83.3 there against 100.0 for
+    both other prompts, and dropping the clause restored it.
+
+    The rest is token thrift, not a measured gain. Across four suites at 10
+    stratified pages no prompt reliably beat the 6-token `markdown`: the
+    columns that separated them are backed by 3-9 tests (parsebench `tables`
+    n=3, omnidocbench `tables` n=6), so a few points is one test flipping.
+    This prompt and `markdown-tuned` share a table clause yet scored 18.4 and
+    29.5 on omnidocbench — the spread is noise, not instruction-following.
+    Comparing prompts needs a far larger `--limit` than 10.
     """
 
     name = "markdown-lean"

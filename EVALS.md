@@ -150,20 +150,48 @@ vlmbench eval -d olmocr-bench -m qwen/qwen3.8-27b --prompt prompts/ocr.py:Anchor
 - Omit the prompt to use the eval's default. Naming one for a `takes_prompt = False` model is an error.
 - `{placeholders}` interpolate from `Sample.context`; escape literal braces as `{{`.
 
-Two prompts ship built in, as a measured baseline for what wording is worth:
+Three prompts ship built in, as a measured baseline for what wording is worth:
 
 | Name | Tokens | Text |
 | ---- | -----: | ---- |
 | `markdown` | 6 | `Convert this page to markdown.` |
 | `markdown-tuned` | 62 | one clause per column the suites score weakest |
+| `markdown-lean` | 27 | tuned, minus the clauses that cost or did nothing |
 
 ```bash
 vlmbench eval -d parsebench -m qwen/qwen3.8-27b --prompt markdown
-vlmbench eval -d parsebench -m qwen/qwen3.8-27b --prompt markdown-tuned
+vlmbench eval -d parsebench -m qwen/qwen3.8-27b --prompt markdown-lean
 ```
 
 Token counts are measured against the model's own tokenizer by diffing
 `usage.prompt_tokens`, not estimated.
+
+**What they are worth, measured.** On `qwen/qwen3.8-27b` over all four suites
+at `--limit 10 --stratify`, no prompt reliably beat the 6-token `markdown`:
+
+| Suite | `markdown` | `markdown-tuned` | `markdown-lean` |
+| ----- | ---------: | ---------------: | --------------: |
+| parsebench | 29.5 | 30.4 | 26.9 |
+| olmocr-bench | 25.0 | 20.8 | 25.0 |
+| omni-parse-bench | 0.0 | 0.0 | 0.0 |
+| omnidocbench | 19.3 | 29.5 | 18.4 |
+
+Read the test counts before reading the spread. At `--limit 10` a column can
+rest on very few tests — parsebench `tables` n=3, omnidocbench `tables` n=6 —
+so several points is one test flipping. `markdown-tuned` and `markdown-lean`
+carry the same table clause and scored 29.5 and 18.4 on omnidocbench, which
+settles it: that gap is noise. Only parsebench `text` (n=1709), `order`
+(n=259) and omnidocbench `text` (n=138) have the power to resolve anything,
+and across those the three prompts sit within a few points with no consistent
+ordering.
+
+One effect did replicate, because it has a mechanism: `markdown-tuned` tells
+the model to keep headers, footers and page numbers, which fights
+olmOCR-bench's `headers_footers` split, whose `absent` rules check those are
+*excluded*. It scored 83.3 on `absent` against 100.0 for both other prompts.
+
+The honest reading is that prompt wording is not this model's bottleneck.
+Comparing prompts seriously needs a much larger `--limit` than 10.
 
 ### 4 — Custom provider
 
