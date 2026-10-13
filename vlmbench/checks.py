@@ -12,13 +12,27 @@ from rapidfuzz import fuzz
 _WORD = re.compile(r"[0-9A-Za-zÀ-ɏ']+")
 _MARKDOWN_NOISE = re.compile(r"[#*_`~|]+")
 _HTML_TAG = re.compile(r"<[^>]{1,200}>")
-_PUNCTUATION_FOLD = str.maketrans({
-    "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
-    "\u201c": '"', "\u201d": '"', "\u201e": '"',
-    "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-", "\u2015": "-",
-    "\u00a0": " ", "\u2007": " ", "\u202f": " ",
-    "\u2026": "...",
-})
+_PUNCTUATION_FOLD = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201a": "'",
+        "\u201b": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u201e": '"',
+        "\u2010": "-",
+        "\u2011": "-",
+        "\u2012": "-",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2015": "-",
+        "\u00a0": " ",
+        "\u2007": " ",
+        "\u202f": " ",
+        "\u2026": "...",
+    }
+)
 """Typographic punctuation varies between ground truth and model output; fold it."""
 _WHITESPACE = re.compile(r"\s+")
 _MIN_SIMILARITY = 60.0

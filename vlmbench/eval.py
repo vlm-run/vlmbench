@@ -136,8 +136,7 @@ class Prompt:
         except KeyError as exc:
             missing = exc.args[0]
             raise EvalError(
-                f"prompt {cls.key()} references {{{missing}}} but sample {sample.id!r} "
-                f"has no context key {missing!r}"
+                f"prompt {cls.key()} references {{{missing}}} but sample {sample.id!r} has no context key {missing!r}"
             ) from exc
 
     @classmethod
@@ -274,9 +273,7 @@ class Eval:
         """Download one file from the eval's HF dataset repo."""
         from huggingface_hub import hf_hub_download
 
-        return Path(
-            hf_hub_download(self.repo_id, path, repo_type="dataset", revision=self.revision)
-        )
+        return Path(hf_hub_download(self.repo_id, path, repo_type="dataset", revision=self.revision))
 
     def resolve_media(self, sample: Sample) -> str:
         """Materialise `sample.media` into a data URI or URL, just before the request.
@@ -512,8 +509,11 @@ async def complete(
     """One streamed completion: text plus TTFT, tokens and cost."""
     prompt = subject.prompt_text(sample)
     messages = build_messages(prompt, media)
-    body = _merge(subject.provider.request_kwargs(subject, sample), {"extra_body": dict(subject.model.extra_body)},
-                  {"extra_body": dict(extra_body)})
+    body = _merge(
+        subject.provider.request_kwargs(subject, sample),
+        {"extra_body": dict(subject.model.extra_body)},
+        {"extra_body": dict(extra_body)},
+    )
     kwargs: dict[str, Any] = {
         "model": subject.model_id,
         "messages": messages,
@@ -657,9 +657,7 @@ async def run_subject(
             prediction = Prediction(sample_id=sample.id, text=cached_path.read_text(), cached=True)
         else:
             async with semaphore:
-                media = (
-                    await asyncio.to_thread(resolve_media, sample) if resolve_media else sample.media
-                )
+                media = await asyncio.to_thread(resolve_media, sample) if resolve_media else sample.media
                 prediction = await complete(
                     client, subject, sample, media, extra_body=extra_body, stream_usage=stream_usage
                 )

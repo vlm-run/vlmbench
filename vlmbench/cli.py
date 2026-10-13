@@ -3247,6 +3247,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     eval_parser.add_argument("--list", action="store_true", help="List loaded evals, providers, models and prompts")
 
+    # ── report subcommand ──
+    report_parser = subparsers.add_parser("report", help="Render eval result.json files as a leaderboard.")
+    report_parser.add_argument(
+        "files", nargs="*", help="result.json files (default: every run under ~/.vlmbench/evals)"
+    )
+    report_parser.add_argument("-o", "--output", default=None, help="Write to this path (extension picks the format)")
+    report_parser.add_argument("--format", choices=["html", "md", "csv"], default=None, help="Override the format")
+    report_parser.add_argument("--title", default="vlmbench leaderboard", help="Page title")
+    report_parser.add_argument("--mixed", action="store_true", help="Allow partial and full runs in one table")
+
     # ── profiles subcommand ──
     subparsers.add_parser("profiles", help="List available model profiles.")
 
@@ -3888,6 +3898,48 @@ async def _list_provider_models(provider: type) -> list[str]:
         await client.close()
 
 
+def cmd_report(args: argparse.Namespace) -> None:
+    """Render one or more eval result files as a leaderboard."""
+    from vlmbench import eval as ev
+    from vlmbench import report
+
+    paths = [Path(f) for f in args.files] or sorted(ev.EVALS_DIR.glob("*/result.json"))
+    paths = [p for p in paths if p.exists()]
+    if not paths:
+        print_error("nothing to report", f"no result.json found — looked in {ev.EVALS_DIR}")
+        sys.exit(1)
+
+    rows = report.load_rows(paths)
+    if not rows:
+        print_error("nothing to report", "those files contain no eval rows")
+        sys.exit(1)
+
+    partial = {row.partial for row in rows}
+    if len(partial) > 1 and not args.mixed:
+        print_error(
+            "partial and full runs in one table",
+            "a limited run is not comparable to a full one. Pass --mixed to override.",
+        )
+        sys.exit(1)
+
+    fmt = args.format or (Path(args.output).suffix.lstrip(".") if args.output else "md")
+    fmt = {"htm": "html", "markdown": "md"}.get(fmt, fmt)
+    match fmt:
+        case "html":
+            body = report.to_html(rows, title=args.title)
+        case "csv":
+            body = report.to_csv(rows)
+        case _:
+            body = report.to_markdown(rows)
+
+    if args.output:
+        out = Path(args.output)
+        out.write_text(body)
+        console.print(f"[green]{len(rows)} rows[/green] → [bold]{out}[/bold]")
+    else:
+        console.print(body, markup=False, highlight=False)
+
+
 def main() -> None:
     """Entry point: default to 'run' subcommand if none specified."""
     # Always show the banner first
@@ -3895,7 +3947,7 @@ def main() -> None:
 
     # If no subcommand given (first arg starts with -- or -), insert "run"
     argv = sys.argv[1:]
-    subcommands = {"compare", "profiles", "eval"}
+    subcommands = {"compare", "profiles", "eval", "report"}
     if argv and argv[0] not in subcommands and not argv[0].startswith("--help"):
         if argv[0].startswith("--") or argv[0].startswith("-"):
             argv = ["run"] + argv
@@ -3916,6 +3968,8 @@ def main() -> None:
             cmd_compare(parsed)
         case "eval":
             cmd_eval(parsed)
+        case "report":
+            cmd_report(parsed)
         case "profiles":
             cmd_profiles()
 

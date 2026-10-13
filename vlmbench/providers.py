@@ -24,11 +24,7 @@ class VlmRun(Provider):
     @classmethod
     async def list_models(cls, client: AsyncOpenAI) -> list[str]:
         page = await client.models.list()
-        return [
-            entry.id
-            for entry in page.data
-            if _OCR_METHODS & set(_extras(entry).get("methods") or ())
-        ]
+        return [entry.id for entry in page.data if _OCR_METHODS & set(_extras(entry).get("methods") or ())]
 
 
 class OpenRouter(Provider):

@@ -5,8 +5,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from vlmbench import Eval, Model, Prompt, Provider, Sample
-from vlmbench import checks
+from vlmbench import Eval, Model, Prompt, Provider, Sample, checks
 from vlmbench.eval import (
     EvalError,
     aggregate,
@@ -90,9 +89,7 @@ def test_quirky_model_resolves_by_any_casing():
 
 
 def test_cross_product_skips_prompts_for_models_that_take_none():
-    subjects = build_subjects(
-        ["fake::acme/fixed-ocr", "fake::acme/general-vlm"], [Terse], "fake", "suite default"
-    )
+    subjects = build_subjects(["fake::acme/fixed-ocr", "fake::acme/general-vlm"], [Terse], "fake", "suite default")
     assert len(subjects) == 2
     fixed, general = subjects
     assert fixed.prompt is None and general.prompt is Terse
