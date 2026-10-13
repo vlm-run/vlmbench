@@ -148,3 +148,22 @@ class MarkdownTuned(Prompt):
         "Tables: pipe rows, one cell per column, repeat merged values.\n"
         "No commentary, no code fences."
     )
+
+
+class MarkdownLean(Prompt):
+    """`markdown-tuned` cut to the clauses that measurably paid, at half the tokens.
+
+    Dropped, each for a measured reason: the "keep headers, footers, page
+    numbers" clause fights olmOCR-bench's `headers_footers` split, whose
+    `absent` rules exist to check those are *excluded* (absent 100.0 -> 83.3);
+    the reading-order clause moved no `order` column anywhere; and the
+    no-commentary clause is redundant with `normalize()`, which strips fences
+    before scoring. Kept: verbatim-and-complete, and the table shape that took
+    OmniDocBench `tables` from 47.1 to 79.0.
+    """
+
+    name = "markdown-lean"
+    text = (
+        "Transcribe the page to markdown, verbatim and complete.\n"
+        "Tables: pipe rows, one cell per column, repeat merged values."
+    )
