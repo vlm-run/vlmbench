@@ -172,3 +172,44 @@ class MarkdownLean(Prompt):
         "Transcribe the page to markdown, verbatim and complete.\n"
         "Tables: pipe rows, one cell per column, repeat merged values."
     )
+
+
+class MarkdownRich(Prompt):
+    """A long, comprehensive transcription spec — the large-prompt baseline.
+
+    Covers structure, tables, math, figures and column flow, and ends with the
+    clause aimed at this model's measured failure: it confabulates fluent,
+    plausible text for regions it cannot read.
+    """
+
+    name = "markdown-rich"
+    text = (
+        "Transcribe this document page to Markdown.\n"
+        "\n"
+        "- Output the page content only: no preamble, no commentary, no code fences.\n"
+        "- Transcribe every character you can read, in reading order. In a\n"
+        "  multi-column layout, finish one column before starting the next.\n"
+        "- Preserve structure: headings as #/##, lists as - or 1., bold and italics.\n"
+        "- Tables: one pipe row per visual row, one cell per column, repeat a value\n"
+        "  that spans cells, keep the header row.\n"
+        "- Math: inline $...$, display $$...$$.\n"
+        "- Figures: transcribe the caption; do not describe the image.\n"
+        "- Transcribe only what is printed. Never infer, complete or invent text. If\n"
+        "  a region is illegible, omit it rather than guessing at what it says."
+    )
+
+
+class MarkdownFaithful(Prompt):
+    """`markdown-lean` plus the anti-confabulation clause, and nothing else.
+
+    Isolates that clause: this and `markdown-rich` share it, so if only the
+    long prompt moves, the gain is the formatting spec rather than faithfulness.
+    """
+
+    name = "markdown-faithful"
+    text = (
+        "Transcribe the page to markdown, verbatim and complete.\n"
+        "Transcribe only what is printed. Never infer, complete or invent text;\n"
+        "if a region is illegible, omit it rather than guessing.\n"
+        "Tables: pipe rows, one cell per column, repeat merged values."
+    )
