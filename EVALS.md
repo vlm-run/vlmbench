@@ -12,12 +12,13 @@ uvx vlmbench eval -d olmocr-bench -m zai-org/glm-ocr --limit 10
 |---|---|---|
 | **Eval** | A dataset plus how to score it — `samples()` and `score()` | `vlmbench/evals/*.py` or your own `.py` |
 | **Sample** | One page: media, split, ground truth, prompt context | yielded by `Eval.samples()` |
-| **Prompt** | Model-agnostic prompt text, named per row | a catalog file |
+| **Prompt** | Model-agnostic prompt text, named per row | a prompt file |
+| **Run** | One declared row: model, optional provider and prompt | a run file |
 | **Model** | Request mechanics for one model id — carries no prompt | `vlmbench/models.py` or a catalog file |
 | **Provider** | Where requests go, plus optional hooks | `vlmbench/providers.py` or a catalog file |
 | **Verdict** | `(column, value)` — `bool` counts a test, `float` averages, `None` is unsupported | yielded by `Eval.score()` |
 
-- A **row** on the leaderboard is one `-m`, i.e. one `(provider, model, prompt)` triple.
+- A **row** on the leaderboard is one `Run`: a `(provider, model, prompt)` triple.
 - A **column** is either boolean (a pass rate) or continuous (a mean), never both.
 - `None` means *not measured*, and is reported separately from a score of zero.
 
@@ -46,7 +47,7 @@ flowchart LR
 ```mermaid
 flowchart TD
   CLI["vlmbench eval -d … -m … -c …"] --> L[Load catalog<br/>builtin → ~/.vlmbench/catalog → -c]
-  L --> X[One subject per -m<br/>provider · model · prompt]
+  L --> X[One subject per Run<br/>provider · model · prompt]
   X --> S["Samples (--limit, --stratify)"]
 
   S --> MC{media in LRU?}
@@ -97,16 +98,32 @@ vlmbench eval -d olmocr-bench -m zai-org/glm-ocr --limit 10 --stratify
 
 ### 2 — Several models, mixed providers
 
-```bash
-vlmbench eval -d olmocr-bench --limit 10 \
-  -m vlmrun::zai-org/glm-ocr \
-  -m vlmrun::paddlepaddle/paddleocr-vl \
-  -m openrouter::qwen/qwen3-vl-8b-instruct
+```python
+# runs/ocr.py
+from prompts.ocr import Anchored
+
+from vlmbench import Run
+
+RUNS = [
+    Run(model="zai-org/glm-ocr"),
+    Run(model="paddlepaddle/paddleocr-vl-1.6"),
+    Run(model="qwen/qwen3.8-27b", prompt=Anchored),
+    Run(provider="openrouter", model="qwen/qwen3-vl-8b-instruct", prompt=Anchored),
+]
+
+SMOKE = [Run(model="zai-org/glm-ocr")]
 ```
 
-- `-m [provider::]model_id[::prompt]` — `::` separates the fields, single colons stay in the model id, so `vlmrun::vlm-run/ocr:auto` and `ollama::qwen3-vl:8b` work.
-- Two fields are read as `provider::model_id`; naming a prompt needs all three.
-- `-m all` expands to the provider's catalog, filtered to OCR-capable models.
+```bash
+vlmbench eval -d olmocr-bench -m runs/ocr.py --limit 10
+vlmbench eval -d olmocr-bench -m runs/ocr.py:SMOKE --limit 10
+```
+
+- A run file declares `RUNS`; `-m file.py:NAME` picks any other list in it.
+- Rows run in the order written. Nothing multiplies — a row exists because someone wrote that line.
+
+- `-m` is one model id, or a run file. `-p` picks the provider for the whole run; a `Run` may override it.
+- `vlmbench eval --list-models -p vlmrun` prints the ids that provider serves.
 - `--dry-run` prints the matrix and request count before spending anything.
 
 ### 3 — Custom prompts
@@ -123,12 +140,10 @@ class Plain(Prompt):
 ```
 
 ```bash
-vlmbench eval -d olmocr-bench -c prompts/ocr.py --limit 10 \
-  -m vlmrun::qwen/qwen3.8-27b::Anchored \
-  -m vlmrun::qwen/qwen3.8-27b::Plain
+vlmbench eval -d olmocr-bench -m qwen/qwen3.8-27b --prompt prompts/ocr.py:Anchored --limit 10
 ```
 
-- `-c` **registers** prompts; `-m provider::model::Prompt` picks one. Nothing is swept implicitly, so a row only exists because you asked for it.
+- `--prompt` takes a registered name or a `path.py:Name` reference, and applies to a single `-m` model. A run file carries its own prompts instead.
 - Prompts name no model, so the same object runs on any provider — the recorded `sha256` proves two rows used identical text.
 - Omit the prompt to use the eval's default. Naming one for a `takes_prompt = False` model is an error.
 - `{placeholders}` interpolate from `Sample.context`; escape literal braces as `{{`.
@@ -147,7 +162,7 @@ class Fireworks(Provider):
 ```
 
 ```bash
-vlmbench eval -d olmocr-bench -c catalog/fireworks.py -m fireworks::qwen/qwen3-vl-8b --limit 10
+vlmbench eval -d olmocr-bench -c catalog/fireworks.py -p fireworks -m qwen/qwen3-vl-8b --limit 10
 ```
 
 Optional hooks, each with a working OpenAI-compatible default:
@@ -198,7 +213,7 @@ class AcmeInvoices(Eval):
 ```
 
 ```bash
-vlmbench eval -d catalog/invoices.py -m vlmrun::zai-org/glm-ocr --limit 10
+vlmbench eval -d catalog/invoices.py -m zai-org/glm-ocr --limit 10
 ```
 
 - Yielded column names become leaderboard columns — the report needs no changes.
@@ -223,6 +238,8 @@ vlmbench report ~/.vlmbench/evals/*/result.json --format md
 | `~/.vlmbench/catalog/*.py` | always |
 | `$VLMBENCH_CATALOG` | always (`:`-separated) |
 | `-c <file \| dir \| file.py:Class>` | per run, repeatable |
+
+Files load by **ordinary import** — `runs/ocr.py` is imported as `runs.ocr`, with the working directory on `sys.path`. So `from prompts.ocr import Anchored` inside a run file works, tracebacks are normal, and a class imported twice is the same class.
 
 - One file may define any mix of `Eval`, `Model`, `Prompt` and `Provider`; subclassing registers it.
 - Registration makes something *available*, never *selected* — `-d`, `-m` and `-p` decide what actually runs.

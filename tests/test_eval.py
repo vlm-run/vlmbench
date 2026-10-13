@@ -5,7 +5,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from vlmbench import Eval, Model, Prompt, Provider, Sample, checks
+from vlmbench import Eval, Model, Prompt, Provider, Run, Sample, checks
 from vlmbench.eval import (
     EvalError,
     aggregate,
@@ -14,7 +14,6 @@ from vlmbench.eval import (
     normalize_model_id,
     overall,
     parse_dataset_ref,
-    parse_model_ref,
     resolve_model,
 )
 
@@ -51,26 +50,6 @@ class Terse(Prompt):
 class Fake(Provider):
     name = "fake"
     base_url = "https://fake.test/v1"
-
-
-@pytest.mark.parametrize(
-    ("ref", "expected"),
-    [
-        ("vlmrun::vlm-run/ocr:auto", ("vlmrun", "vlm-run/ocr:auto", None)),
-        ("ollama::qwen3-vl:8b", ("ollama", "qwen3-vl:8b", None)),
-        ("openrouter::deepseek/deepseek-r1:free", ("openrouter", "deepseek/deepseek-r1:free", None)),
-        ("zai-org/glm-ocr", (None, "zai-org/glm-ocr", None)),
-        ("qwen3-vl:8b", (None, "qwen3-vl:8b", None)),
-        ("vlmrun::qwen/qwen3.8-27b::Anchored", ("vlmrun", "qwen/qwen3.8-27b", "Anchored")),
-    ],
-)
-def test_model_ref_splits_on_double_colon_only(ref, expected):
-    assert parse_model_ref(ref) == expected
-
-
-def test_malformed_model_ref_is_rejected():
-    with pytest.raises(EvalError):
-        parse_model_ref("openrouter::")
 
 
 def test_dataset_ref_revision():
@@ -164,8 +143,8 @@ def test_cache_key_changes_with_the_prompt():
     from vlmbench.eval import build_subjects, response_cache_key
 
     sample = Sample(id="p1", media="text:body")
-    (plain,) = build_subjects(["fake::acme/general-vlm"], "fake", "suite default")
-    (terse,) = build_subjects(["fake::acme/general-vlm::Terse"], "fake", "suite default")
+    (plain,) = build_subjects([Run(model="acme/general-vlm")], "fake", "suite default")
+    (terse,) = build_subjects([Run(model="acme/general-vlm", prompt=Terse)], "fake", "suite default")
     assert response_cache_key(plain, sample, plain.prompt_text(sample)) != response_cache_key(
         terse, sample, terse.prompt_text(sample)
     )
@@ -175,7 +154,7 @@ def test_cache_key_is_stable_for_identical_inputs():
     from vlmbench.eval import build_subjects, response_cache_key
 
     sample = Sample(id="p1", media="text:body")
-    (subject,) = build_subjects(["fake::acme/general-vlm::Terse"], "fake", "d")
+    (subject,) = build_subjects([Run(model="acme/general-vlm", prompt=Terse)], "fake", "d")
     prompt = subject.prompt_text(sample)
     assert response_cache_key(subject, sample, prompt) == response_cache_key(subject, sample, prompt)
 
@@ -190,7 +169,9 @@ def test_judge_is_not_implemented():
 
 
 def test_prompt_is_named_explicitly_per_row():
-    fixed, general = build_subjects(["fake::acme/fixed-ocr", "fake::acme/general-vlm::Terse"], "fake", "suite default")
+    fixed, general = build_subjects(
+        [Run(model="acme/fixed-ocr"), Run(model="acme/general-vlm", prompt=Terse)], "fake", "suite default"
+    )
     assert fixed.prompt is None and general.prompt is Terse
     sample = Sample(id="x", media="text:body")
     assert fixed.prompt_text(sample) == ""
@@ -198,27 +179,72 @@ def test_prompt_is_named_explicitly_per_row():
 
 
 def test_suite_default_prompt_used_when_none_is_named():
-    (subject,) = build_subjects(["fake::acme/general-vlm"], "fake", "suite default")
+    (subject,) = build_subjects([Run(model="acme/general-vlm")], "fake", "suite default")
     assert subject.prompt is None
     assert subject.prompt_text(Sample(id="x", media="text:body")) == "suite default"
 
 
 def test_naming_a_prompt_for_a_promptless_model_is_an_error():
     with pytest.raises(EvalError, match="takes no prompt"):
-        build_subjects(["fake::acme/fixed-ocr::Terse"], "fake", "d")
+        build_subjects([Run(model="acme/fixed-ocr", prompt=Terse)], "fake", "d")
 
 
 def test_unknown_prompt_lists_what_is_registered():
     with pytest.raises(EvalError, match="unknown prompt"):
-        build_subjects(["fake::acme/general-vlm::Nope"], "fake", "d")
-
-
-def test_two_field_ref_must_name_a_known_provider():
-    with pytest.raises(EvalError, match="To name a prompt"):
-        parse_model_ref("qwen/qwen3.8-27b::Anchored")
+        build_subjects([Run(model="acme/general-vlm", prompt="Nope")], "fake", "d")
 
 
 def test_revision_defaults_to_the_run_date():
     from vlmbench.eval import today
 
     assert len(today()) == 8 and today().count("-") == 2
+
+
+def test_module_name_accepts_paths_and_dotted_names():
+    from vlmbench.eval import module_name
+
+    assert module_name("runs/ocr.py") == "runs.ocr"
+    assert module_name("runs.ocr") == "runs.ocr"
+    assert module_name("./runs/ocr.py") == "runs.ocr"
+
+
+def test_run_file_is_loaded_as_an_ordinary_import(tmp_path, monkeypatch):
+    from vlmbench.eval import load_runs
+
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "p.py").write_text(
+        "from vlmbench import Prompt\n\n\nclass Terse(Prompt):\n    text = 'Markdown only.'\n"
+    )
+    (tmp_path / "runs").mkdir()
+    (tmp_path / "runs" / "r.py").write_text(
+        "from prompts.p import Terse\n\nfrom vlmbench import Run\n\n"
+        "RUNS = [Run(model='a/one'), Run(model='a/two', prompt=Terse)]\n"
+        "SMOKE = [Run(model='a/one')]\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    runs = load_runs("runs/r.py")
+    assert [r.model for r in runs] == ["a/one", "a/two"]
+    assert load_runs("runs/r.py:SMOKE")[0].model == "a/one"
+    assert runs[1].prompt.text == "Markdown only."
+
+
+def test_run_file_without_RUNS_says_so(tmp_path, monkeypatch):
+    from vlmbench.eval import load_runs
+
+    (tmp_path / "empty.py").write_text("X = 1\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    with pytest.raises(EvalError, match="RUNS"):
+        load_runs("empty.py")
+
+
+def test_run_file_must_hold_runs(tmp_path, monkeypatch):
+    from vlmbench.eval import load_runs
+
+    (tmp_path / "bad.py").write_text("RUNS = ['not-a-run']\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    with pytest.raises(EvalError, match="must be a list of Run"):
+        load_runs("bad.py")

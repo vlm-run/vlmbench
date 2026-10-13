@@ -3211,11 +3211,9 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument(
         "-m",
         "--model",
-        dest="models",
-        action="append",
-        default=[],
-        metavar="[PROVIDER::]ID[::PROMPT]",
-        help="Model to score; repeatable. 'all' expands to the provider's catalog",
+        default=None,
+        metavar="MODEL|runs/file.py",
+        help="Model id, or a run file declaring RUNS = [Run(...), ...]",
     )
     eval_parser.add_argument(
         "-p", "--provider", default="vlmrun", help="Default provider for unprefixed models (default: vlmrun)"
@@ -3229,8 +3227,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="REF",
         help="Catalog file, directory, or file.py:ClassName; repeatable",
     )
+    eval_parser.add_argument("--prompt", default=None, metavar="NAME|path.py:Name", help="Prompt for a single -m model")
     eval_parser.add_argument(
-        "--judge", default=None, metavar="[PROVIDER::]ID", help="Also score each page 0-10 with a VLM judge"
+        "--judge", default=None, metavar="MODEL", help="Also score each page 0-10 with a VLM judge"
     )
     eval_parser.add_argument(
         "--concurrency", type=int, default=None, help="In-flight requests per provider (default: the provider's cap)"
@@ -3255,6 +3254,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-directory", default=None, help="Run directory (default: ~/.vlmbench/evals/<run>)"
     )
     eval_parser.add_argument("--list", action="store_true", help="List loaded evals, providers, models and prompts")
+    eval_parser.add_argument("--list-models", action="store_true", help="List the models -p serves, then exit")
 
     # ── report subcommand ──
     report_parser = subparsers.add_parser("report", help="Render eval result.json files as a leaderboard.")
@@ -3830,23 +3830,28 @@ def cmd_eval(args: argparse.Namespace) -> None:
         if args.list:
             _print_catalog()
             return
+        if args.list_models:
+            provider = ev.resolve_provider(args.provider)
+            for model_id in asyncio.run(_list_provider_models(provider)):
+                console.print(model_id)
+            return
         if not args.dataset and not args.eval_ref:
             print_error("eval needs a suite", "pass -d <name|hf://datasets/org/name|path.py>")
+            sys.exit(1)
+        if not args.model:
+            print_error("eval needs a model", "pass -m <model-id> or -m runs/yourfile.py")
             sys.exit(1)
 
         ev_obj = ev.resolve_eval(args.eval_ref or args.dataset)
         extra_body = json.loads(args.extra_body) if args.extra_body else {}
-        models = args.models or ["all"]
-        if "all" in models:
-            provider = ev.resolve_provider(args.provider)
-            models = [m for m in models if m != "all"] + asyncio.run(_list_provider_models(provider))
-        if not models:
-            print_error("no models", f"provider {args.provider!r} listed none; pass -m explicitly")
+        is_run_file = args.model and args.model.endswith(".py") or ".py:" in (args.model or "")
+        if is_run_file and args.prompt:
+            print_error("--prompt with a run file", "a run file declares its own prompts")
             sys.exit(1)
-        if extra_body and len(models) > 1:
-            print_warning("--extra-body applies to every -m; put per-model settings in a catalog file")
-
-        subjects = ev.build_subjects(models, args.provider, ev_obj.prompt)
+        runs = ev.load_runs(args.model) if is_run_file else [ev.Run(model=args.model, prompt=args.prompt)]
+        if extra_body and len(runs) > 1:
+            print_warning("--extra-body applies to every run; put per-model settings in a catalog file")
+        subjects = ev.build_subjects(runs, args.provider, ev_obj.prompt)
         samples = list(ev_obj.samples())
         kept, total = ev.apply_limit(samples, args.limit, stratify=args.stratify)
 

@@ -5,16 +5,18 @@ Catalog entries self-register by subclassing. All inference goes through AsyncOp
 
 import asyncio
 import hashlib
-import importlib.util
 import inspect
 import itertools
 import json
 import os
 import re
+import sys
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from importlib import import_module
 from pathlib import Path
+from types import ModuleType
 from typing import Any, ClassVar, Literal
 
 from cachetools import LRUCache
@@ -45,30 +47,6 @@ class EvalError(RuntimeError):
 def normalize_model_id(model_id: str) -> str:
     """Lowercase and collapse `_ : .` so provider casing differences stop mattering."""
     return _SEPARATORS.sub("-", model_id.strip().lower())
-
-
-def parse_model_ref(ref: str) -> tuple[str | None, str, str | None]:
-    """Split `provider::model_id::prompt`. Single colons always belong to the model id.
-
-    Two fields are read as `provider::model_id`; a prompt needs all three.
-    """
-    autoload()
-    parts = [part.strip() for part in ref.split("::")]
-    if any(not part for part in parts) or len(parts) > 3:
-        raise EvalError(f"malformed model ref {ref!r} — expected [provider::]model_id[::prompt]")
-    match parts:
-        case [model_id]:
-            return None, model_id, None
-        case [provider, model_id]:
-            if provider not in _CATALOG["provider"]:
-                known = ", ".join(sorted(_CATALOG["provider"])) or "none"
-                raise EvalError(
-                    f"unknown provider {provider!r} in {ref!r} — loaded: {known}. "
-                    "To name a prompt, give all three: provider::model_id::prompt"
-                )
-            return provider, model_id, None
-        case _:
-            return parts[0], parts[1], parts[2]
 
 
 def parse_dataset_ref(ref: str) -> tuple[str, str | None]:
@@ -353,6 +331,16 @@ def media_data_uri(path: Path, page: int = 1, *, dpi: int = 150, max_long_edge: 
     return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode()
 
 
+class Run(BaseModel):
+    """One declared leaderboard row. `prompt` is a Prompt class or a registered name."""
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    model: str
+    provider: str | None = None
+    prompt: Any = None
+
+
 @dataclass(slots=True, frozen=True)
 class Subject:
     """One leaderboard row: provider + model + prompt."""
@@ -383,44 +371,95 @@ class Subject:
         return self.default_prompt
 
 
-def _import_file(path: Path) -> None:
-    spec = importlib.util.spec_from_file_location(f"vlmbench_catalog_{path.stem}", path)
-    if spec is None or spec.loader is None:
-        raise EvalError(f"cannot import catalog file {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+_PATH_READY = False
+
+
+def _ensure_importable() -> None:
+    """Put the working directory and the catalog dir on `sys.path`, once."""
+    global _PATH_READY
+    if _PATH_READY:
+        return
+    for extra in (Path.cwd(), CATALOG_DIR):
+        if extra.is_dir() and str(extra) not in sys.path:
+            sys.path.insert(0, str(extra))
+    _PATH_READY = True
+
+
+def module_name(ref: str) -> str:
+    """`runs/ocr.py` and `runs.ocr` both name the module `runs.ocr`."""
+    cleaned = Path(ref.removesuffix(".py")).as_posix().strip("/")
+    return cleaned.replace("/", ".")
+
+
+def import_ref(ref: str) -> tuple[ModuleType, str | None]:
+    """Import `pkg.mod`, `pkg/mod.py`, or either with `:attr`. An ordinary import."""
+    _ensure_importable()
+    target, _, attr = ref.rpartition(":")
+    if not target or not attr.isidentifier():
+        target, attr = ref, ""
+
+    path = Path(target)
+    if path.suffix == ".py" and path.exists():
+        resolved = path.resolve()
+        try:
+            name = module_name(resolved.relative_to(Path.cwd()).as_posix())
+        except ValueError:
+            if str(resolved.parent) not in sys.path:
+                sys.path.insert(0, str(resolved.parent))
+            name = resolved.stem
+    else:
+        name = module_name(target)
+    try:
+        module = import_module(name)
+    except ImportError as exc:
+        raise EvalError(f"cannot import {name!r} (from {ref!r}): {exc}") from exc
+    return module, attr or None
+
+
+def _defined_in(module: ModuleType) -> list[type]:
+    """Catalog classes declared in this module, recording where they came from."""
+    bases = (Eval, Model, Prompt, Provider)
+    found = []
+    for value in vars(module).values():
+        if isinstance(value, type) and issubclass(value, bases) and value.__module__ == module.__name__:
+            _ORIGINS[id(value)] = module.__file__ or module.__name__
+            found.append(value)
+    return found
 
 
 def load_catalog(ref: str) -> list[type]:
-    """Load a catalog file, directory, or `file.py:ClassName`, returning what it defined."""
-    global _loading_origin
+    """Import a module, or every module in a directory, and return what it defines."""
+    path = Path(ref.rpartition(":")[0] or ref)
+    if path.is_dir():
+        found: list[type] = []
+        for file in sorted(path.glob("*.py")):
+            if not file.name.startswith("_"):
+                found += load_catalog((path / file.stem).as_posix() + ".py")
+        return found
 
-    target, _, selector = ref.partition(".py:")
-    path = Path(target + ".py") if selector else Path(ref)
-    if not path.exists():
-        raise EvalError(f"catalog not found: {ref}")
+    module, attr = import_ref(ref)
+    defined = _defined_in(module)
+    if attr is None:
+        return defined
+    if not hasattr(module, attr):
+        names = ", ".join(sorted(cls.__name__ for cls in defined)) or "nothing"
+        raise EvalError(f"{module.__name__} defines no {attr!r} — found: {names}")
+    return [getattr(module, attr)]
 
-    files = sorted(p for p in path.glob("*.py") if not p.name.startswith("_")) if path.is_dir() else [path]
-    defined: list[type] = []
-    for file in files:
-        before = {kind: dict(entries) for kind, entries in _CATALOG.items()}
-        previous, _loading_origin = _loading_origin, str(file)
-        try:
-            _import_file(file)
-        finally:
-            _loading_origin = previous
-        for kind, entries in _CATALOG.items():
-            for key, cls in entries.items():
-                if before[kind].get(key) is not cls and cls not in defined:
-                    defined.append(cls)
 
-    if selector:
-        chosen = [cls for cls in defined if cls.__name__ == selector]
-        if not chosen:
-            names = ", ".join(sorted(cls.__name__ for cls in defined)) or "nothing"
-            raise EvalError(f"{path} defines no {selector!r} — found: {names}")
-        return chosen
-    return defined
+def load_runs(ref: str) -> list["Run"]:
+    """Read `RUNS` (or a named list) from a run file."""
+    module, attr = import_ref(ref)
+    _defined_in(module)
+    name = attr or "RUNS"
+    runs = getattr(module, name, None)
+    if runs is None:
+        raise EvalError(f"{module.__name__} defines no {name!r} — a run file needs `RUNS = [Run(...), ...]`")
+    if not isinstance(runs, (list, tuple)) or not all(isinstance(item, Run) for item in runs):
+        raise EvalError(f"{module.__name__}.{name} must be a list of Run")
+    if not runs:
+        raise EvalError(f"{module.__name__}.{name} is empty")
+    return list(runs)
 
 
 _autoloaded = False
@@ -488,30 +527,35 @@ def loaded(kind: Literal["eval", "model", "prompt", "provider"]) -> dict[str, ty
     return dict(_CATALOG[kind])
 
 
-def resolve_prompt(name: str) -> type[Prompt]:
+def resolve_prompt(ref: Any) -> type[Prompt]:
+    """Accept a Prompt class, a registered name, or a `path.py:Name` reference."""
     autoload()
-    found = _CATALOG["prompt"].get(name)
+    if isinstance(ref, type) and issubclass(ref, Prompt):
+        return ref
+    found = _CATALOG["prompt"].get(ref)
+    if found is None and ("/" in ref or "." in ref):
+        found = next((cls for cls in load_catalog(ref) if issubclass(cls, Prompt)), None)
     if found is None:
-        known = ", ".join(sorted(_CATALOG["prompt"])) or "none — load one with -c"
-        raise EvalError(f"unknown prompt {name!r} — registered: {known}")
+        known = ", ".join(sorted(_CATALOG["prompt"])) or "none — register one with -c"
+        raise EvalError(f"unknown prompt {ref!r} — registered: {known}")
     return found  # type: ignore[return-value]
 
 
-def build_subjects(model_refs: Sequence[str], default_provider: str, default_prompt: str) -> list[Subject]:
-    """One row per `-m`. The prompt is named explicitly or falls back to the eval's."""
+def build_subjects(runs: Sequence[Run], default_provider: str, default_prompt: str) -> list[Subject]:
+    """One subject per declared Run, in the order written."""
     subjects: list[Subject] = []
-    for ref in model_refs:
-        provider_name, model_id, prompt_name = parse_model_ref(ref)
-        model = resolve_model(model_id)
-        provider = resolve_provider(provider_name or model.provider or default_provider)
-        if prompt_name and not model.takes_prompt:
-            raise EvalError(f"{model_id} takes no prompt, so {ref!r} cannot name {prompt_name!r}")
+    for run in runs:
+        model = resolve_model(run.model)
+        provider = resolve_provider(run.provider or model.provider or default_provider)
+        prompt = resolve_prompt(run.prompt) if run.prompt is not None else None
+        if prompt is not None and not model.takes_prompt:
+            raise EvalError(f"{run.model} takes no prompt, so it cannot use {prompt.key()!r}")
         subjects.append(
             Subject(
                 provider=provider,
-                model_id=model_id,
+                model_id=run.model,
                 model=model,
-                prompt=resolve_prompt(prompt_name) if prompt_name else None,
+                prompt=prompt,
                 default_prompt=default_prompt,
             )
         )

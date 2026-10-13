@@ -19,13 +19,13 @@ All CLI logic is in `vlmbench/cli.py` (single file). Entry point: `main()`.
 
 ```bash
 uvx vlmbench eval -d olmocr-bench -m zai-org/glm-ocr --limit 10 --stratify
-uvx vlmbench eval -d parsebench -m all --limit 10 --concurrency 2   # every OCR model on the gateway
+uvx vlmbench eval -d parsebench -m runs/ocr.py --limit 10 --concurrency 2   # a declared matrix
 uvx vlmbench report ~/.vlmbench/evals/*/result.json -o board.html
 uvx vlmbench eval --list                                            # loaded evals/models/prompts/providers
 ```
 
 - Suites: `parsebench`, `olmocr-bench`, `omni-parse-bench`, or a path to your own `.py`.
-- `-m [provider::]model_id[::prompt]`; `-p` defaults to `vlmrun`. `-c <file|dir>` registers prompts/models/providers/evals.
+- `-m <model-id>` or `-m runs/file.py` (declares `RUNS = [Run(...), ...]`); `-p` defaults to `vlmrun`; `--prompt NAME|path.py:Name`.
 - Always pass `--limit` (`10`, `1%`, `0.5%`) + `--stratify` first; limited runs are branded PARTIAL.
 - `--score-only` re-scores cached output with no network. `--dry-run` prints the matrix and request count.
 - Concepts, plugin authoring and progressive examples: [`EVALS.md`](../../../EVALS.md).

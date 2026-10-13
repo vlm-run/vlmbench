@@ -315,7 +315,7 @@ uvx vlmbench report ~/.vlmbench/evals/*/result.json -o board.html
 ```
 
 - Suites: `parsebench`, `olmocr-bench`, `omni-parse-bench` — or point `-d` at your own `.py`.
-- `-m <provider>::<model_id>`, `-p` defaults to `vlmrun`.
+- `-m` is one model id or a run file; `-p` defaults to `vlmrun`.
 - Prompts, models, providers and evals are all plain Python you point at with `-c`; nothing to install.
 
 Full guide, concepts and progressive examples: **[EVALS.md](EVALS.md)**.
