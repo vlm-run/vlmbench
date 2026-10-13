@@ -51,6 +51,18 @@ def band_label(name: str) -> str:
     return {"good": "strong", "warning": "adequate", "critical": "weak", "none": "not measured"}[name]
 
 
+def load_documents(paths: list[Path]) -> list[dict]:
+    """Read result files, keeping only eval documents and dropping duplicate runs."""
+    documents, seen = [], set()
+    for path in paths:
+        payload = json.loads(path.read_text())
+        run_id = payload.get("run_id")
+        if payload.get("kind") == "eval" and run_id not in seen:
+            seen.add(run_id)
+            documents.append(payload)
+    return documents
+
+
 def load_rows(paths: list[Path]) -> list[Row]:
     """Flatten one or more `result.json` files into leaderboard rows."""
     rows: list[Row] = []
@@ -164,11 +176,11 @@ def to_csv(rows: list[Row]) -> str:
     return buffer.getvalue()
 
 
-_CSS = """
+_CSS = r"""
 :root {
   color-scheme: light dark;
   --surface: %(light)s; --panel: #ffffff; --ink: #1a1a19; --ink-dim: #5f5f5c;
-  --rule: #e4e4e0; --track: #efefeb;
+  --rule: #e4e4e0; --track: #efefeb; --accent: #4682B4;
   --good: %(good)s; --warning: %(warning)s; --critical: %(critical)s;
 }
 :root[data-theme="dark"], :root:not([data-theme="light"]) {
@@ -200,13 +212,22 @@ button {
   font: inherit; font-size: 12px; padding: 5px 11px; border-radius: 6px;
   border: 1px solid var(--rule); background: var(--panel); color: var(--ink); cursor: pointer;
 }
+button:hover { border-color: var(--accent); }
+button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+#drop {
+  border: 1.5px dashed var(--rule); border-radius: 8px; padding: 18px; text-align: center;
+  color: var(--ink-dim); font-size: 13px; margin-bottom: 18px; cursor: pointer;
+}
+#drop.over { border-color: var(--accent); color: var(--accent); }
 .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 table { width: 100%%; min-width: 760px; border-collapse: collapse; background: var(--panel);
         border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
 th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--rule); }
 th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
      color: var(--ink-dim); font-weight: 600; background: var(--panel);
-     position: sticky; top: 0; }
+     position: sticky; top: 0; cursor: pointer; user-select: none; white-space: nowrap; }
+th:hover { color: var(--ink); }
+th[aria-sort] { color: var(--accent); }
 tr:last-child td { border-bottom: 0; }
 td.num, th.num { text-align: right; }
 td.model { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
@@ -221,87 +242,264 @@ td.prompt { color: var(--ink-dim); }
 .fill.warning { background: var(--warning); }
 .fill.critical { background: var(--critical); }
 .muted { color: var(--ink-dim); }
+.empty { padding: 36px; text-align: center; color: var(--ink-dim); }
 #tip {
   position: fixed; z-index: 9; pointer-events: none; opacity: 0; transition: opacity .1s;
   background: var(--panel); color: var(--ink); border: 1px solid var(--rule);
   border-radius: 6px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.12);
-  max-width: 280px;
+  max-width: 300px;
 }
-@media (max-width: 720px) { body { padding: 20px 16px; } .sub { font-size: 12px; } }
+@media (max-width: 720px) { body { padding: 20px 16px; } }
 """
 
-_JS = """
-const tip = document.getElementById('tip');
-document.querySelectorAll('[data-tip]').forEach(cell => {
-  cell.addEventListener('pointerenter', event => {
-    tip.textContent = cell.dataset.tip;
-    tip.style.opacity = '1';
-    const box = cell.getBoundingClientRect();
-    tip.style.left = Math.min(box.left, window.innerWidth - 300) + 'px';
-    tip.style.top = (box.bottom + 6) + 'px';
+_JS = r"""
+const FIXED = %(fixed)s;
+const BAND_LABEL = {good: 'strong', warning: 'adequate', critical: 'weak'};
+const docs = [];
+const seen = new Set();
+let sortKey = 'overall', sortDesc = true, suite = 'all';
+
+const band = (score, good, fair) =>
+  score === null ? null : score >= good ? 'good' : score >= fair ? 'warning' : 'critical';
+
+function addDocuments(list) {
+  let added = 0;
+  for (const doc of list) {
+    if (doc && doc.kind === 'eval' && !seen.has(doc.run_id)) {
+      seen.add(doc.run_id);
+      docs.push(doc);
+      added++;
+    }
+  }
+  return added;
+}
+
+function rows() {
+  const out = [];
+  for (const doc of docs) {
+    const limit = doc.limit || {};
+    const meta = doc.eval || {};
+    const th = meta.thresholds || {};
+    if (suite !== 'all' && meta.name !== suite) continue;
+    for (const entry of doc.rows || []) {
+      const scores = entry.scores || {};
+      const cost = entry.cost || {};
+      out.push({
+        provider: entry.provider || '',
+        model: entry.model || '',
+        prompt: (entry.prompt || {}).name || '\u2014',
+        overall: scores.overall ?? null,
+        columns: scores.columns || {},
+        usdPer1k: cost.usd_per_1k_pages ?? null,
+        suite: meta.name || '',
+        revision: meta.revision || '',
+        partial: !!limit.partial,
+        pages: limit.pages || 0,
+        ofPages: limit.of || 0,
+        errors: entry.errors || 0,
+        good: th.good ?? 85,
+        fair: th.fair ?? 70,
+      });
+    }
+  }
+  return out;
+}
+
+const columnOrder = list => {
+  const present = new Set();
+  list.forEach(row => Object.keys(row.columns).forEach(name => present.add(name)));
+  const fixed = FIXED.filter(name => present.has(name));
+  return fixed.concat([...present].filter(name => !fixed.includes(name)).sort());
+};
+
+const cellValue = (row, name) => (row.columns[name] || {}).score ?? null;
+
+function cellDetail(row, name) {
+  const entry = row.columns[name];
+  if (!entry) return 'not reported';
+  const parts = [];
+  if (entry.tests) parts.push(`${entry.passed || 0}/${entry.tests} tests passed`);
+  if (entry.samples) parts.push(`mean of ${entry.samples} samples`);
+  if (entry.unsupported) parts.push(`${entry.unsupported} unsupported`);
+  return parts.join(' \u00b7 ') || 'no data';
+}
+
+function scoreCell(row, score, detail, lead) {
+  if (score === null || score === undefined)
+    return `<td class="num"><span class="muted" data-tip="${esc(detail)}">\u2014</span></td>`;
+  const name = band(score, row.good, row.fair);
+  const tip = `${score.toFixed(1)} \u2014 ${BAND_LABEL[name]} \u00b7 ${detail}`;
+  const width = Math.max(0, Math.min(100, score)).toFixed(1);
+  return `<td class="num" data-tip="${esc(tip)}"><div class="score">` +
+    `<span class="v${lead ? ' lead' : ''}">${score.toFixed(1)}</span>` +
+    `<span class="track"><span class="fill ${name}" style="width:${width}%%"></span></span></div></td>`;
+}
+
+const esc = text => String(text).replace(/[&<>"]/g, ch =>
+  ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[ch]));
+
+function sortRows(list, names) {
+  const value = row => sortKey === 'overall' ? row.overall
+    : sortKey === 'cost' ? row.usdPer1k
+    : sortKey === 'model' ? row.model
+    : sortKey === 'suite' ? row.suite
+    : names.includes(sortKey) ? cellValue(row, sortKey) : null;
+  return list.slice().sort((a, b) => {
+    const x = value(a), y = value(b);
+    if (x === null || x === undefined) return 1;
+    if (y === null || y === undefined) return -1;
+    const cmp = typeof x === 'string' ? x.localeCompare(y) : x - y;
+    return sortDesc ? -cmp : cmp;
   });
-  cell.addEventListener('pointerleave', () => { tip.style.opacity = '0'; });
+}
+
+function toCsv(list, names) {
+  const header = ['Provider', 'Model', 'Prompt', 'Suite', 'Revision', 'Overall',
+    ...names.map(n => n[0].toUpperCase() + n.slice(1)), 'Cost_Usd_Per_1k_Pages'];
+  const lines = [header.join(',')];
+  for (const row of list) {
+    lines.push([row.provider, row.model, row.prompt, row.suite, row.revision,
+      row.overall ?? '', ...names.map(n => cellValue(row, n) ?? ''),
+      row.usdPer1k ?? ''].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+  }
+  return lines.join('\n');
+}
+
+function render() {
+  const all = rows();
+  const names = columnOrder(all);
+  const list = sortRows(all, names);
+  const suites = [...new Set(docs.map(d => (d.eval || {}).name).filter(Boolean))];
+  const showProvider = new Set(all.map(r => r.provider)).size > 1;
+  const showPrompt = all.some(r => r.prompt !== '\u2014');
+  const showSuite = new Set(all.map(r => r.suite)).size > 1;
+  const partial = all.find(r => r.partial);
+
+  document.getElementById('sub').textContent = docs.length
+    ? `${suites.join(', ')} \u00b7 ${list.length} rows \u00b7 ${docs.length} run${docs.length > 1 ? 's' : ''}` +
+      ' \u00b7 higher is better except $/1K pages'
+    : 'Drop result.json files below to build a leaderboard.';
+
+  document.getElementById('banner').innerHTML = partial
+    ? `<div class="banner">\u26a0 <strong>Partial run</strong> \u2014 ${partial.pages} of ${partial.ofPages} pages. ` +
+      'Useful for iterating on a prompt; not comparable to published numbers.</div>'
+    : '';
+
+  document.getElementById('suites').innerHTML = suites.length > 1
+    ? ['all', ...suites].map(name =>
+        `<button data-suite="${esc(name)}" aria-pressed="${suite === name}">${esc(name)}</button>`).join('')
+    : '';
+
+  if (!list.length) {
+    document.getElementById('board').innerHTML =
+      '<div class="empty">No results loaded yet.</div>';
+    return;
+  }
+
+  const sortMark = key => sortKey === key ? ` aria-sort="${sortDesc ? 'descending' : 'ascending'}"` : '';
+  const head =
+    (showSuite ? `<th data-sort="suite"${sortMark('suite')}>Suite</th>` : '') +
+    (showProvider ? '<th>Provider</th>' : '') +
+    `<th data-sort="model"${sortMark('model')}>Model</th>` +
+    (showPrompt ? '<th>Prompt</th>' : '') +
+    `<th class="num" data-sort="overall"${sortMark('overall')}>Overall</th>` +
+    names.map(n => `<th class="num" data-sort="${esc(n)}"${sortMark(n)}>${esc(n)}</th>`).join('') +
+    `<th class="num" data-sort="cost"${sortMark('cost')}>$/1K pages</th>`;
+
+  const body = list.map(row => {
+    const cells = [
+      showSuite ? `<td class="prompt">${esc(row.suite)}</td>` : '',
+      showProvider ? `<td>${esc(row.provider)}</td>` : '',
+      `<td class="model">${esc(row.model)}</td>`,
+      showPrompt ? `<td class="prompt">${esc(row.prompt)}</td>` : '',
+      scoreCell(row, row.overall,
+        `${row.pages} pages${row.errors ? ` \u00b7 ${row.errors} errors` : ''} \u00b7 rev ${row.revision}`, true),
+      ...names.map(name => scoreCell(row, cellValue(row, name), cellDetail(row, name), false)),
+      row.usdPer1k === null
+        ? '<td class="num muted" data-tip="provider reported no cost">\u2014</td>'
+        : `<td class="num muted">${row.usdPer1k.toFixed(2)}</td>`,
+    ];
+    return `<tr>${cells.join('')}</tr>`;
+  }).join('');
+
+  document.getElementById('board').innerHTML =
+    `<div class="scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+  window.__csv = () => toCsv(list, names);
+}
+
+function readFiles(files) {
+  const pending = [...files].filter(file => file.name.endsWith('.json'));
+  let done = 0, added = 0;
+  if (!pending.length) return;
+  pending.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try { added += addDocuments([JSON.parse(reader.result)]); }
+      catch (err) { console.warn(file.name, err); }
+      if (++done === pending.length) render();
+    };
+    reader.readAsText(file);
+  });
+}
+
+const drop = document.getElementById('drop');
+const picker = document.getElementById('picker');
+drop.addEventListener('click', () => picker.click());
+picker.addEventListener('change', event => readFiles(event.target.files));
+['dragenter', 'dragover'].forEach(name => drop.addEventListener(name, event => {
+  event.preventDefault(); drop.classList.add('over');
+}));
+['dragleave', 'drop'].forEach(name => drop.addEventListener(name, event => {
+  event.preventDefault(); drop.classList.remove('over');
+}));
+drop.addEventListener('drop', event => readFiles(event.dataTransfer.files));
+
+document.addEventListener('click', event => {
+  const header = event.target.closest('th[data-sort]');
+  if (header) {
+    const key = header.dataset.sort;
+    sortDesc = sortKey === key ? !sortDesc : true;
+    sortKey = key;
+    render();
+  }
+  const chip = event.target.closest('button[data-suite]');
+  if (chip) { suite = chip.dataset.suite; render(); }
 });
+
 document.getElementById('csv').addEventListener('click', () => {
-  const blob = new Blob([document.getElementById('csvdata').textContent], {type: 'text/csv'});
+  const blob = new Blob([window.__csv ? window.__csv() : ''], {type: 'text/csv'});
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = 'vlmbench-leaderboard.csv';
   link.click();
   URL.revokeObjectURL(link.href);
 });
+
+document.getElementById('clear').addEventListener('click', () => {
+  docs.length = 0; seen.clear(); render();
+});
+
+const tip = document.getElementById('tip');
+document.addEventListener('pointerover', event => {
+  const cell = event.target.closest('[data-tip]');
+  if (!cell) { tip.style.opacity = '0'; return; }
+  tip.textContent = cell.dataset.tip;
+  tip.style.opacity = '1';
+  const box = cell.getBoundingClientRect();
+  tip.style.left = Math.min(box.left, window.innerWidth - 320) + 'px';
+  tip.style.top = (box.bottom + 6) + 'px';
+});
+
+addDocuments(JSON.parse(document.getElementById('data').textContent));
+render();
 """
 
 
-def _score_cell(row: Row, score: float | None, detail: str, *, lead: bool = False) -> str:
-    if score is None:
-        return f'<td class="num"><span class="muted" data-tip="{html.escape(detail)}">—</span></td>'
-    name = band(score, row.good, row.fair)
-    tip = f"{score:.1f} — {band_label(name)} · {detail}"
-    classes = "v lead" if lead else "v"
-    return (
-        f'<td class="num" data-tip="{html.escape(tip)}"><div class="score">'
-        f'<span class="{classes}">{score:.1f}</span>'
-        f'<span class="track"><span class="fill {name}" style="width:{max(0.0, min(100.0, score)):.1f}%"></span></span>'
-        f"</div></td>"
-    )
-
-
-def to_html(rows: list[Row], *, title: str = "vlmbench leaderboard") -> str:
-    """Self-contained page: no CDN, no fonts, light and dark both selected."""
-    names = column_order(rows)
-    suites = sorted({row.eval_name for row in rows if row.eval_name})
-    partial = next((row for row in rows if row.partial), None)
-    show_provider, show_prompt = informative(rows)
-
-    head = "".join(f'<th class="num">{html.escape(name.title())}</th>' for name in names)
-    body = []
-    for row in rows:
-        cells = [
-            *([f"<td>{html.escape(row.provider)}</td>"] if show_provider else []),
-            f'<td class="model">{html.escape(row.model)}</td>',
-            *([f'<td class="prompt">{html.escape(row.prompt)}</td>'] if show_prompt else []),
-            _score_cell(
-                row, row.overall, f"{row.pages} pages" + (f" · {row.errors} errors" if row.errors else ""), lead=True
-            ),
-        ]
-        cells += [_score_cell(row, _cell_value(row, name), _cell_detail(row, name)) for name in names]
-        cost = (
-            f'<td class="num muted">{row.usd_per_1k:.2f}</td>'
-            if row.usd_per_1k is not None
-            else '<td class="num muted" data-tip="provider reported no cost">—</td>'
-        )
-        body.append("<tr>" + "".join(cells) + cost + "</tr>")
-
-    banner = (
-        f'<div class="banner">⚠ <strong>Partial run</strong> — {partial.pages} of {partial.of_pages} pages. '
-        f"Useful for iterating on a prompt; not comparable to published numbers.</div>"
-        if partial
-        else ""
-    )
+def to_html(documents: list[dict], *, title: str = "vlmbench leaderboard") -> str:
+    """Self-contained page: embedded runs, plus drop-in import of more result.json files."""
     legend = "".join(
         f'<span><span class="swatch" style="background:var(--{key})"></span>{label}</span>'
-        for key, label in (("good", "≥ 85 strong"), ("warning", "≥ 70 adequate"), ("critical", "< 70 weak"))
+        for key, label in (("good", "\u2265 85 strong"), ("warning", "\u2265 70 adequate"), ("critical", "< 70 weak"))
     )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -311,17 +509,20 @@ def to_html(rows: list[Row], *, title: str = "vlmbench leaderboard") -> str:
 </head><body>
 <div class="wrap">
 <h1>{html.escape(title)}</h1>
-<p class="sub">{html.escape(", ".join(suites) or "eval")} · {len(rows)} rows · higher is better except $/1K pages</p>
-{banner}
-<div class="bar"><div class="legend">{legend}</div><button id="csv">Download CSV</button></div>
-<div class="scroll"><table><thead><tr>
-{"<th>Provider</th>" if show_provider else ""}<th>Model</th>{"<th>Prompt</th>" if show_prompt else ""}<th class="num">Overall</th>{head}<th class="num">$/1K pages</th>
-</tr></thead><tbody>
-{"".join(body)}
-</tbody></table></div>
+<p class="sub" id="sub"></p>
+<div id="banner"></div>
+<div id="drop">Drop <code>result.json</code> files here, or click to choose \u2014 everything stays in your browser</div>
+<input type="file" id="picker" accept="application/json,.json" multiple hidden>
+<div class="bar">
+  <div class="legend">{legend}</div>
+  <span id="suites"></span>
+  <button id="csv">Download CSV</button>
+  <button id="clear">Clear</button>
+</div>
+<div id="board"></div>
 </div>
 <div id="tip"></div>
-<script type="application/csv" id="csvdata">{html.escape(to_csv(rows))}</script>
-<script>{_JS}</script>
+<script type="application/json" id="data">{json.dumps(documents)}</script>
+<script>{_JS % {"fixed": json.dumps(list(_FIXED_COLUMNS))}}</script>
 </body></html>
 """

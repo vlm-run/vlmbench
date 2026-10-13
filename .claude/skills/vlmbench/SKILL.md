@@ -20,7 +20,8 @@ All CLI logic is in `vlmbench/cli.py` (single file). Entry point: `main()`.
 ```bash
 uvx vlmbench eval -d olmocr-bench -m zai-org/glm-ocr --limit 10 --stratify
 uvx vlmbench eval -d parsebench -m runs/ocr.py --limit 10 --concurrency 2   # a declared matrix
-uvx vlmbench report ~/.vlmbench/evals/*/result.json -o board.html
+uvx vlmbench report ~/.vlmbench/evals/*/result.json -o board.html   # drop more result.json onto it
+uvx vlmbench report --viewer -o viewer.html                          # empty importer page
 uvx vlmbench eval --list                                            # loaded evals/models/prompts/providers
 ```
 

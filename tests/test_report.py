@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from vlmbench.report import Row, band, column_order, load_rows, to_csv, to_html, to_markdown
+from vlmbench.report import Row, band, column_order, load_documents, load_rows, to_csv, to_html, to_markdown
 
 
 def make_row(**kwargs) -> Row:
@@ -72,45 +72,83 @@ def test_markdown_and_csv_round_trip_the_columns():
     assert "86.90" in csv_text
 
 
-def test_partial_runs_are_branded_in_every_format():
-    rows = [make_row(partial=True, pages=5, of_pages=1509)]
-    assert "PARTIAL" in to_markdown(rows)
-    assert "Partial run" in to_html(rows)
+def test_csv_keeps_every_column_for_machine_readers():
+    header = to_csv([make_row()]).splitlines()[0]
+    assert header.startswith("Provider,Model,Prompt,Overall")
+
+
+def _document(**overrides) -> dict:
+    base = {
+        "kind": "eval",
+        "run_id": "abc123",
+        "eval": {"name": "parsebench", "revision": "26-10-13", "thresholds": {"good": 85.0, "fair": 70.0}},
+        "limit": {"pages": 5, "of": 1509, "partial": True},
+        "rows": [
+            {
+                "provider": "vlmrun",
+                "model": "zai-org/glm-ocr",
+                "prompt": None,
+                "scores": {"overall": 86.9, "columns": {"content": {"score": 91.4, "samples": 5}}},
+                "cost": {"usd_per_1k_pages": 2.1},
+                "errors": 0,
+            }
+        ],
+    }
+    return {**base, **overrides}
+
+
+def test_partial_runs_are_branded_in_markdown():
+    assert "PARTIAL" in to_markdown([make_row(partial=True, pages=5, of_pages=1509)])
+
+
+def test_single_provider_and_promptless_columns_are_dropped_from_markdown():
+    assert "| Model | Overall |" in to_markdown([make_row()]).splitlines()[0]
 
 
 def test_html_is_self_contained_and_carries_both_themes():
-    page = to_html([make_row()])
+    page = to_html([_document()])
     assert "<script src=" not in page and "cdn" not in page.lower()
     assert "prefers-color-scheme: dark" in page
     assert 'data-theme="dark"' in page
     assert "#0ca30c" in page and "#d03b3b" in page
 
 
-def test_unscored_column_renders_as_a_dash_not_zero():
-    page = to_html([make_row()])
-    assert ">—<" in page
-    assert "width:0.0%" not in page
+def test_html_embeds_the_runs_it_was_given():
+    page = to_html([_document()])
+    payload = page.split('id="data">')[1].split("</script>")[0]
+    assert json.loads(payload)[0]["run_id"] == "abc123"
+    assert '"content"' in page.split("const FIXED = ")[1][:120]
 
 
-def test_missing_cost_never_renders_as_zero():
-    page = to_html([make_row(usd_per_1k=None)])
-    assert "provider reported no cost" in page
+def test_viewer_page_starts_empty_but_still_renders():
+    page = to_html([])
+    assert 'id="data">[]</script>' in page
+    assert 'id="drop"' in page and 'id="picker"' in page
 
 
-def test_single_provider_and_promptless_columns_are_dropped():
-    page = to_html([make_row()])
-    assert "<th>Provider</th>" not in page
-    assert "<th>Prompt</th>" not in page
-    assert "| Model | Overall |" in to_markdown([make_row()]).splitlines()[0]
+def test_load_documents_drops_duplicate_runs_and_non_evals(tmp_path):
+    one = tmp_path / "a.json"
+    one.write_text(json.dumps(_document()))
+    two = tmp_path / "b.json"
+    two.write_text(json.dumps(_document()))
+    three = tmp_path / "c.json"
+    three.write_text(json.dumps({"kind": "run", "run_id": "zzz"}))
+    assert len(load_documents([one, two, three])) == 1
 
 
-def test_columns_return_when_they_distinguish_rows():
-    rows = [make_row(), make_row(provider="openrouter", prompt="Anchored")]
-    page = to_html(rows)
-    assert "<th>Provider</th>" in page
-    assert "<th>Prompt</th>" in page
+def test_embedded_script_is_valid_javascript():
+    """The page is rendered client-side, so a broken escape would be invisible to Python."""
+    import shutil
+    import subprocess
+    import tempfile
 
-
-def test_csv_keeps_every_column_for_machine_readers():
-    header = to_csv([make_row()]).splitlines()[0]
-    assert header.startswith("Provider,Model,Prompt,Overall")
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    page = to_html([_document()])
+    script = page.rsplit("<script>", 1)[1].split("</script>")[0]
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as handle:
+        handle.write(script)
+        path = handle.name
+    result = subprocess.run([node, "--check", path], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

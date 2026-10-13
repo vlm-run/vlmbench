@@ -222,9 +222,14 @@ vlmbench eval -d catalog/invoices.py -m zai-org/glm-ocr --limit 10
 ### 7 — Report
 
 ```bash
-vlmbench report ~/.vlmbench/evals/*/result.json -o board.html
-vlmbench report ~/.vlmbench/evals/*/result.json --format md
+vlmbench report ~/.vlmbench/evals/*/result.json -o board.html   # baked, and imports more
+vlmbench report ~/.vlmbench/evals/*/result.json --format md     # for a PR body
+vlmbench report --viewer -o viewer.html                         # empty page, drop files in
 ```
+
+- The HTML page renders from embedded `result.json` documents, so you can **drop more result files onto it** to add rows. Nothing leaves the browser.
+- Re-dropping the same run is ignored (deduped on `run_id`); click any column header to sort; a Suite column appears once more than one suite is loaded.
+- `--viewer` emits the same page with no runs baked in — keep one around and feed it whatever you produce.
 
 - Bands: **≥ 85** strong, **≥ 70** adequate, **< 70** weak — per-eval via `thresholds`.
 - Cost is reported as **$/1K pages**.

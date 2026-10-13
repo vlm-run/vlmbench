@@ -3265,6 +3265,9 @@ def build_parser() -> argparse.ArgumentParser:
     report_parser.add_argument("--format", choices=["html", "md", "csv"], default=None, help="Override the format")
     report_parser.add_argument("--title", default="vlmbench leaderboard", help="Page title")
     report_parser.add_argument("--mixed", action="store_true", help="Allow partial and full runs in one table")
+    report_parser.add_argument(
+        "--viewer", action="store_true", help="Emit an empty page that imports result.json files in the browser"
+    )
 
     # ── profiles subcommand ──
     subparsers.add_parser("profiles", help="List available model profiles.")
@@ -3940,6 +3943,12 @@ def cmd_report(args: argparse.Namespace) -> None:
     from vlmbench import eval as ev
     from vlmbench import report
 
+    if args.viewer:
+        out = Path(args.output or "vlmbench-viewer.html")
+        out.write_text(report.to_html([], title=args.title))
+        console.print(f"[green]viewer[/green] → [bold]{out}[/bold]  [dim]drop result.json files into it[/dim]")
+        return
+
     paths = [Path(f) for f in args.files] or sorted(ev.EVALS_DIR.glob("*/result.json"))
     paths = [p for p in paths if p.exists()]
     if not paths:
@@ -3963,7 +3972,7 @@ def cmd_report(args: argparse.Namespace) -> None:
     fmt = {"htm": "html", "markdown": "md"}.get(fmt, fmt)
     match fmt:
         case "html":
-            body = report.to_html(rows, title=args.title)
+            body = report.to_html(report.load_documents(paths), title=args.title)
         case "csv":
             body = report.to_csv(rows)
         case _:
