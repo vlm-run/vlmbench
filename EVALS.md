@@ -77,10 +77,12 @@ flowchart TD
 | `parsebench` | `hf://datasets/llamaindex/ParseBench` | 1,509 pages | content, noise, text, order, tables, layout |
 | `olmocr-bench` | `hf://datasets/allenai/olmOCR-bench` | 1,403 pages | present, absent, order, tables, baseline |
 | `omni-parse-bench` | `hf://datasets/datalab-to/omni_parse_bench` | 2,937 pages | present, order, repeat, tables |
+| `omnidocbench` | `hf://datasets/opendatalab/OmniDocBench` | 1,651 pages | text, order, tables |
 
 - Short name or full `hf://` ref both work; the full ref is always what gets recorded.
 - Pin a revision with `@`: `-d parsebench@3f9ab12`. Unpinned runs record the run date (`YY-MM-DD`) as the revision.
-- Not implemented yet, reported as `unsupported` rather than scored: olmOCR `math`, ParseBench charts and formatting, omni `layout_kind`.
+- Not implemented yet, reported as `unsupported` rather than scored: olmOCR `math`, ParseBench charts and formatting, omni-parse `layout_kind`, OmniDocBench `equations`.
+- OmniDocBench is annotation-based rather than rule-based: each block's text must appear, in reading order. Headers, footers and page numbers are excluded, since models are routinely asked to drop them.
 
 ## Progressive examples
 
@@ -229,6 +231,7 @@ vlmbench report --viewer -o viewer.html                         # empty page, dr
 
 - The HTML page renders from embedded `result.json` documents, so you can **drop more result files onto it** to add rows. Nothing leaves the browser.
 - Re-dropping the same run is ignored (deduped on `run_id`); click any column header to sort; a Suite column appears once more than one suite is loaded.
+- Repeat runs of the same suite + provider + model + prompt collapse into one row: the newest is shown, older ones sit behind a **+N older** toggle. Every row carries the date it was evaluated.
 - `--viewer` emits the same page with no runs baked in — keep one around and feed it whatever you produce.
 
 - Bands: **≥ 85** strong, **≥ 70** adequate, **< 70** weak — per-eval via `thresholds`.

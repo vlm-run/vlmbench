@@ -242,6 +242,12 @@ td.prompt { color: var(--ink-dim); }
 .fill.warning { background: var(--warning); }
 .fill.critical { background: var(--critical); }
 .muted { color: var(--ink-dim); }
+tr.older td { background: color-mix(in srgb, var(--ink) 4%%, transparent); }
+tr.older td.model { padding-left: 24px; }
+.older-toggle {
+  font-size: 10.5px; padding: 1px 6px; margin-left: 8px; border-radius: 10px;
+  color: var(--ink-dim); vertical-align: 1px;
+}
 .empty { padding: 36px; text-align: center; color: var(--ink-dim); }
 #tip {
   position: fixed; z-index: 9; pointer-events: none; opacity: 0; transition: opacity .1s;
@@ -293,6 +299,8 @@ function rows() {
         usdPer1k: cost.usd_per_1k_pages ?? null,
         suite: meta.name || '',
         revision: meta.revision || '',
+        timestamp: doc.timestamp || '',
+        date: (doc.timestamp || '').slice(0, 10) || meta.revision || '',
         partial: !!limit.partial,
         pages: limit.pages || 0,
         ofPages: limit.of || 0,
@@ -343,6 +351,7 @@ function sortRows(list, names) {
     : sortKey === 'cost' ? row.usdPer1k
     : sortKey === 'model' ? row.model
     : sortKey === 'suite' ? row.suite
+    : sortKey === 'date' ? row.date
     : names.includes(sortKey) ? cellValue(row, sortKey) : null;
   return list.slice().sort((a, b) => {
     const x = value(a), y = value(b);
@@ -365,19 +374,36 @@ function toCsv(list, names) {
   return lines.join('\n');
 }
 
+function groupRuns(list) {
+  const groups = new Map();
+  for (const row of list) {
+    const key = [row.suite, row.provider, row.model, row.prompt].join('\u0000');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  for (const rows of groups.values()) {
+    rows.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+  }
+  return [...groups.entries()].map(([key, rows]) => ({key, rows}));
+}
+
 function render() {
   const all = rows();
-  const names = columnOrder(all);
-  const list = sortRows(all, names);
+  const suitesShown = new Set(all.map(r => r.suite)).size;
+  const names = suitesShown > 1 ? [] : columnOrder(all);
+  const groups = groupRuns(all);
+  const latest = sortRows(groups.map(g => g.rows[0]), names);
+  const order = new Map(latest.map((row, index) => [row, index]));
+  groups.sort((a, b) => order.get(a.rows[0]) - order.get(b.rows[0]));
+  const list = all;
   const suites = [...new Set(docs.map(d => (d.eval || {}).name).filter(Boolean))];
-  const showProvider = new Set(all.map(r => r.provider)).size > 1;
   const showPrompt = all.some(r => r.prompt !== '\u2014');
-  const showSuite = new Set(all.map(r => r.suite)).size > 1;
+  const showSuite = suitesShown > 1;
   const partial = all.find(r => r.partial);
 
   document.getElementById('sub').textContent = docs.length
     ? `${suites.join(', ')} \u00b7 ${list.length} rows \u00b7 ${docs.length} run${docs.length > 1 ? 's' : ''}` +
-      ' \u00b7 higher is better except $/1K pages'
+      (suitesShown > 1 ? ' \u00b7 pick a suite to see its columns' : ' \u00b7 higher is better except $/1K pages')
     : 'Drop result.json files below to build a leaderboard.';
 
   document.getElementById('banner').innerHTML = partial
@@ -399,28 +425,41 @@ function render() {
   const sortMark = key => sortKey === key ? ` aria-sort="${sortDesc ? 'descending' : 'ascending'}"` : '';
   const head =
     (showSuite ? `<th data-sort="suite"${sortMark('suite')}>Suite</th>` : '') +
-    (showProvider ? '<th>Provider</th>' : '') +
+    '<th>Provider</th>' +
     `<th data-sort="model"${sortMark('model')}>Model</th>` +
     (showPrompt ? '<th>Prompt</th>' : '') +
     `<th class="num" data-sort="overall"${sortMark('overall')}>Overall</th>` +
     names.map(n => `<th class="num" data-sort="${esc(n)}"${sortMark(n)}>${esc(n)}</th>`).join('') +
-    `<th class="num" data-sort="cost"${sortMark('cost')}>$/1K pages</th>`;
+    `<th class="num" data-sort="cost"${sortMark('cost')}>$/1K pages</th>` +
+    `<th data-sort="date"${sortMark('date')}>Evaluated</th>`;
 
-  const body = list.map(row => {
+  const renderRow = (row, group, older) => {
+    const toggle = !older && group.rows.length > 1
+      ? ` <button class="older-toggle" data-group="${esc(group.key)}">` +
+        `+${group.rows.length - 1} older</button>`
+      : '';
     const cells = [
       showSuite ? `<td class="prompt">${esc(row.suite)}</td>` : '',
-      showProvider ? `<td>${esc(row.provider)}</td>` : '',
-      `<td class="model">${esc(row.model)}</td>`,
+      `<td>${esc(row.provider)}</td>`,
+      `<td class="model">${esc(row.model)}${toggle}</td>`,
       showPrompt ? `<td class="prompt">${esc(row.prompt)}</td>` : '',
       scoreCell(row, row.overall,
-        `${row.pages} pages${row.errors ? ` \u00b7 ${row.errors} errors` : ''} \u00b7 rev ${row.revision}`, true),
+        `${row.pages} pages${row.errors ? ` \u00b7 ${row.errors} errors` : ''} \u00b7 rev ${row.revision}`, !older),
       ...names.map(name => scoreCell(row, cellValue(row, name), cellDetail(row, name), false)),
       row.usdPer1k === null
         ? '<td class="num muted" data-tip="provider reported no cost">\u2014</td>'
         : `<td class="num muted">${row.usdPer1k.toFixed(2)}</td>`,
+      `<td class="muted">${esc(row.date)}</td>`,
     ];
-    return `<tr>${cells.join('')}</tr>`;
-  }).join('');
+    const attrs = older
+      ? ` class="older" data-of="${esc(group.key)}" hidden`
+      : '';
+    return `<tr${attrs}>${cells.join('')}</tr>`;
+  };
+
+  const body = groups.map(group =>
+    group.rows.map((row, index) => renderRow(row, group, index > 0)).join('')
+  ).join('');
 
   document.getElementById('board').innerHTML =
     `<div class="scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
@@ -464,6 +503,14 @@ document.addEventListener('click', event => {
   }
   const chip = event.target.closest('button[data-suite]');
   if (chip) { suite = chip.dataset.suite; render(); }
+  const older = event.target.closest('button.older-toggle');
+  if (older) {
+    event.stopPropagation();
+    const rows = document.querySelectorAll(`tr.older[data-of="${CSS.escape(older.dataset.group)}"]`);
+    const show = rows.length && rows[0].hidden;
+    rows.forEach(row => { row.hidden = !show; });
+    older.textContent = show ? 'hide older' : `+${rows.length} older`;
+  }
 });
 
 document.getElementById('csv').addEventListener('click', () => {

@@ -285,11 +285,13 @@ class Eval:
         """
         if sample.media.startswith(("data:", "http://", "https://", "text:")):
             return sample.media
-        path, _, page = sample.media.rpartition("#")
+        path, separator, page = sample.media.rpartition("#")
+        if not separator:
+            path, page = sample.media, "1"
         cached = self.cache_dir / f"{sample.id.replace('/', '__')}.b64"
         if cached.exists():
             return cached.read_text()
-        uri = media_data_uri(self.hf_file(path or sample.media), int(page or 1))
+        uri = media_data_uri(self.hf_file(path), int(page))
         cached.parent.mkdir(parents=True, exist_ok=True)
         cached.write_text(uri)
         return uri
@@ -705,12 +707,18 @@ def aggregate(verdicts: Iterator[tuple[str, Verdict]]) -> dict[str, ColumnScore]
 
 
 def overall(columns: Mapping[str, ColumnScore]) -> ColumnScore:
+    """Unweighted mean of the column scores.
+
+    Pooling raw verdicts instead would let one continuous column shadow every
+    boolean one, since a ColumnScore reports a mean whenever it holds any values.
+    """
     total = ColumnScore()
     for entry in columns.values():
         total.passed += entry.passed
         total.tests += entry.tests
         total.unsupported += entry.unsupported
-        total.values.extend(entry.values)
+    scores = [entry.score for entry in columns.values() if entry.score is not None]
+    total.values = [score / 100 for score in scores]
     return total
 
 
@@ -761,9 +769,12 @@ async def run_subject(
     stream_usage = subject.provider.supports_stream_usage
 
     async def one(sample: Sample) -> Prediction | None:
-        blob = RESPONSE_CACHE / f"{response_cache_key(subject, sample, subject.prompt_text(sample))}.md"
+        key = response_cache_key(subject, sample, subject.prompt_text(sample))
+        blob = RESPONSE_CACHE / f"{key}.md"
+        meta = RESPONSE_CACHE / f"{key}.json"
         if use_cache and blob.exists():
-            prediction = Prediction(sample_id=sample.id, text=blob.read_text(), cached=True)
+            measured = json.loads(meta.read_text()) if meta.exists() else {}
+            prediction = Prediction(sample_id=sample.id, text=blob.read_text(), cached=True, **measured)
         elif skip_uncached:
             return None
         else:
@@ -775,6 +786,17 @@ async def run_subject(
             if use_cache and prediction.error is None:
                 blob.parent.mkdir(parents=True, exist_ok=True)
                 blob.write_text(prediction.text)
+                meta.write_text(
+                    json.dumps(
+                        {
+                            "latency_s": prediction.latency_s,
+                            "ttft_ms": prediction.ttft_ms,
+                            "prompt_tokens": prediction.prompt_tokens,
+                            "completion_tokens": prediction.completion_tokens,
+                            "cost_usd": prediction.cost_usd,
+                        }
+                    )
+                )
         if cache_dir is not None and prediction.error is None:
             cache_dir.mkdir(parents=True, exist_ok=True)
             (cache_dir / f"{sample.id.replace('/', '__')}.md").write_text(prediction.text)

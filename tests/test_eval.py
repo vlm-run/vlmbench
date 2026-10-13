@@ -248,3 +248,60 @@ def test_run_file_must_hold_runs(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(tmp_path))
     with pytest.raises(EvalError, match="must be a list of Run"):
         load_runs("bad.py")
+
+
+def test_media_without_a_page_suffix_resolves(monkeypatch, tmp_path):
+    """`pages/x.png` has no `#page`; rpartition used to put the whole path in the page slot."""
+    seen = {}
+
+    class Suite(Eval):
+        name = "media-fixture"
+        dataset = "hf://datasets/acme/fixture-media"
+
+        def hf_file(self, path):
+            seen["path"] = path
+            target = tmp_path / "page.png"
+            target.write_bytes(b"")
+            return target
+
+    monkeypatch.setattr("vlmbench.eval.media_data_uri", lambda path, page, **kw: f"data:image/jpeg;base64,{page}")
+    suite = Suite()
+    monkeypatch.setattr(type(suite), "cache_dir", property(lambda self: tmp_path))
+
+    assert suite.resolve_media(Sample(id="a", media="images/x.png")).endswith("1")
+    assert seen["path"] == "images/x.png"
+    assert suite.resolve_media(Sample(id="b", media="docs/y.pdf#3")).endswith("3")
+    assert seen["path"] == "docs/y.pdf"
+
+
+def test_overall_is_the_mean_of_columns_not_pooled_verdicts():
+    """A continuous column must not shadow the boolean ones in the headline number."""
+    columns = aggregate(
+        iter(
+            [("s", ("tables", 1.0))]
+            + [("s", ("text", False))] * 9
+            + [("s", ("text", True))]
+            + [("s", ("charts", None))]
+        )
+    )
+    assert columns["tables"].score == 100.0
+    assert columns["text"].score == 10.0
+    assert overall(columns).score == 55.0
+    assert overall(columns).unsupported == 1
+
+
+def test_cached_predictions_keep_their_measured_cost(tmp_path, monkeypatch):
+    """Without the sidecar, every repeat run reported no cost at all."""
+    import json as json_module
+
+    from vlmbench.eval import RESPONSE_CACHE, Prediction
+
+    monkeypatch.setattr("vlmbench.eval.RESPONSE_CACHE", tmp_path)
+    assert RESPONSE_CACHE is not None
+    (tmp_path / "k.md").write_text("page text")
+    (tmp_path / "k.json").write_text(json_module.dumps({"cost_usd": 0.0012, "prompt_tokens": 900}))
+
+    measured = json_module.loads((tmp_path / "k.json").read_text())
+    prediction = Prediction(sample_id="s", text=(tmp_path / "k.md").read_text(), cached=True, **measured)
+    assert prediction.cost_usd == 0.0012
+    assert prediction.prompt_tokens == 900
