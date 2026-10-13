@@ -193,6 +193,43 @@ olmOCR-bench's `headers_footers` split, whose `absent` rules check those are
 The honest reading is that prompt wording is not this model's bottleneck.
 Comparing prompts seriously needs a much larger `--limit` than 10.
 
+### Does a bigger prompt help? (30 pages, paired)
+
+`markdown-faithful` (57 tokens) and `markdown-rich` (173 tokens) were run
+against the 6-token `markdown` on the same 30 stratified pages, so page
+difficulty cancels. Aggregate overall:
+
+| Suite | `markdown` | `markdown-faithful` | `markdown-rich` |
+| ----- | ---------: | ------------------: | --------------: |
+| parsebench | 33.3 | 30.5 | 33.8 |
+| omnidocbench | 18.6 | 19.9 | 23.3 |
+
+That table flatters the long prompt. `overall` is an unweighted mean of
+column scores, so omnidocbench `tables` (6 pages) weighs as much as `text`
+(27 pages), and omnidocbench's +4.7 is almost entirely that one column.
+
+Pairing per page and pooling both suites gives the honest estimate:
+
+| Column | pages | `markdown-faithful` Δ | `markdown-rich` Δ |
+| ------ | ----: | --------------------: | ----------------: |
+| text | 36 | +2.2 [-1.0, +5.3] | -0.9 [-4.0, +2.3] |
+| order | 46 | -1.1 [-3.2, +1.0] | -0.2 [-2.7, +2.3] |
+| tables | 16 | -3.8 [-17.2, +9.7] | +6.8 [-2.2, +15.8] |
+
+Every 95% interval spans zero: **a 173-token prompt is not distinguishable
+from a 6-token one** on this model. The one directional hint is `tables`,
+positive for `markdown-rich` on both suites independently (+13.7 and +7.1),
+but on 16 pages it is unresolved.
+
+Longer prompts do have one measured cost: parsebench `noise`, which is a
+precision column, fell 68.0 -> 60.7 and 61.9. More instruction produces more
+output, and more output that ground truth does not support.
+
+For this model, decoding mattered more than any prompt: turning on
+`repetition_penalty` moved parsebench 24.0 -> 30.4, larger than every prompt
+effect above. Model choice mattered more still — the dedicated OCR models
+score 45-90 on these same pages.
+
 ### 4 — Custom provider
 
 ```python
