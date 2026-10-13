@@ -1,7 +1,6 @@
-"""Leaderboard report: one self-contained HTML page, plus markdown and CSV.
+"""Leaderboard as self-contained HTML, markdown or CSV.
 
-Driven only by `result.json`, so a catalog-defined column renders without
-this module knowing anything about it.
+Driven only by `result.json`, so catalog-defined columns render unmodified.
 """
 
 import csv
@@ -111,26 +110,34 @@ def _cell_detail(row: Row, name: str) -> str:
     return " · ".join(parts) or "no data"
 
 
+def informative(rows: list[Row]) -> tuple[bool, bool]:
+    """Whether the provider and prompt columns tell the reader anything."""
+    return len({row.provider for row in rows}) > 1, any(row.prompt not in ("—", "") for row in rows)
+
+
 def to_markdown(rows: list[Row]) -> str:
     names = column_order(rows)
-    header = ["Provider", "Model", "Prompt", "Overall", *(n.title() for n in names), "¢/Page"]
+    show_provider, show_prompt = informative(rows)
+    header = (
+        (["Provider"] if show_provider else [])
+        + ["Model"]
+        + (["Prompt"] if show_prompt else [])
+        + ["Overall", *(n.title() for n in names), "¢/Page"]
+    )
     lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     for row in rows:
         values = [f"{v:.1f}" if (v := _cell_value(row, name)) is not None else "—" for name in names]
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    row.provider,
-                    f"`{row.model}`",
-                    row.prompt,
-                    f"**{row.overall:.1f}**" if row.overall is not None else "—",
-                    *values,
-                    f"{row.cents_per_page:.3f}" if row.cents_per_page is not None else "—",
-                ]
-            )
-            + " |"
+        cells = (
+            ([row.provider] if show_provider else [])
+            + [f"`{row.model}`"]
+            + ([row.prompt] if show_prompt else [])
+            + [
+                f"**{row.overall:.1f}**" if row.overall is not None else "—",
+                *values,
+                f"{row.cents_per_page:.3f}" if row.cents_per_page is not None else "—",
+            ]
         )
+        lines.append("| " + " | ".join(cells) + " |")
     if any(row.partial for row in rows):
         sample = next(row for row in rows if row.partial)
         lines.append("")
@@ -194,7 +201,7 @@ button {
   border: 1px solid var(--rule); background: var(--panel); color: var(--ink); cursor: pointer;
 }
 .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-table { width: 100%%; min-width: 860px; border-collapse: collapse; background: var(--panel);
+table { width: 100%%; min-width: 760px; border-collapse: collapse; background: var(--panel);
         border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
 th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--rule); }
 th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
@@ -265,15 +272,18 @@ def to_html(rows: list[Row], *, title: str = "vlmbench leaderboard") -> str:
     names = column_order(rows)
     suites = sorted({row.eval_name for row in rows if row.eval_name})
     partial = next((row for row in rows if row.partial), None)
+    show_provider, show_prompt = informative(rows)
 
     head = "".join(f'<th class="num">{html.escape(name.title())}</th>' for name in names)
     body = []
     for row in rows:
         cells = [
-            f"<td>{html.escape(row.provider)}</td>",
+            *([f"<td>{html.escape(row.provider)}</td>"] if show_provider else []),
             f'<td class="model">{html.escape(row.model)}</td>',
-            f'<td class="prompt">{html.escape(row.prompt)}</td>',
-            _score_cell(row, row.overall, f"{row.pages} pages" + (f" · {row.errors} errors" if row.errors else ""), lead=True),
+            *([f'<td class="prompt">{html.escape(row.prompt)}</td>'] if show_prompt else []),
+            _score_cell(
+                row, row.overall, f"{row.pages} pages" + (f" · {row.errors} errors" if row.errors else ""), lead=True
+            ),
         ]
         cells += [_score_cell(row, _cell_value(row, name), _cell_detail(row, name)) for name in names]
         cents = (
@@ -305,7 +315,7 @@ def to_html(rows: list[Row], *, title: str = "vlmbench leaderboard") -> str:
 {banner}
 <div class="bar"><div class="legend">{legend}</div><button id="csv">Download CSV</button></div>
 <div class="scroll"><table><thead><tr>
-<th>Provider</th><th>Model</th><th>Prompt</th><th class="num">Overall</th>{head}<th class="num">¢/Page</th>
+{"<th>Provider</th>" if show_provider else ""}<th>Model</th>{"<th>Prompt</th>" if show_prompt else ""}<th class="num">Overall</th>{head}<th class="num">¢/Page</th>
 </tr></thead><tbody>
 {"".join(body)}
 </tbody></table></div>

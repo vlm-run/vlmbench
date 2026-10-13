@@ -4,7 +4,6 @@ Plain functions — import what you need; nothing here registers in the catalog.
 """
 
 import re
-from collections import Counter
 from html.parser import HTMLParser
 
 from rapidfuzz import fuzz
@@ -54,10 +53,9 @@ def words(text: str) -> list[str]:
 
 
 def present(output: str, needle: str, *, max_diffs: int = 0, case_sensitive: bool = False) -> bool:
-    """True when `needle` appears in `output`, allowing up to `max_diffs` character edits.
+    """True when `needle` appears in `output`, within `max_diffs` edits.
 
-    Fuzzy matching uses rapidfuzz `partial_ratio`, so `max_diffs` is a similarity
-    threshold rather than an exact edit-distance bound.
+    `max_diffs` becomes a similarity threshold, not an exact edit-distance bound.
     """
     haystack = normalize(output, case_sensitive=case_sensitive)
     target = normalize(needle, case_sensitive=case_sensitive)
@@ -72,45 +70,16 @@ def present(output: str, needle: str, *, max_diffs: int = 0, case_sensitive: boo
     return fuzz.partial_ratio(target, haystack) >= threshold
 
 
-def absent(output: str, needle: str, *, max_diffs: int = 0, case_sensitive: bool = False) -> bool:
-    return not present(output, needle, max_diffs=max_diffs, case_sensitive=case_sensitive)
-
-
 def in_order(output: str, first: str, second: str, *, case_sensitive: bool = False) -> bool:
-    """True when `first` appears before `second` in the output's reading order."""
+    """True when `first` appears before `second`. An empty needle never passes."""
     haystack = normalize(output, case_sensitive=case_sensitive)
-    left = haystack.find(normalize(first, case_sensitive=case_sensitive))
-    right = haystack.rfind(normalize(second, case_sensitive=case_sensitive))
+    before = normalize(first, case_sensitive=case_sensitive)
+    after = normalize(second, case_sensitive=case_sensitive)
+    if not before or not after or not haystack:
+        return False
+    left = haystack.find(before)
+    right = haystack.rfind(after)
     return left != -1 and right != -1 and left < right
-
-
-def _bag_overlap(expected: list[str], actual: list[str]) -> int:
-    return sum((Counter(expected) & Counter(actual)).values())
-
-
-def word_recall(expected: str, output: str) -> float:
-    """Fraction of the expected words that survived into the output (1.0 = none missing)."""
-    wanted = words(expected)
-    if not wanted:
-        return 1.0
-    return _bag_overlap(wanted, words(output)) / len(wanted)
-
-
-def word_precision(expected: str, output: str) -> float:
-    """Fraction of the output's words that were expected (1.0 = nothing hallucinated)."""
-    produced = words(output)
-    if not produced:
-        return 0.0
-    return _bag_overlap(produced, words(expected)) / len(produced)
-
-
-def digit_recall(expected: str, output: str) -> float:
-    """Word recall restricted to numeric tokens — the costliest OCR errors."""
-    wanted = [token for token in words(expected) if any(char.isdigit() for char in token)]
-    if not wanted:
-        return 1.0
-    produced = [token for token in words(output) if any(char.isdigit() for char in token)]
-    return _bag_overlap(wanted, produced) / len(wanted)
 
 
 def repeated_ngram_fraction(output: str, *, size: int = 8) -> float:
@@ -155,6 +124,73 @@ class _TableParser(HTMLParser):
             self._cell.append(data)
 
 
+def _markdown_grids(text: str) -> list[list[list[str]]]:
+    """Parse pipe tables into grids, dropping separator rows."""
+    grids, current = [], []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("|") and stripped.count("|") >= 2:
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if not all(set(cell) <= set("-: ") for cell in cells):
+                current.append(cells)
+            continue
+        if current:
+            grids.append(current)
+            current = []
+    if current:
+        grids.append(current)
+    return grids
+
+
+def table_grids(text: str) -> list[list[list[str]]]:
+    """Every table in the text as a row-major grid, from HTML or markdown alike."""
+    parser = _TableParser()
+    parser.feed(text)
+    grids = [parser.rows] if parser.rows else []
+    return grids + _markdown_grids(text)
+
+
+def table_cell_matches(
+    text: str,
+    cell: str,
+    *,
+    up: str | None = None,
+    down: str | None = None,
+    left: str | None = None,
+    right: str | None = None,
+    top_heading: str | None = None,
+    left_heading: str | None = None,
+    max_diffs: int = 0,
+) -> bool:
+    """True when `cell` sits in some table with the named neighbours around it."""
+
+    def same(value: str, expected: str | None) -> bool:
+        return expected is None or present(value, expected, max_diffs=max_diffs)
+
+    for grid in table_grids(text):
+        for row_index, row in enumerate(grid):
+            for col_index, value in enumerate(row):
+                if not present(value, cell, max_diffs=max_diffs):
+                    continue
+                above = grid[row_index - 1][col_index] if row_index > 0 and col_index < len(grid[row_index - 1]) else ""
+                below = (
+                    grid[row_index + 1][col_index]
+                    if row_index + 1 < len(grid) and col_index < len(grid[row_index + 1])
+                    else ""
+                )
+                if not (
+                    same(above, up)
+                    and same(below, down)
+                    and same(row[col_index - 1] if col_index > 0 else "", left)
+                    and same(row[col_index + 1] if col_index + 1 < len(row) else "", right)
+                    and same(grid[0][col_index] if col_index < len(grid[0]) else "", top_heading)
+                    and same(row[0], left_heading)
+                ):
+                    continue
+                return True
+    return False
+
+
 def html_table_records(markup: str) -> list[dict[str, str]]:
     """Parse an HTML table into records keyed by its header row."""
     parser = _TableParser()
@@ -172,10 +208,9 @@ def html_table_records(markup: str) -> list[dict[str, str]]:
 
 
 def table_cell_recall(records: list[dict[str, str]], output: str, *, max_diffs: int = 2) -> float:
-    """Fraction of ground-truth table cell values that appear in the output.
+    """Fraction of ground-truth table cell values present in the output.
 
-    Cell-level rather than all-or-nothing per row: one mangled cell should not
-    void an otherwise correct table, and the score stays diagnostic.
+    Cell-level, so one mangled cell does not void an otherwise correct table.
     """
     values = [value for record in records for value in record.values() if value]
     if not values:

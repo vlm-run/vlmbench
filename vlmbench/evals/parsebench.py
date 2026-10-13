@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from vlmbench import checks
-from vlmbench.eval import Eval, Sample, Verdict, render_pdf_page
+from vlmbench.eval import Eval, Sample, Verdict
 
 MANIFESTS = ("text_content.jsonl", "table.jsonl", "layout.jsonl")
 UNSUPPORTED_MANIFESTS = ("chart.jsonl", "text_formatting.jsonl")
@@ -82,17 +82,6 @@ class ParseBench(Eval):
                 truth={"rules": rules},
                 tags=tuple(sorted(tags[(pdf, page)])),
             )
-
-    def resolve_media(self, sample: Sample) -> str:
-        """Download the source PDF and render the referenced page, cached on disk."""
-        path, _, page = sample.media.rpartition("#")
-        cached = self.cache_dir / f"{sample.id.replace('/', '__')}.jpg.b64"
-        if cached.exists():
-            return cached.read_text()
-        uri = render_pdf_page(self.hf_file(path), int(page))
-        cached.parent.mkdir(parents=True, exist_ok=True)
-        cached.write_text(uri)
-        return uri
 
     def score(self, sample: Sample, output: str) -> Iterator[Verdict]:
         rules = sample.truth["rules"]

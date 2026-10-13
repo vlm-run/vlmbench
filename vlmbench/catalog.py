@@ -1,10 +1,13 @@
-"""Built-in providers. Each is a base_url plus optional hooks; add more with `-c`."""
+"""Built-in catalog: providers and the few models with mechanics worth recording.
+
+A bare `-m <id>` needs no Model entry; defaults apply. Add your own with `-c`.
+"""
 
 from typing import Any
 
 from openai import AsyncOpenAI
 
-from vlmbench.eval import Provider, Sample, Subject
+from vlmbench.eval import Model, Provider, Sample, Subject
 
 _OCR_METHODS = {"markdown", "ocr", "grounding", "layout"}
 
@@ -70,3 +73,36 @@ class Vllm(Provider):
     name = "vllm"
     base_url = "http://localhost:8000/v1"
     concurrency = 8
+
+
+class GlmOcr(Model):
+    """One transcription prompt upstream, so `ocr` returns the same bytes as `markdown`."""
+
+    model = "zai-org/glm-ocr"
+    takes_prompt = False
+    extra_body = {"method": "markdown"}
+
+
+class LightOnOcr3(Model):
+    """Upstream ships two prompts and calls anything else out of distribution."""
+
+    model = "lightonai/lightonocr-3-4b"
+    takes_prompt = False
+
+
+class VlmRunOcrAuto(Model):
+    model = "vlm-run/ocr:auto"
+    takes_prompt = False
+    extra_body = {"method": "markdown"}
+
+
+class DotsOcr(Model):
+    model = "rednote-hilab/dots.mocr"
+    takes_prompt = False
+    extra_body = {"method": "markdown"}
+
+
+class PaddleOcrVl(Model):
+    model = "paddlepaddle/paddleocr-vl"
+    takes_prompt = False
+    extra_body = {"method": "markdown"}

@@ -305,6 +305,21 @@ NVITOP 1.6.2      Driver Version: 580.126.09      CUDA Driver Version: 13.0
 
 </details>
 
+## Evals
+
+Measure whether the output is *right*, not just fast.
+
+```bash
+uvx vlmbench eval -d olmocr-bench -m zai-org/glm-ocr --limit 10 --stratify
+uvx vlmbench report ~/.vlmbench/evals/*/result.json -o board.html
+```
+
+- Suites: `parsebench`, `olmocr-bench`, `omni-parse-bench` — or point `-d` at your own `.py`.
+- `-m <provider>::<model_id>`, `-p` defaults to `vlmrun`.
+- Prompts, models, providers and evals are all plain Python you point at with `-c`; nothing to install.
+
+Full guide, concepts and progressive examples: **[EVALS.md](EVALS.md)**.
+
 ## Claude Code Installation
 
 Install vlmbench as a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) plugin:

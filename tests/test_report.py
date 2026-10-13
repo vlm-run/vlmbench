@@ -47,8 +47,7 @@ def test_rows_sort_by_overall_with_unscored_last():
         "eval": {"name": "x", "thresholds": {"good": 85, "fair": 70}},
         "limit": {"pages": 5, "of": 5, "partial": False},
         "rows": [
-            {"provider": "p", "model": "m", "scores": {"overall": r.overall, "columns": {}}, "cost": {}}
-            for r in rows
+            {"provider": "p", "model": "m", "scores": {"overall": r.overall, "columns": {}}, "cost": {}} for r in rows
         ],
     }
     assert [r.overall for r in load_rows_from(payload)] == [90.0, 50.0, None]
@@ -96,3 +95,22 @@ def test_unscored_column_renders_as_a_dash_not_zero():
 def test_missing_cost_never_renders_as_zero():
     page = to_html([make_row(cents_per_page=None)])
     assert "provider reported no cost" in page
+
+
+def test_single_provider_and_promptless_columns_are_dropped():
+    page = to_html([make_row()])
+    assert "<th>Provider</th>" not in page
+    assert "<th>Prompt</th>" not in page
+    assert "| Model | Overall |" in to_markdown([make_row()]).splitlines()[0]
+
+
+def test_columns_return_when_they_distinguish_rows():
+    rows = [make_row(), make_row(provider="openrouter", prompt="Anchored")]
+    page = to_html(rows)
+    assert "<th>Provider</th>" in page
+    assert "<th>Prompt</th>" in page
+
+
+def test_csv_keeps_every_column_for_machine_readers():
+    header = to_csv([make_row()]).splitlines()[0]
+    assert header.startswith("Provider,Model,Prompt,Overall")

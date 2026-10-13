@@ -141,10 +141,10 @@ def test_limit_first_and_percent_and_stratified():
 
 
 def test_user_agent_identifies_vlmbench():
+    from vlmbench import __version__
     from vlmbench.eval import USER_AGENT
 
-    assert USER_AGENT.startswith("vlmbench/")
-    assert "openai-python/" in USER_AGENT
+    assert USER_AGENT == f"vlmbench/{__version__}"
 
 
 def test_provider_client_sends_user_agent_and_provider_headers():
@@ -164,3 +164,12 @@ def test_provider_client_sends_user_agent_and_provider_headers():
             await client.close()
 
     asyncio.run(check())
+
+
+def test_unresolved_media_never_reaches_the_request():
+    from vlmbench.eval import build_messages
+
+    assert build_messages("go", "text:body")[0]["content"][0]["type"] == "text"
+    assert build_messages("go", "data:image/jpeg;base64,AAA")[0]["content"][0]["type"] == "image_url"
+    with pytest.raises(EvalError, match="never resolved"):
+        build_messages("go", "docs/layout/page.pdf#1")

@@ -3230,6 +3230,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Catalog file, directory, or file.py:ClassName; repeatable",
     )
     eval_parser.add_argument(
+        "--judge", default=None, metavar="[PROVIDER::]ID", help="Also score each page 0-10 with a VLM judge"
+    )
+    eval_parser.add_argument(
+        "--concurrency", type=int, default=None, help="In-flight requests per provider (default: the provider's cap)"
+    )
+    eval_parser.add_argument(
         "--limit", default=None, metavar="N|N%%", help="Score only the first N samples, or N%% of them"
     )
     eval_parser.add_argument(
@@ -3765,27 +3771,35 @@ def _print_eval_config(ev_obj: Any, samples: int, total: int, args: argparse.Nam
 
 
 def _print_eval_table(results: list[Any], columns: list[str], partial: bool) -> None:
+    """Columns that carry no information are dropped so model ids stay readable."""
+    show_provider = len({r.subject.provider.name for r in results}) > 1
+    show_prompt = any(r.subject.prompt for r in results)
+
     table = Table(box=box.SIMPLE_HEAD, title="eval results")
-    table.add_column("Provider", style="cyan")
-    table.add_column("Model")
-    table.add_column("Prompt", style="dim")
+    if show_provider:
+        table.add_column("Provider", style="cyan")
+    table.add_column("Model", overflow="fold")
+    if show_prompt:
+        table.add_column("Prompt", style="dim")
     table.add_column("Overall", justify="right", style="bold")
     for name in columns:
         table.add_column(name, justify="right")
     table.add_column("¢/Page", justify="right", style="dim")
+
     for result in sorted(results, key=lambda r: r.total.score or 0, reverse=True):
-        cents = f"{result.cost_usd / max(1, result.total.tests or 1) * 100:.3f}" if result.cost_usd is not None else "—"
-        table.add_row(
-            result.subject.provider.name,
-            result.subject.model_id,
-            result.subject.prompt.key() if result.subject.prompt else "—",
-            "—" if result.total.score is None else f"{result.total.score:.1f}",
-            *[
-                "—" if (c := result.columns.get(name)) is None or c.score is None else f"{c.score:.1f}"
-                for name in columns
-            ],
-            cents,
-        )
+        pages = max(1, result.total.tests or 1)
+        cents = f"{result.cost_usd / pages * 100:.3f}" if result.cost_usd is not None else "—"
+        row = [result.subject.provider.name] if show_provider else []
+        row.append(result.subject.model_id)
+        if show_prompt:
+            row.append(result.subject.prompt.key() if result.subject.prompt else "—")
+        row.append("—" if result.total.score is None else f"{result.total.score:.1f}")
+        row += [
+            "—" if (c := result.columns.get(name)) is None or c.score is None else f"{c.score:.1f}" for name in columns
+        ]
+        row.append(cents)
+        table.add_row(*row)
+
     console.print(table)
     if partial:
         console.print("[yellow]⚠ PARTIAL run — not comparable to published numbers.[/yellow]")
@@ -3872,6 +3886,8 @@ def cmd_eval(args: argparse.Namespace) -> None:
                     run_dir=run_dir,
                     extra_body=extra_body,
                     score_only=args.score_only,
+                    concurrency=args.concurrency,
+                    judge=args.judge,
                     on_progress=on_progress,
                 )
             )

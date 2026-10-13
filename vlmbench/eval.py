@@ -1,15 +1,14 @@
-"""Accuracy evaluation: typed catalog (Eval/Model/Prompt/Provider), async runner, scoring.
+"""Typed catalog (Eval/Model/Prompt/Provider), async runner, scoring.
 
-Catalog entries self-register by subclassing; `load_catalog` imports user files.
-All inference goes through `openai.AsyncOpenAI`.
+Catalog entries self-register by subclassing. All inference goes through AsyncOpenAI.
 """
 
 import asyncio
 import hashlib
 import importlib.util
 import inspect
+import itertools
 import os
-import platform
 import re
 import time
 from collections.abc import Iterator, Mapping, Sequence
@@ -17,13 +16,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
-import openai
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
 from vlmbench.version import __version__ as VERSION
 
-USER_AGENT = f"vlmbench/{VERSION} openai-python/{openai.__version__} python/{platform.python_version()}"
+USER_AGENT = f"vlmbench/{VERSION}"
 
 CACHE_ROOT = Path(os.environ.get("VLMBENCH_HOME", Path.home() / ".vlmbench"))
 CATALOG_DIR = CACHE_ROOT / "catalog"
@@ -175,6 +173,7 @@ class Provider:
     api_key_env: ClassVar[str | None] = None
     headers: ClassVar[Mapping[str, str]] = {}
     concurrency: ClassVar[int] = 4
+    """In-flight request cap. Keep it under the provider's rate limit."""
     supports_stream_usage: ClassVar[bool] = True
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -275,13 +274,27 @@ class Eval:
 
         return Path(hf_hub_download(self.repo_id, path, repo_type="dataset", revision=self.revision))
 
-    def resolve_media(self, sample: Sample) -> str:
-        """Materialise `sample.media` into a data URI or URL, just before the request.
+    def hf_rows(self, split: str = "train", config: str | None = None) -> Iterator[dict]:
+        """Stream the eval's HF dataset rows."""
+        from datasets import load_dataset
 
-        Overridden by evals whose samples carry a reference (e.g. a PDF page to
-        render) so `--limit` never pays for pages it discards.
+        yield from load_dataset(self.repo_id, config, split=split, streaming=True, revision=self.revision)
+
+    def resolve_media(self, sample: Sample) -> str:
+        """Materialise `sample.media` just before the request, so `--limit` discards cost nothing.
+
+        `data:`, `http(s):` and `text:` pass through; anything else is `<repo path>[#page]`.
         """
-        return sample.media
+        if sample.media.startswith(("data:", "http://", "https://", "text:")):
+            return sample.media
+        path, _, page = sample.media.rpartition("#")
+        cached = self.cache_dir / f"{sample.id.replace('/', '__')}.b64"
+        if cached.exists():
+            return cached.read_text()
+        uri = media_data_uri(self.hf_file(path or sample.media), int(page or 1))
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cached.write_text(uri)
+        return uri
 
     def samples(self) -> Iterator[Sample]:
         raise NotImplementedError
@@ -290,19 +303,28 @@ class Eval:
         raise NotImplementedError
 
 
-def render_pdf_page(path: Path, page: int = 1, *, dpi: int = 150, max_long_edge: int = 2048) -> str:
-    """Render one 1-indexed PDF page to a JPEG data URI."""
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff"}
+
+
+def media_data_uri(path: Path, page: int = 1, *, dpi: int = 150, max_long_edge: int = 2048) -> str:
+    """Render a PDF page, or load an image, as a JPEG data URI."""
     import base64
     import io
 
-    import pypdfium2 as pdfium
+    from PIL import Image
 
-    document = pdfium.PdfDocument(str(path))
-    try:
-        index = min(max(page - 1, 0), len(document) - 1)
-        image = document[index].render(scale=dpi / 72).to_pil().convert("RGB")
-    finally:
-        document.close()
+    if path.suffix.lower() in IMAGE_SUFFIXES:
+        image = Image.open(path).convert("RGB")
+    else:
+        import pypdfium2 as pdfium
+
+        document = pdfium.PdfDocument(str(path))
+        try:
+            index = min(max(page - 1, 0), len(document) - 1)
+            image = document[index].render(scale=dpi / 72).to_pil().convert("RGB")
+        finally:
+            document.close()
+
     if max(image.size) > max_long_edge:
         scale = max_long_edge / max(image.size)
         image = image.resize((int(image.width * scale), int(image.height * scale)))
@@ -391,9 +413,8 @@ def autoload() -> None:
         return
     _autoloaded = True
 
+    import vlmbench.catalog  # noqa: F401
     import vlmbench.evals  # noqa: F401
-    import vlmbench.models  # noqa: F401
-    import vlmbench.providers  # noqa: F401
 
     if CATALOG_DIR.is_dir():
         load_catalog(str(CATALOG_DIR))
@@ -487,6 +508,8 @@ def _merge(*layers: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def build_messages(prompt: str, media: str) -> list[dict[str, Any]]:
+    if not media.startswith(("data:", "http://", "https://", "text:")):
+        raise EvalError(f"media was never resolved to a URI: {media[:80]!r}")
     content: list[dict[str, Any]] = []
     if media.startswith("text:"):
         content.append({"type": "text", "text": media[len("text:") :]})
@@ -575,8 +598,7 @@ class ColumnScore:
 def aggregate(verdicts: Iterator[tuple[str, Verdict]]) -> dict[str, ColumnScore]:
     """Fold `(sample_id, (column, value))` pairs into per-column scores.
 
-    A column is either boolean (a pass rate) or continuous (a mean), never both —
-    mixing them would let one kind silently shadow the other.
+    A column is boolean (a pass rate) or continuous (a mean), never both.
     """
     columns: dict[str, ColumnScore] = {}
     kinds: dict[str, str] = {}
@@ -630,10 +652,15 @@ def apply_limit(samples: list[Sample], spec: str | None, *, stratify: bool = Fal
     for sample in samples:
         by_split.setdefault(sample.split, []).append(sample)
     kept: list[Sample] = []
-    per_split = max(1, count // max(1, len(by_split)))
-    for group in by_split.values():
-        kept.extend(group[:per_split])
-    return kept[:count], total
+    cursors = dict.fromkeys(by_split, 0)
+    while len(kept) < count and any(cursors[name] < len(group) for name, group in by_split.items()):
+        for name, group in by_split.items():
+            if len(kept) >= count:
+                break
+            if cursors[name] < len(group):
+                kept.append(group[cursors[name]])
+                cursors[name] += 1
+    return kept, total
 
 
 async def run_subject(
@@ -645,16 +672,19 @@ async def run_subject(
     extra_body: Mapping[str, Any],
     concurrency: int,
     resolve_media: Any = None,
+    skip_uncached: bool = False,
     on_done: Any = None,
 ) -> list[Prediction]:
     """Run one leaderboard row, reusing cached page output when present."""
     semaphore = asyncio.Semaphore(concurrency)
     stream_usage = subject.provider.supports_stream_usage
 
-    async def one(sample: Sample) -> Prediction:
+    async def one(sample: Sample) -> Prediction | None:
         cached_path = cache_dir / f"{sample.id.replace('/', '__')}.md" if cache_dir else None
         if cached_path is not None and cached_path.exists():
             prediction = Prediction(sample_id=sample.id, text=cached_path.read_text(), cached=True)
+        elif skip_uncached:
+            return None
         else:
             async with semaphore:
                 media = await asyncio.to_thread(resolve_media, sample) if resolve_media else sample.media
@@ -668,7 +698,55 @@ async def run_subject(
             on_done(prediction)
         return prediction
 
-    return list(await asyncio.gather(*(one(sample) for sample in samples)))
+    done = await asyncio.gather(*(one(sample) for sample in samples))
+    return [prediction for prediction in done if prediction is not None]
+
+
+JUDGE_PROMPT = (
+    "You are grading an OCR transcription of the page image.\n"
+    "Score 0-10 for faithfulness: text captured, reading order, tables, no invented content.\n"
+    "Reply with the number alone.\n\n--- transcription ---\n{output}"
+)
+
+
+async def judge_predictions(
+    ev: Eval,
+    model_ref: str,
+    samples: Sequence[Sample],
+    predictions: Sequence[Prediction],
+    *,
+    concurrency: int = 4,
+) -> dict[str, float]:
+    """Score each prediction 0-1 with a VLM judge. Returns {sample_id: score}."""
+    provider_name, model_id = parse_model_ref(model_ref)
+    provider = resolve_provider(provider_name or "vlmrun")
+    by_id = {sample.id: sample for sample in samples}
+    semaphore = asyncio.Semaphore(concurrency)
+    client = provider.client()
+    scores: dict[str, float] = {}
+
+    async def one(prediction: Prediction) -> None:
+        if prediction.error is not None:
+            return
+        sample = by_id[prediction.sample_id]
+        media = await asyncio.to_thread(ev.resolve_media, sample)
+        messages = build_messages(JUDGE_PROMPT.format(output=prediction.text[:8000]), media)
+        async with semaphore:
+            try:
+                reply = await client.chat.completions.create(
+                    model=model_id, messages=messages, max_tokens=8, temperature=0.0
+                )
+            except Exception:  # noqa: BLE001 — a judge failure must not void the run
+                return
+        match = re.search(r"\d+(?:\.\d+)?", reply.choices[0].message.content or "")
+        if match:
+            scores[prediction.sample_id] = min(1.0, float(match.group()) / 10)
+
+    try:
+        await asyncio.gather(*(one(prediction) for prediction in predictions))
+    finally:
+        await client.close()
+    return scores
 
 
 @dataclass(slots=True)
@@ -702,6 +780,8 @@ async def run_all(
     run_dir: Path | None = None,
     extra_body: Mapping[str, Any] | None = None,
     score_only: bool = False,
+    concurrency: int | None = None,
+    judge: str | None = None,
     on_progress: Any = None,
 ) -> list[SubjectResult]:
     """Run every subject over every sample, then score. One client per provider."""
@@ -719,8 +799,9 @@ async def run_all(
                 client=client,
                 cache_dir=cache_dir,
                 extra_body=extra_body or {},
-                concurrency=subject.provider.concurrency,
+                concurrency=concurrency or subject.provider.concurrency,
                 resolve_media=None if score_only else ev.resolve_media,
+                skip_uncached=score_only,
                 on_done=(lambda prediction, s=subject: on_progress(s, prediction)) if on_progress else None,
             )
             by_id = {sample.id: sample for sample in samples}
@@ -730,7 +811,8 @@ async def run_all(
                 if prediction.error is None
                 for verdict in ev.score(by_id[prediction.sample_id], prediction.text)
             )
-            columns = aggregate(verdicts)
+            judged = await judge_predictions(ev, judge, samples, predictions) if judge else {}
+            columns = aggregate(itertools.chain(verdicts, (("judge", ("judge", score)) for score in judged.values())))
             costs = [p.cost_usd for p in predictions if p.cost_usd is not None]
             ttfts = [p.ttft_ms for p in predictions if p.ttft_ms is not None]
             results.append(
