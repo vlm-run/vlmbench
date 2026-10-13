@@ -33,6 +33,9 @@ dependencies = [
     "pypdfium2>=4",
     "pyyaml>=6",
     "datasets>=4.5.0",
+    "rapidfuzz>=3",
+    "httpx>=0.27",
+    "pydantic>=2",
 ]
 
 [project.optional-dependencies]

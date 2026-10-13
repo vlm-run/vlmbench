@@ -3200,6 +3200,53 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated extra columns to show: vram,backend,hw,quant",
     )
 
+    # ── eval subcommand ──
+    eval_parser = subparsers.add_parser("eval", help="Score models on a rule-based accuracy suite.")
+    eval_parser.add_argument(
+        "-d", "--dataset", default=None, help="Suite: short name, hf://datasets/<org>/<name>, or a .py path"
+    )
+    eval_parser.add_argument(
+        "-e", "--eval", dest="eval_ref", default=None, help="Eval definition, when it cannot be inferred from -d"
+    )
+    eval_parser.add_argument(
+        "-m",
+        "--model",
+        dest="models",
+        action="append",
+        default=[],
+        metavar="[PROVIDER::]ID",
+        help="Model to score; repeatable. 'all' expands to the provider's catalog",
+    )
+    eval_parser.add_argument(
+        "-p", "--provider", default="vlmrun", help="Default provider for unprefixed models (default: vlmrun)"
+    )
+    eval_parser.add_argument(
+        "-c",
+        "--catalog",
+        dest="catalogs",
+        action="append",
+        default=[],
+        metavar="REF",
+        help="Catalog file, directory, or file.py:ClassName; repeatable",
+    )
+    eval_parser.add_argument(
+        "--limit", default=None, metavar="N|N%%", help="Score only the first N samples, or N%% of them"
+    )
+    eval_parser.add_argument(
+        "--stratify", action="store_true", help="Spread --limit across splits instead of taking the first N"
+    )
+    eval_parser.add_argument(
+        "--dry-run", action="store_true", help="Print the subject matrix and estimated requests, then exit"
+    )
+    eval_parser.add_argument(
+        "--score-only", action="store_true", help="Re-score cached page output without new inference"
+    )
+    eval_parser.add_argument("--extra-body", default=None, help="JSON merged into every request body (last wins)")
+    eval_parser.add_argument(
+        "--output-directory", default=None, help="Run directory (default: ~/.vlmbench/evals/<run>)"
+    )
+    eval_parser.add_argument("--list", action="store_true", help="List loaded evals, providers, models and prompts")
+
     # ── profiles subcommand ──
     subparsers.add_parser("profiles", help="List available model profiles.")
 
@@ -3663,6 +3710,184 @@ def cmd_compare(args: argparse.Namespace) -> None:
     )
 
 
+def _print_catalog() -> None:
+    """Print every loaded eval, provider, model and prompt with its origin."""
+    from vlmbench import eval as ev
+
+    def origin(cls: type) -> str:
+        where = ev.origin_of(cls)
+        return "builtin" if where == "builtin" else str(Path(where))
+
+    for kind, heading in (("eval", "EVALS"), ("provider", "PROVIDERS"), ("model", "MODELS"), ("prompt", "PROMPTS")):
+        entries = {id(cls): cls for cls in ev.loaded(kind).values()}
+        console.print(f"\n[bold]{heading}[/bold]")
+        if not entries:
+            console.print("  [dim]none loaded[/dim]")
+            continue
+        for cls in entries.values():
+            match kind:
+                case "eval":
+                    console.print(f"  {cls.name:<26} {cls.dataset:<44} [dim]{origin(cls)}[/dim]")
+                case "provider":
+                    console.print(f"  {cls.name:<26} {cls.base_url:<44} [dim]{origin(cls)}[/dim]")
+                case "model":
+                    flags = "takes_prompt=false" if not cls.takes_prompt else ""
+                    console.print(f"  {cls.model:<26} {flags:<44} [dim]{origin(cls)}[/dim]")
+                case _:
+                    console.print(f"  {cls.key():<26} {cls.text[:42]!r:<44} [dim]{origin(cls)}[/dim]")
+
+
+def _print_eval_config(ev_obj: Any, samples: int, total: int, args: argparse.Namespace) -> None:
+    limit_note = f"{samples} of {total}" if samples < total else f"{total} (all)"
+    mode = "stratified" if args.stratify else "first"
+    rows = [
+        ("eval", ev_obj.key(), ev_obj.description),
+        ("dataset", ev_obj.dataset, f"{limit_note} samples ({mode})"),
+        ("provider", args.provider, ""),
+    ]
+    table = Table(box=box.SIMPLE, show_header=False, pad_edge=False)
+    table.add_column(style="dim", width=12)
+    table.add_column(style="bold")
+    table.add_column(style="dim")
+    for label, value, note in rows:
+        table.add_row(label, str(value), note)
+    console.print(table)
+
+
+def _print_eval_table(results: list[Any], columns: list[str], partial: bool) -> None:
+    table = Table(box=box.SIMPLE_HEAD, title="eval results")
+    table.add_column("Provider", style="cyan")
+    table.add_column("Model")
+    table.add_column("Prompt", style="dim")
+    table.add_column("Overall", justify="right", style="bold")
+    for name in columns:
+        table.add_column(name, justify="right")
+    table.add_column("¢/Page", justify="right", style="dim")
+    for result in sorted(results, key=lambda r: r.total.score or 0, reverse=True):
+        cents = f"{result.cost_usd / max(1, result.total.tests or 1) * 100:.3f}" if result.cost_usd is not None else "—"
+        table.add_row(
+            result.subject.provider.name,
+            result.subject.model_id,
+            result.subject.prompt.key() if result.subject.prompt else "—",
+            "—" if result.total.score is None else f"{result.total.score:.1f}",
+            *[
+                "—" if (c := result.columns.get(name)) is None or c.score is None else f"{c.score:.1f}"
+                for name in columns
+            ],
+            cents,
+        )
+    console.print(table)
+    if partial:
+        console.print("[yellow]⚠ PARTIAL run — not comparable to published numbers.[/yellow]")
+
+
+def cmd_eval(args: argparse.Namespace) -> None:
+    """Score one or more models on a rule-based accuracy suite."""
+    from vlmbench import eval as ev
+
+    try:
+        for ref in args.catalogs:
+            ev.load_catalog(ref)
+        if args.list:
+            _print_catalog()
+            return
+        if not args.dataset and not args.eval_ref:
+            print_error("eval needs a suite", "pass -d <name|hf://datasets/org/name|path.py>")
+            sys.exit(1)
+
+        ev_obj = ev.resolve_eval(args.eval_ref or args.dataset)
+        extra_body = json.loads(args.extra_body) if args.extra_body else {}
+        models = args.models or ["all"]
+        if "all" in models:
+            provider = ev.resolve_provider(args.provider)
+            models = [m for m in models if m != "all"] + asyncio.run(_list_provider_models(provider))
+        if not models:
+            print_error("no models", f"provider {args.provider!r} listed none; pass -m explicitly")
+            sys.exit(1)
+        if extra_body and len(models) > 1:
+            print_warning("--extra-body applies to every -m; put per-model settings in a catalog file")
+
+        subjects = ev.build_subjects(models, ev.prompts_in_order(), args.provider, ev_obj.prompt)
+        samples = list(ev_obj.samples())
+        kept, total = ev.apply_limit(samples, args.limit, stratify=args.stratify)
+
+        covered = {s.split for s in kept}
+        all_splits = {s.split for s in samples}
+        if len(covered) < len(all_splits):
+            print_warning(
+                f"--limit covers {len(covered)} of {len(all_splits)} splits "
+                f"({', '.join(sorted(covered))}). Add --stratify for coverage."
+            )
+
+        _print_eval_config(ev_obj, len(kept), total, args)
+        if args.dry_run:
+            console.print(
+                f"\n[bold]{len(subjects)} rows × {len(kept)} samples = {len(subjects) * len(kept)} requests[/bold]"
+            )
+            for subject in subjects:
+                note = "takes_prompt=false" if not subject.model.takes_prompt else ""
+                prompt_name = subject.prompt.key() if subject.prompt else "—"
+                console.print(
+                    f"  {subject.provider.name:<12} {subject.model_id:<34} {prompt_name:<12} [dim]{note}[/dim]"
+                )
+            return
+
+        run_dir = (
+            Path(args.output_directory)
+            if args.output_directory
+            else ev.EVALS_DIR / f"{ev_obj.key()}-{secrets.token_hex(3)}"
+        )
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        total_tasks = len(subjects) * len(kept)
+        with Progress(
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total} pages"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+        ) as progress:
+            task_id = progress.add_task("scoring", total=total_tasks)
+
+            def on_progress(subject: Any, _prediction: Any) -> None:
+                progress.advance(task_id)
+                progress.update(task_id, description=f"scoring {subject.model_id}")
+
+            results = asyncio.run(
+                ev.run_all(
+                    ev_obj,
+                    subjects,
+                    kept,
+                    run_dir=run_dir,
+                    extra_body=extra_body,
+                    score_only=args.score_only,
+                    on_progress=on_progress,
+                )
+            )
+
+        columns = sorted({name for result in results for name in result.columns})
+        _print_eval_table(results, columns, partial=len(kept) < total)
+
+        payload = ev.result_payload(
+            ev_obj, results, limit_spec=args.limit, pages=len(kept), total_pages=total, stratified=args.stratify
+        )
+        result_path = run_dir / "result.json"
+        result_path.write_text(json.dumps(payload, indent=2))
+        console.print(f"\n[dim]{result_path}[/dim]")
+    except ev.EvalError as exc:
+        print_error("eval configuration", str(exc))
+        sys.exit(1)
+
+
+async def _list_provider_models(provider: type) -> list[str]:
+    client = provider.client()
+    try:
+        return await provider.list_models(client)
+    finally:
+        await client.close()
+
+
 def main() -> None:
     """Entry point: default to 'run' subcommand if none specified."""
     # Always show the banner first
@@ -3670,7 +3895,7 @@ def main() -> None:
 
     # If no subcommand given (first arg starts with -- or -), insert "run"
     argv = sys.argv[1:]
-    subcommands = {"compare", "profiles"}
+    subcommands = {"compare", "profiles", "eval"}
     if argv and argv[0] not in subcommands and not argv[0].startswith("--help"):
         if argv[0].startswith("--") or argv[0].startswith("-"):
             argv = ["run"] + argv
@@ -3689,6 +3914,8 @@ def main() -> None:
             cmd_run(parsed)
         case "compare":
             cmd_compare(parsed)
+        case "eval":
+            cmd_eval(parsed)
         case "profiles":
             cmd_profiles()
 
