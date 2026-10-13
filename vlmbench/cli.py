@@ -3214,7 +3214,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="models",
         action="append",
         default=[],
-        metavar="[PROVIDER::]ID",
+        metavar="[PROVIDER::]ID[::PROMPT]",
         help="Model to score; repeatable. 'all' expands to the provider's catalog",
     )
     eval_parser.add_argument(
@@ -3236,7 +3236,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--concurrency", type=int, default=None, help="In-flight requests per provider (default: the provider's cap)"
     )
     eval_parser.add_argument(
-        "--limit", default=None, metavar="N|N%%", help="Score only the first N samples, or N%% of them"
+        "--limit", default=None, metavar="N|N%", help="Score only the first N samples, or N%% of them"
     )
     eval_parser.add_argument(
         "--stratify", action="store_true", help="Spread --limit across splits instead of taking the first N"
@@ -3846,7 +3846,7 @@ def cmd_eval(args: argparse.Namespace) -> None:
         if extra_body and len(models) > 1:
             print_warning("--extra-body applies to every -m; put per-model settings in a catalog file")
 
-        subjects = ev.build_subjects(models, ev.prompts_in_order(), args.provider, ev_obj.prompt)
+        subjects = ev.build_subjects(models, args.provider, ev_obj.prompt)
         samples = list(ev_obj.samples())
         kept, total = ev.apply_limit(samples, args.limit, stratify=args.stratify)
 
@@ -3874,7 +3874,7 @@ def cmd_eval(args: argparse.Namespace) -> None:
         run_dir = (
             Path(args.output_directory)
             if args.output_directory
-            else ev.EVALS_DIR / f"{ev_obj.key()}-{secrets.token_hex(3)}"
+            else ev.EVALS_DIR / f"{ev_obj.key()}-{ev.today().replace('-', '')}-{secrets.token_hex(3)}"
         )
         run_dir.mkdir(parents=True, exist_ok=True)
 

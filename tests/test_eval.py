@@ -56,11 +56,12 @@ class Fake(Provider):
 @pytest.mark.parametrize(
     ("ref", "expected"),
     [
-        ("vlmrun::vlm-run/ocr:auto", ("vlmrun", "vlm-run/ocr:auto")),
-        ("ollama::qwen3-vl:8b", ("ollama", "qwen3-vl:8b")),
-        ("openrouter::deepseek/deepseek-r1:free", ("openrouter", "deepseek/deepseek-r1:free")),
-        ("zai-org/glm-ocr", (None, "zai-org/glm-ocr")),
-        ("qwen3-vl:8b", (None, "qwen3-vl:8b")),
+        ("vlmrun::vlm-run/ocr:auto", ("vlmrun", "vlm-run/ocr:auto", None)),
+        ("ollama::qwen3-vl:8b", ("ollama", "qwen3-vl:8b", None)),
+        ("openrouter::deepseek/deepseek-r1:free", ("openrouter", "deepseek/deepseek-r1:free", None)),
+        ("zai-org/glm-ocr", (None, "zai-org/glm-ocr", None)),
+        ("qwen3-vl:8b", (None, "qwen3-vl:8b", None)),
+        ("vlmrun::qwen/qwen3.8-27b::Anchored", ("vlmrun", "qwen/qwen3.8-27b", "Anchored")),
     ],
 )
 def test_model_ref_splits_on_double_colon_only(ref, expected):
@@ -86,22 +87,6 @@ def test_model_id_normalisation_crosses_providers():
 def test_quirky_model_resolves_by_any_casing():
     assert resolve_model("ACME/Fixed-OCR") is Quirky
     assert resolve_model("acme/unknown-model").takes_prompt is True
-
-
-def test_cross_product_skips_prompts_for_models_that_take_none():
-    subjects = build_subjects(["fake::acme/fixed-ocr", "fake::acme/general-vlm"], [Terse], "fake", "suite default")
-    assert len(subjects) == 2
-    fixed, general = subjects
-    assert fixed.prompt is None and general.prompt is Terse
-    sample = Sample(id="x", media="text:body")
-    assert fixed.prompt_text(sample) == ""
-    assert general.prompt_text(sample) == "Markdown only."
-
-
-def test_suite_default_prompt_used_when_catalog_is_empty():
-    (subject,) = build_subjects(["fake::acme/general-vlm"], [], "fake", "suite default")
-    assert subject.prompt is None
-    assert subject.prompt_text(Sample(id="x", media="text:body")) == "suite default"
 
 
 def test_prompt_reports_missing_context_key():
@@ -179,8 +164,8 @@ def test_cache_key_changes_with_the_prompt():
     from vlmbench.eval import build_subjects, response_cache_key
 
     sample = Sample(id="p1", media="text:body")
-    (plain,) = build_subjects(["fake::acme/general-vlm"], [], "fake", "suite default")
-    (terse,) = build_subjects(["fake::acme/general-vlm"], [Terse], "fake", "suite default")
+    (plain,) = build_subjects(["fake::acme/general-vlm"], "fake", "suite default")
+    (terse,) = build_subjects(["fake::acme/general-vlm::Terse"], "fake", "suite default")
     assert response_cache_key(plain, sample, plain.prompt_text(sample)) != response_cache_key(
         terse, sample, terse.prompt_text(sample)
     )
@@ -190,7 +175,7 @@ def test_cache_key_is_stable_for_identical_inputs():
     from vlmbench.eval import build_subjects, response_cache_key
 
     sample = Sample(id="p1", media="text:body")
-    (subject,) = build_subjects(["fake::acme/general-vlm"], [Terse], "fake", "d")
+    (subject,) = build_subjects(["fake::acme/general-vlm::Terse"], "fake", "d")
     prompt = subject.prompt_text(sample)
     assert response_cache_key(subject, sample, prompt) == response_cache_key(subject, sample, prompt)
 
@@ -202,3 +187,38 @@ def test_judge_is_not_implemented():
 
     with pytest.raises(NotImplementedError):
         aio.run(judge_predictions())
+
+
+def test_prompt_is_named_explicitly_per_row():
+    fixed, general = build_subjects(["fake::acme/fixed-ocr", "fake::acme/general-vlm::Terse"], "fake", "suite default")
+    assert fixed.prompt is None and general.prompt is Terse
+    sample = Sample(id="x", media="text:body")
+    assert fixed.prompt_text(sample) == ""
+    assert general.prompt_text(sample) == "Markdown only."
+
+
+def test_suite_default_prompt_used_when_none_is_named():
+    (subject,) = build_subjects(["fake::acme/general-vlm"], "fake", "suite default")
+    assert subject.prompt is None
+    assert subject.prompt_text(Sample(id="x", media="text:body")) == "suite default"
+
+
+def test_naming_a_prompt_for_a_promptless_model_is_an_error():
+    with pytest.raises(EvalError, match="takes no prompt"):
+        build_subjects(["fake::acme/fixed-ocr::Terse"], "fake", "d")
+
+
+def test_unknown_prompt_lists_what_is_registered():
+    with pytest.raises(EvalError, match="unknown prompt"):
+        build_subjects(["fake::acme/general-vlm::Nope"], "fake", "d")
+
+
+def test_two_field_ref_must_name_a_known_provider():
+    with pytest.raises(EvalError, match="To name a prompt"):
+        parse_model_ref("qwen/qwen3.8-27b::Anchored")
+
+
+def test_revision_defaults_to_the_run_date():
+    from vlmbench.eval import today
+
+    assert len(today()) == 8 and today().count("-") == 2

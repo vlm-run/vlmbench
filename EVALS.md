@@ -12,12 +12,12 @@ uvx vlmbench eval -d olmocr-bench -m zai-org/glm-ocr --limit 10
 |---|---|---|
 | **Eval** | A dataset plus how to score it — `samples()` and `score()` | `vlmbench/evals/*.py` or your own `.py` |
 | **Sample** | One page: media, split, ground truth, prompt context | yielded by `Eval.samples()` |
-| **Prompt** | Model-agnostic prompt text. Swept as a cross product | a catalog file |
+| **Prompt** | Model-agnostic prompt text, named per row | a catalog file |
 | **Model** | Request mechanics for one model id — carries no prompt | `vlmbench/models.py` or a catalog file |
 | **Provider** | Where requests go, plus optional hooks | `vlmbench/providers.py` or a catalog file |
 | **Verdict** | `(column, value)` — `bool` counts a test, `float` averages, `None` is unsupported | yielded by `Eval.score()` |
 
-- A **row** on the leaderboard is one `(provider, model, prompt)` triple.
+- A **row** on the leaderboard is one `-m`, i.e. one `(provider, model, prompt)` triple.
 - A **column** is either boolean (a pass rate) or continuous (a mean), never both.
 - `None` means *not measured*, and is reported separately from a score of zero.
 
@@ -46,7 +46,7 @@ flowchart LR
 ```mermaid
 flowchart TD
   CLI["vlmbench eval -d … -m … -c …"] --> L[Load catalog<br/>builtin → ~/.vlmbench/catalog → -c]
-  L --> X[Cross product<br/>models × prompts]
+  L --> X[One subject per -m<br/>provider · model · prompt]
   X --> S["Samples (--limit, --stratify)"]
 
   S --> MC{media in LRU?}
@@ -78,7 +78,7 @@ flowchart TD
 | `omni-parse-bench` | `hf://datasets/datalab-to/omni_parse_bench` | 2,937 pages | present, order, repeat, tables |
 
 - Short name or full `hf://` ref both work; the full ref is always what gets recorded.
-- Pin a revision with `@`: `-d parsebench@3f9ab12`.
+- Pin a revision with `@`: `-d parsebench@3f9ab12`. Unpinned runs record the run date (`YY-MM-DD`) as the revision.
 - Not implemented yet, reported as `unsupported` rather than scored: olmOCR `math`, ParseBench charts and formatting, omni `layout_kind`.
 
 ## Progressive examples
@@ -90,7 +90,7 @@ vlmbench eval -d olmocr-bench -m zai-org/glm-ocr --limit 10 --stratify
 ```
 
 - `-p` defaults to `vlmrun` (the gateway), so the provider can be left off.
-- `--limit 10` or `--limit 1%` for a fast signal; `--stratify` spreads it across splits.
+- `--limit 10`, `--limit 1%` or `--limit 0.5%` for a fast signal; `--stratify` spreads it across splits.
 - Any limited run is branded **PARTIAL** everywhere and is not comparable to published numbers.
 - Responses are cached on disk by a fingerprint of provider, model, prompt text, `extra_body` and sample — so a re-run costs nothing and an edited prompt misses the cache.
 - `--no-cache` re-requests everything; `--score-only` re-scores cached output with no network at all.
@@ -104,7 +104,8 @@ vlmbench eval -d olmocr-bench --limit 10 \
   -m openrouter::qwen/qwen3-vl-8b-instruct
 ```
 
-- `-m <provider>::<model_id>` — split on the **first** `::` only, so `vlmrun::vlm-run/ocr:auto` and `ollama::qwen3-vl:8b` work.
+- `-m [provider::]model_id[::prompt]` — `::` separates the fields, single colons stay in the model id, so `vlmrun::vlm-run/ocr:auto` and `ollama::qwen3-vl:8b` work.
+- Two fields are read as `provider::model_id`; naming a prompt needs all three.
 - `-m all` expands to the provider's catalog, filtered to OCR-capable models.
 - `--dry-run` prints the matrix and request count before spending anything.
 
@@ -122,12 +123,14 @@ class Plain(Prompt):
 ```
 
 ```bash
-vlmbench eval -d olmocr-bench -c prompts/ocr.py -m vlmrun::qwen/qwen3.8-27b --limit 10
+vlmbench eval -d olmocr-bench -c prompts/ocr.py --limit 10 \
+  -m vlmrun::qwen/qwen3.8-27b::Anchored \
+  -m vlmrun::qwen/qwen3.8-27b::Plain
 ```
 
+- `-c` **registers** prompts; `-m provider::model::Prompt` picks one. Nothing is swept implicitly, so a row only exists because you asked for it.
 - Prompts name no model, so the same object runs on any provider — the recorded `sha256` proves two rows used identical text.
-- Every loaded prompt is swept: 1 model × 2 prompts = 2 rows. Models with `takes_prompt = False` get one row and no prompt.
-- Narrow by pointing at less: `-c prompts/ocr.py:Anchored`.
+- Omit the prompt to use the eval's default. Naming one for a `takes_prompt = False` model is an error.
 - `{placeholders}` interpolate from `Sample.context`; escape literal braces as `{{`.
 
 ### 4 — Custom provider
@@ -222,6 +225,7 @@ vlmbench report ~/.vlmbench/evals/*/result.json --format md
 | `-c <file \| dir \| file.py:Class>` | per run, repeatable |
 
 - One file may define any mix of `Eval`, `Model`, `Prompt` and `Provider`; subclassing registers it.
+- Registration makes something *available*, never *selected* — `-d`, `-m` and `-p` decide what actually runs.
 - A user entry shadows a builtin of the same name, and says so in the run header.
 - `vlmbench eval --list` prints everything loaded with its origin.
 
@@ -229,7 +233,7 @@ vlmbench report ~/.vlmbench/evals/*/result.json --format md
 
 ```
 ~/.vlmbench/evals/<suite>-<id>/
-  result.json          totals, per-row scores, perf, cost, resolved prompt + sha256
+  result.json          totals, per-row scores, perf, cost, resolved prompt + sha256, revision
   outputs/<row>/*.md   raw model output for this run
 ~/.vlmbench/cache/<fingerprint>.md    shared response cache across runs
 ~/.vlmbench/corpora/<suite>/          rendered pages

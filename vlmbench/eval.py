@@ -47,14 +47,28 @@ def normalize_model_id(model_id: str) -> str:
     return _SEPARATORS.sub("-", model_id.strip().lower())
 
 
-def parse_model_ref(ref: str) -> tuple[str | None, str]:
-    """Split `provider::model_id`. A single colon always belongs to the model id."""
-    provider, sep, model_id = ref.partition("::")
-    if not sep:
-        return None, ref.strip()
-    if not provider.strip() or not model_id.strip():
-        raise EvalError(f"malformed model ref {ref!r} — expected provider::model_id")
-    return provider.strip(), model_id.strip()
+def parse_model_ref(ref: str) -> tuple[str | None, str, str | None]:
+    """Split `provider::model_id::prompt`. Single colons always belong to the model id.
+
+    Two fields are read as `provider::model_id`; a prompt needs all three.
+    """
+    autoload()
+    parts = [part.strip() for part in ref.split("::")]
+    if any(not part for part in parts) or len(parts) > 3:
+        raise EvalError(f"malformed model ref {ref!r} — expected [provider::]model_id[::prompt]")
+    match parts:
+        case [model_id]:
+            return None, model_id, None
+        case [provider, model_id]:
+            if provider not in _CATALOG["provider"]:
+                known = ", ".join(sorted(_CATALOG["provider"])) or "none"
+                raise EvalError(
+                    f"unknown provider {provider!r} in {ref!r} — loaded: {known}. "
+                    "To name a prompt, give all three: provider::model_id::prompt"
+                )
+            return provider, model_id, None
+        case _:
+            return parts[0], parts[1], parts[2]
 
 
 def parse_dataset_ref(ref: str) -> tuple[str, str | None]:
@@ -445,6 +459,13 @@ def resolve_model(model_id: str) -> type[Model]:
     return type(f"Model_{normalize_model_id(model_id)}", (Model,), {"model": model_id})
 
 
+def today() -> str:
+    """Run date as `YY-MM-DD`, used as the dataset revision when none is pinned."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime("%y-%m-%d")
+
+
 def resolve_eval(ref: str) -> Eval:
     """Resolve `-d` from a short name, an alias, a full `hf://` ref, or a path."""
     autoload()
@@ -467,37 +488,33 @@ def loaded(kind: Literal["eval", "model", "prompt", "provider"]) -> dict[str, ty
     return dict(_CATALOG[kind])
 
 
-def prompts_in_order() -> list[type[Prompt]]:
-    seen: list[type[Prompt]] = []
-    for cls in _CATALOG["prompt"].values():
-        if cls not in seen:
-            seen.append(cls)  # type: ignore[arg-type]
-    return seen
+def resolve_prompt(name: str) -> type[Prompt]:
+    autoload()
+    found = _CATALOG["prompt"].get(name)
+    if found is None:
+        known = ", ".join(sorted(_CATALOG["prompt"])) or "none — load one with -c"
+        raise EvalError(f"unknown prompt {name!r} — registered: {known}")
+    return found  # type: ignore[return-value]
 
 
-def build_subjects(
-    model_refs: Sequence[str],
-    prompts: Sequence[type[Prompt]],
-    default_provider: str,
-    default_prompt: str,
-) -> list[Subject]:
-    """Cross product of models and prompts; `takes_prompt=False` models get one row."""
+def build_subjects(model_refs: Sequence[str], default_provider: str, default_prompt: str) -> list[Subject]:
+    """One row per `-m`. The prompt is named explicitly or falls back to the eval's."""
     subjects: list[Subject] = []
     for ref in model_refs:
-        provider_name, model_id = parse_model_ref(ref)
+        provider_name, model_id, prompt_name = parse_model_ref(ref)
         model = resolve_model(model_id)
         provider = resolve_provider(provider_name or model.provider or default_provider)
-        variants: Sequence[type[Prompt] | None] = [None] if not model.takes_prompt or not prompts else prompts
-        for prompt in variants:
-            subjects.append(
-                Subject(
-                    provider=provider,
-                    model_id=model_id,
-                    model=model,
-                    prompt=prompt,
-                    default_prompt=default_prompt,
-                )
+        if prompt_name and not model.takes_prompt:
+            raise EvalError(f"{model_id} takes no prompt, so {ref!r} cannot name {prompt_name!r}")
+        subjects.append(
+            Subject(
+                provider=provider,
+                model_id=model_id,
+                model=model,
+                prompt=resolve_prompt(prompt_name) if prompt_name else None,
+                default_prompt=default_prompt,
             )
+        )
     return subjects
 
 
@@ -840,16 +857,17 @@ def result_payload(
     import secrets
     from datetime import datetime, timezone
 
+    now = datetime.now(timezone.utc)
     return {
         "schema_version": "0.2.0",
         "kind": "eval",
         "run_id": secrets.token_hex(6),
-        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "timestamp": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "vlmbench": VERSION,
         "eval": {
             "name": ev.key(),
             "dataset": ev.dataset,
-            "revision": ev.revision,
+            "revision": ev.revision or now.strftime("%y-%m-%d"),
             "thresholds": {"good": ev.thresholds[0], "fair": ev.thresholds[1]},
         },
         "limit": {

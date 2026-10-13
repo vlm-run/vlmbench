@@ -25,8 +25,8 @@ uvx vlmbench eval --list                                            # loaded eva
 ```
 
 - Suites: `parsebench`, `olmocr-bench`, `omni-parse-bench`, or a path to your own `.py`.
-- `-m <provider>::<model_id>`; `-p` defaults to `vlmrun`. `-c <file|dir>` loads prompts/models/providers/evals.
-- Always pass `--limit` + `--stratify` first; limited runs are branded PARTIAL.
+- `-m [provider::]model_id[::prompt]`; `-p` defaults to `vlmrun`. `-c <file|dir>` registers prompts/models/providers/evals.
+- Always pass `--limit` (`10`, `1%`, `0.5%`) + `--stratify` first; limited runs are branded PARTIAL.
 - `--score-only` re-scores cached output with no network. `--dry-run` prints the matrix and request count.
 - Concepts, plugin authoring and progressive examples: [`EVALS.md`](../../../EVALS.md).
 
