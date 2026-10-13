@@ -41,6 +41,34 @@ flowchart LR
   J --> B[report → HTML / MD / CSV]
 ```
 
+### Run flow
+
+```mermaid
+flowchart TD
+  CLI["vlmbench eval -d … -m … -c …"] --> L[Load catalog<br/>builtin → ~/.vlmbench/catalog → -c]
+  L --> X[Cross product<br/>models × prompts]
+  X --> S["Samples (--limit, --stratify)"]
+
+  S --> MC{media in LRU?}
+  MC -->|no| MD{rendered on disk?}
+  MD -->|no| HF[HF download + render page]
+  HF --> CORP[(~/.vlmbench/corpora)]
+  MD -->|yes| CORP
+  CORP --> URI[data URI]
+  MC -->|yes| URI
+
+  URI --> RC{response cached?<br/>provider·model·prompt·extra_body·sample}
+  RC -->|hit| PRED[Prediction]
+  RC -->|miss| API[AsyncOpenAI<br/>one client per provider]
+  API --> CACHE[(~/.vlmbench/cache)]
+  CACHE --> PRED
+
+  PRED --> SC["Eval.score → (column, value)"]
+  SC --> AG[Aggregate per column<br/>bool → pass rate · float → mean · None → unsupported]
+  AG --> RJ[(result.json + outputs/)]
+  RJ --> REP[report → HTML / MD / CSV]
+```
+
 ## Suites
 
 | `-d` | Dataset | Scale | Columns |
