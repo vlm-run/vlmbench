@@ -150,6 +150,21 @@ vlmbench eval -d olmocr-bench -m qwen/qwen3.8-27b --prompt prompts/ocr.py:Anchor
 - Omit the prompt to use the eval's default. Naming one for a `takes_prompt = False` model is an error.
 - `{placeholders}` interpolate from `Sample.context`; escape literal braces as `{{`.
 
+Two prompts ship built in, as a measured baseline for what wording is worth:
+
+| Name | Tokens | Text |
+| ---- | -----: | ---- |
+| `markdown` | 6 | `Convert this page to markdown.` |
+| `markdown-tuned` | 62 | one clause per column the suites score weakest |
+
+```bash
+vlmbench eval -d parsebench -m qwen/qwen3.8-27b --prompt markdown
+vlmbench eval -d parsebench -m qwen/qwen3.8-27b --prompt markdown-tuned
+```
+
+Token counts are measured against the model's own tokenizer by diffing
+`usage.prompt_tokens`, not estimated.
+
 ### 4 — Custom provider
 
 ```python

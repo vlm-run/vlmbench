@@ -3794,7 +3794,7 @@ def _print_eval_table(results: list[Any], columns: list[str], samples: int, part
     table.add_column("p50 s", justify="right", style="dim")
 
     for result in sorted(results, key=lambda r: r.total.score or 0, reverse=True):
-        per_1k = f"{result.cost_usd / samples * 1000:.2f}" if result.cost_usd is not None and samples else "—"
+        per_1k = f"${result.cost_usd / samples * 1000:.2f}" if result.cost_usd is not None and samples else "—"
         row = [result.subject.provider.name] if show_provider else []
         row.append(result.subject.model_id)
         if show_prompt:

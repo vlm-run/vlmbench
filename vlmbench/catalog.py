@@ -7,7 +7,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from vlmbench.eval import Model, Provider, Sample, Subject
+from vlmbench.eval import Model, Prompt, Provider, Sample, Subject
 
 _OCR_METHODS = {"markdown", "ocr", "grounding", "layout"}
 
@@ -106,3 +106,45 @@ class PaddleOcrVl(Model):
     model = "paddlepaddle/paddleocr-vl"
     takes_prompt = False
     extra_body = {"method": "markdown"}
+
+
+class Qwen38_27B(Model):
+    """Reasoning model: thinking goes to `message.reasoning` and is off here.
+
+    Left on, it spends ~75 tokens of chain-of-thought per page for no gain in
+    transcription accuracy, and a `max_tokens` cap can be consumed by thinking
+    alone — which returns `content: None`, i.e. a silently empty transcription.
+    """
+
+    model = "qwen/qwen3.8-27b"
+    extra_body = {
+        "chat_template_kwargs": {"enable_thinking": False},
+        "repetition_penalty": 1.05,
+    }
+    max_tokens = 8192
+
+
+class Markdown(Prompt):
+    """The naive ask, as a baseline for what prompt wording is worth."""
+
+    name = "markdown"
+    text = "Convert this page to markdown."
+
+
+class MarkdownTuned(Prompt):
+    """Baseline plus one clause per column the suites score weakest.
+
+    Line by line: completeness (omnidocbench `text`, parsebench `content`),
+    column flow (`order`, the lowest column in every suite), marginal text that
+    ground truth keeps but models drop, flat table rows the cell-neighbour
+    checks can align (`tables`), and no preamble (parsebench `noise`).
+    """
+
+    name = "markdown-tuned"
+    text = (
+        "Transcribe the page to markdown, verbatim and complete.\n"
+        "Read multi-column layouts one full column at a time.\n"
+        "Keep captions, footnotes, headers, footers, page numbers.\n"
+        "Tables: pipe rows, one cell per column, repeat merged values.\n"
+        "No commentary, no code fences."
+    )

@@ -146,7 +146,7 @@ def to_markdown(rows: list[Row]) -> str:
             + [
                 f"**{row.overall:.1f}**" if row.overall is not None else "—",
                 *values,
-                f"{row.usd_per_1k:.2f}" if row.usd_per_1k is not None else "—",
+                f"${row.usd_per_1k:.2f}" if row.usd_per_1k is not None else "—",
             ]
         )
         lines.append("| " + " | ".join(cells) + " |")
@@ -448,7 +448,7 @@ function render() {
       ...names.map(name => scoreCell(row, cellValue(row, name), cellDetail(row, name), false)),
       row.usdPer1k === null
         ? '<td class="num muted" data-tip="provider reported no cost">\u2014</td>'
-        : `<td class="num muted">${row.usdPer1k.toFixed(2)}</td>`,
+        : `<td class="num muted">$${row.usdPer1k.toFixed(2)}</td>`,
       `<td class="muted">${esc(row.date)}</td>`,
     ];
     const attrs = older
