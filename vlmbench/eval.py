@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import inspect
 import itertools
+import json
 import os
 import re
 import time
@@ -16,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
+from cachetools import LRUCache
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -27,6 +29,10 @@ CACHE_ROOT = Path(os.environ.get("VLMBENCH_HOME", Path.home() / ".vlmbench"))
 CATALOG_DIR = CACHE_ROOT / "catalog"
 EVALS_DIR = CACHE_ROOT / "evals"
 CORPORA_DIR = CACHE_ROOT / "corpora"
+RESPONSE_CACHE = CACHE_ROOT / "cache"
+
+_MEDIA_CACHE: LRUCache = LRUCache(maxsize=64)
+"""Resolved data URIs are large; keep a bounded in-process cache alongside the disk one."""
 
 HF_DATASET_PREFIX = "hf://datasets/"
 _SEPARATORS = re.compile(r"[_:.]+")
@@ -520,6 +526,19 @@ def build_messages(prompt: str, media: str) -> list[dict[str, Any]]:
     return [{"role": "user", "content": content}]
 
 
+def response_cache_key(subject: "Subject", sample: Sample, prompt: str) -> str:
+    """Fingerprint of everything that changes a response: edit the prompt, miss the cache."""
+    parts = (
+        subject.provider.name,
+        subject.model_id,
+        prompt,
+        json.dumps(dict(subject.model.extra_body), sort_keys=True),
+        sample.id,
+        sample.media,
+    )
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:32]
+
+
 async def complete(
     client: AsyncOpenAI,
     subject: Subject,
@@ -673,16 +692,17 @@ async def run_subject(
     concurrency: int,
     resolve_media: Any = None,
     skip_uncached: bool = False,
+    use_cache: bool = True,
     on_done: Any = None,
 ) -> list[Prediction]:
-    """Run one leaderboard row, reusing cached page output when present."""
+    """Run one leaderboard row, reusing any cached response for the same fingerprint."""
     semaphore = asyncio.Semaphore(concurrency)
     stream_usage = subject.provider.supports_stream_usage
 
     async def one(sample: Sample) -> Prediction | None:
-        cached_path = cache_dir / f"{sample.id.replace('/', '__')}.md" if cache_dir else None
-        if cached_path is not None and cached_path.exists():
-            prediction = Prediction(sample_id=sample.id, text=cached_path.read_text(), cached=True)
+        blob = RESPONSE_CACHE / f"{response_cache_key(subject, sample, subject.prompt_text(sample))}.md"
+        if use_cache and blob.exists():
+            prediction = Prediction(sample_id=sample.id, text=blob.read_text(), cached=True)
         elif skip_uncached:
             return None
         else:
@@ -691,9 +711,12 @@ async def run_subject(
                 prediction = await complete(
                     client, subject, sample, media, extra_body=extra_body, stream_usage=stream_usage
                 )
-            if cached_path is not None and prediction.error is None:
-                cached_path.parent.mkdir(parents=True, exist_ok=True)
-                cached_path.write_text(prediction.text)
+            if use_cache and prediction.error is None:
+                blob.parent.mkdir(parents=True, exist_ok=True)
+                blob.write_text(prediction.text)
+        if cache_dir is not None and prediction.error is None:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / f"{sample.id.replace('/', '__')}.md").write_text(prediction.text)
         if on_done:
             on_done(prediction)
         return prediction
@@ -702,51 +725,9 @@ async def run_subject(
     return [prediction for prediction in done if prediction is not None]
 
 
-JUDGE_PROMPT = (
-    "You are grading an OCR transcription of the page image.\n"
-    "Score 0-10 for faithfulness: text captured, reading order, tables, no invented content.\n"
-    "Reply with the number alone.\n\n--- transcription ---\n{output}"
-)
-
-
-async def judge_predictions(
-    ev: Eval,
-    model_ref: str,
-    samples: Sequence[Sample],
-    predictions: Sequence[Prediction],
-    *,
-    concurrency: int = 4,
-) -> dict[str, float]:
-    """Score each prediction 0-1 with a VLM judge. Returns {sample_id: score}."""
-    provider_name, model_id = parse_model_ref(model_ref)
-    provider = resolve_provider(provider_name or "vlmrun")
-    by_id = {sample.id: sample for sample in samples}
-    semaphore = asyncio.Semaphore(concurrency)
-    client = provider.client()
-    scores: dict[str, float] = {}
-
-    async def one(prediction: Prediction) -> None:
-        if prediction.error is not None:
-            return
-        sample = by_id[prediction.sample_id]
-        media = await asyncio.to_thread(ev.resolve_media, sample)
-        messages = build_messages(JUDGE_PROMPT.format(output=prediction.text[:8000]), media)
-        async with semaphore:
-            try:
-                reply = await client.chat.completions.create(
-                    model=model_id, messages=messages, max_tokens=8, temperature=0.0
-                )
-            except Exception:  # noqa: BLE001 — a judge failure must not void the run
-                return
-        match = re.search(r"\d+(?:\.\d+)?", reply.choices[0].message.content or "")
-        if match:
-            scores[prediction.sample_id] = min(1.0, float(match.group()) / 10)
-
-    try:
-        await asyncio.gather(*(one(prediction) for prediction in predictions))
-    finally:
-        await client.close()
-    return scores
+async def judge_predictions(*args: Any, **kwargs: Any) -> dict[str, float]:
+    """Not implemented: scoring a page with a VLM judge."""
+    raise NotImplementedError("--judge is not implemented yet")
 
 
 @dataclass(slots=True)
@@ -757,6 +738,7 @@ class SubjectResult:
     columns: dict[str, ColumnScore] = field(default_factory=dict)
     total: ColumnScore = field(default_factory=ColumnScore)
     cost_usd: float | None = None
+    latency_total_s: float = 0.0
     latency_p50_s: float = 0.0
     ttft_p50_ms: float | None = None
     errors: int = 0
@@ -782,11 +764,19 @@ async def run_all(
     score_only: bool = False,
     concurrency: int | None = None,
     judge: str | None = None,
+    use_cache: bool = True,
     on_progress: Any = None,
 ) -> list[SubjectResult]:
     """Run every subject over every sample, then score. One client per provider."""
     clients: dict[str, AsyncOpenAI] = {}
     results: list[SubjectResult] = []
+
+    def cached_resolve(sample: Sample) -> str:
+        key = f"{ev.key()}:{sample.id}"
+        if key not in _MEDIA_CACHE:
+            _MEDIA_CACHE[key] = ev.resolve_media(sample)
+        return _MEDIA_CACHE[key]
+
     try:
         for subject in subjects:
             client = clients.get(subject.provider.name)
@@ -800,8 +790,9 @@ async def run_all(
                 cache_dir=cache_dir,
                 extra_body=extra_body or {},
                 concurrency=concurrency or subject.provider.concurrency,
-                resolve_media=None if score_only else ev.resolve_media,
+                resolve_media=None if score_only else cached_resolve,
                 skip_uncached=score_only,
+                use_cache=use_cache,
                 on_done=(lambda prediction, s=subject: on_progress(s, prediction)) if on_progress else None,
             )
             by_id = {sample.id: sample for sample in samples}
@@ -821,6 +812,7 @@ async def run_all(
                     columns=columns,
                     total=overall(columns),
                     cost_usd=round(sum(costs), 6) if costs else None,
+                    latency_total_s=round(sum(p.latency_s for p in predictions), 1),
                     latency_p50_s=_p50([p.latency_s for p in predictions if p.error is None]),
                     ttft_p50_ms=_p50(ttfts) if ttfts else None,
                     errors=sum(1 for p in predictions if p.error),
@@ -867,6 +859,16 @@ def result_payload(
             "of": total_pages,
             "partial": pages < total_pages,
         },
+        "totals": {
+            "subjects": len(results),
+            "samples": pages,
+            "requests": len(results) * pages,
+            "cost_usd": round(sum(r.cost_usd or 0 for r in results), 6) or None,
+            "latency_total_s": round(sum(r.latency_total_s for r in results), 1),
+            "latency_p50_s": _p50([r.latency_p50_s for r in results]),
+            "errors": sum(r.errors for r in results),
+            "cached": sum(r.cached for r in results),
+        },
         "rows": [
             {
                 "provider": result.subject.provider.name,
@@ -897,6 +899,7 @@ def result_payload(
                     },
                 },
                 "perf": {
+                    "latency_total_s": result.latency_total_s,
                     "latency_p50_s": result.latency_p50_s,
                     "ttft_p50_ms": result.ttft_p50_ms,
                     "prompt_tokens": result.prompt_tokens,

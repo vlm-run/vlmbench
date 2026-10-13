@@ -3245,6 +3245,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="Print the subject matrix and estimated requests, then exit"
     )
     eval_parser.add_argument(
+        "--no-cache", action="store_true", help="Ignore the response cache and re-request every page"
+    )
+    eval_parser.add_argument(
         "--score-only", action="store_true", help="Re-score cached page output without new inference"
     )
     eval_parser.add_argument("--extra-body", default=None, help="JSON merged into every request body (last wins)")
@@ -3770,7 +3773,7 @@ def _print_eval_config(ev_obj: Any, samples: int, total: int, args: argparse.Nam
     console.print(table)
 
 
-def _print_eval_table(results: list[Any], columns: list[str], partial: bool) -> None:
+def _print_eval_table(results: list[Any], columns: list[str], samples: int, partial: bool) -> None:
     """Columns that carry no information are dropped so model ids stay readable."""
     show_provider = len({r.subject.provider.name for r in results}) > 1
     show_prompt = any(r.subject.prompt for r in results)
@@ -3784,11 +3787,11 @@ def _print_eval_table(results: list[Any], columns: list[str], partial: bool) -> 
     table.add_column("Overall", justify="right", style="bold")
     for name in columns:
         table.add_column(name, justify="right")
-    table.add_column("¢/Page", justify="right", style="dim")
+    table.add_column("$/1K", justify="right", style="dim")
+    table.add_column("p50 s", justify="right", style="dim")
 
     for result in sorted(results, key=lambda r: r.total.score or 0, reverse=True):
-        pages = max(1, result.total.tests or 1)
-        cents = f"{result.cost_usd / pages * 100:.3f}" if result.cost_usd is not None else "—"
+        per_1k = f"{result.cost_usd / samples * 1000:.2f}" if result.cost_usd is not None and samples else "—"
         row = [result.subject.provider.name] if show_provider else []
         row.append(result.subject.model_id)
         if show_prompt:
@@ -3797,10 +3800,22 @@ def _print_eval_table(results: list[Any], columns: list[str], partial: bool) -> 
         row += [
             "—" if (c := result.columns.get(name)) is None or c.score is None else f"{c.score:.1f}" for name in columns
         ]
-        row.append(cents)
+        row += [per_1k, f"{result.latency_p50_s:.1f}"]
         table.add_row(*row)
 
     console.print(table)
+
+    cost = sum(r.cost_usd or 0 for r in results)
+    summary = f"{len(results)} subjects · {samples} samples · {len(results) * samples} requests · ${cost:.4f} total" + (
+        f" (${cost / samples * 1000:.2f}/1K pages)" if samples else ""
+    )
+    timing = (
+        f"{sum(r.latency_total_s for r in results):.0f}s request time · "
+        f"p50 {statistics.median([r.latency_p50_s for r in results] or [0]):.1f}s/page · "
+        f"{sum(r.cached for r in results)} cached · {sum(r.errors for r in results)} errors"
+    )
+    console.print(f"[dim]{summary}[/dim]")
+    console.print(f"[dim]{timing}[/dim]")
     if partial:
         console.print("[yellow]⚠ PARTIAL run — not comparable to published numbers.[/yellow]")
 
@@ -3888,12 +3903,13 @@ def cmd_eval(args: argparse.Namespace) -> None:
                     score_only=args.score_only,
                     concurrency=args.concurrency,
                     judge=args.judge,
+                    use_cache=not args.no_cache,
                     on_progress=on_progress,
                 )
             )
 
         columns = sorted({name for result in results for name in result.columns})
-        _print_eval_table(results, columns, partial=len(kept) < total)
+        _print_eval_table(results, columns, samples=len(kept), partial=len(kept) < total)
 
         payload = ev.result_payload(
             ev_obj, results, limit_spec=args.limit, pages=len(kept), total_pages=total, stratified=args.stratify

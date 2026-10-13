@@ -68,16 +68,19 @@ class OlmOCRBench(Eval):
                 case "order":
                     yield "order", checks.in_order(output, test["before"], test["after"])
                 case "table":
-                    yield "tables", checks.table_cell_matches(
-                        output,
-                        test["cell"],
-                        up=test.get("up"),
-                        down=test.get("down"),
-                        left=test.get("left"),
-                        right=test.get("right"),
-                        top_heading=test.get("top_heading"),
-                        left_heading=test.get("left_heading"),
-                        max_diffs=diffs,
+                    yield (
+                        "tables",
+                        checks.table_cell_matches(
+                            output,
+                            test["cell"],
+                            up=test.get("up"),
+                            down=test.get("down"),
+                            left=test.get("left"),
+                            right=test.get("right"),
+                            top_heading=test.get("top_heading"),
+                            left_heading=test.get("left_heading"),
+                            max_diffs=diffs,
+                        ),
                     )
                 case "baseline":
                     yield "baseline", bool(output.strip()) and checks.repeated_ngram_fraction(output) < 0.5

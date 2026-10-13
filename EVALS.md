@@ -64,7 +64,8 @@ vlmbench eval -d olmocr-bench -m zai-org/glm-ocr --limit 10 --stratify
 - `-p` defaults to `vlmrun` (the gateway), so the provider can be left off.
 - `--limit 10` or `--limit 1%` for a fast signal; `--stratify` spreads it across splits.
 - Any limited run is branded **PARTIAL** everywhere and is not comparable to published numbers.
-- Page output is cached, so `--score-only` re-scores for free after a metric change.
+- Responses are cached on disk by a fingerprint of provider, model, prompt text, `extra_body` and sample — so a re-run costs nothing and an edited prompt misses the cache.
+- `--no-cache` re-requests everything; `--score-only` re-scores cached output with no network at all.
 
 ### 2 — Several models, mixed providers
 
@@ -180,6 +181,7 @@ vlmbench report ~/.vlmbench/evals/*/result.json --format md
 ```
 
 - Bands: **≥ 85** strong, **≥ 70** adequate, **< 70** weak — per-eval via `thresholds`.
+- Cost is reported as **$/1K pages**.
 - Partial and full runs will not share a table without `--mixed`.
 
 ## Loading catalogs
@@ -199,9 +201,17 @@ vlmbench report ~/.vlmbench/evals/*/result.json --format md
 
 ```
 ~/.vlmbench/evals/<suite>-<id>/
-  result.json          scores, perf, cost, resolved prompt + sha256
-  outputs/<row>/*.md   raw model output, reused by --score-only
+  result.json          totals, per-row scores, perf, cost, resolved prompt + sha256
+  outputs/<row>/*.md   raw model output for this run
+~/.vlmbench/cache/<fingerprint>.md    shared response cache across runs
+~/.vlmbench/corpora/<suite>/          rendered pages
 ```
 
+- Every run prints samples, total cost, total request time, p50 latency, cache hits and errors.
 - Cost comes from the provider's `usage.cost`; local serving reports `—`, never an imputed number.
 - Secrets are redacted before anything is written.
+
+## Not implemented
+
+- `--judge` raises `NotImplementedError`.
+- olmOCR `math`, ParseBench charts and formatting, omni `layout_kind` report `unsupported` instead of scoring.

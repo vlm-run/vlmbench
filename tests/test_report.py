@@ -17,7 +17,7 @@ def make_row(**kwargs) -> Row:
             "content": {"score": 91.4, "tests": 0, "passed": 0, "samples": 5, "unsupported": 0},
             "charts": {"score": None, "tests": 0, "passed": 0, "samples": 0, "unsupported": 44},
         },
-        cents_per_page=0.21,
+        usd_per_1k=2.10,
         eval_name="parsebench",
     )
     return Row(**{**base, **kwargs})
@@ -65,10 +65,10 @@ def load_rows_from(payload, tmp=None):
 def test_markdown_and_csv_round_trip_the_columns():
     rows = [make_row()]
     markdown = to_markdown(rows)
-    assert "| Content | Charts | ¢/Page |" in markdown
+    assert "| Content | Charts | $/1K pages |" in markdown
     assert "**86.9**" in markdown
     csv_text = to_csv(rows)
-    assert csv_text.splitlines()[0] == "Provider,Model,Prompt,Overall,Content,Charts,Cost_Per_Page_Cents"
+    assert csv_text.splitlines()[0] == "Provider,Model,Prompt,Overall,Content,Charts,Cost_Usd_Per_1k_Pages"
     assert "86.90" in csv_text
 
 
@@ -93,7 +93,7 @@ def test_unscored_column_renders_as_a_dash_not_zero():
 
 
 def test_missing_cost_never_renders_as_zero():
-    page = to_html([make_row(cents_per_page=None)])
+    page = to_html([make_row(usd_per_1k=None)])
     assert "provider reported no cost" in page
 
 

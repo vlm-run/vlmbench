@@ -29,7 +29,7 @@ class Row:
     prompt: str
     overall: float | None
     columns: dict[str, dict[str, Any]] = field(default_factory=dict)
-    cents_per_page: float | None = None
+    usd_per_1k: float | None = None
     eval_name: str = ""
     partial: bool = False
     pages: int = 0
@@ -71,7 +71,7 @@ def load_rows(paths: list[Path]) -> list[Row]:
                     prompt=(entry.get("prompt") or {}).get("name") or "—",
                     overall=scores.get("overall"),
                     columns=scores.get("columns") or {},
-                    cents_per_page=round(per_1k / 10, 4) if per_1k else None,
+                    usd_per_1k=round(per_1k, 3) if per_1k else None,
                     eval_name=(payload.get("eval") or {}).get("name", ""),
                     partial=bool(limit.get("partial")),
                     pages=int(limit.get("pages") or 0),
@@ -122,7 +122,7 @@ def to_markdown(rows: list[Row]) -> str:
         (["Provider"] if show_provider else [])
         + ["Model"]
         + (["Prompt"] if show_prompt else [])
-        + ["Overall", *(n.title() for n in names), "¢/Page"]
+        + ["Overall", *(n.title() for n in names), "$/1K pages"]
     )
     lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     for row in rows:
@@ -134,7 +134,7 @@ def to_markdown(rows: list[Row]) -> str:
             + [
                 f"**{row.overall:.1f}**" if row.overall is not None else "—",
                 *values,
-                f"{row.cents_per_page:.3f}" if row.cents_per_page is not None else "—",
+                f"{row.usd_per_1k:.2f}" if row.usd_per_1k is not None else "—",
             ]
         )
         lines.append("| " + " | ".join(cells) + " |")
@@ -149,7 +149,7 @@ def to_csv(rows: list[Row]) -> str:
     names = column_order(rows)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["Provider", "Model", "Prompt", "Overall", *(n.title() for n in names), "Cost_Per_Page_Cents"])
+    writer.writerow(["Provider", "Model", "Prompt", "Overall", *(n.title() for n in names), "Cost_Usd_Per_1k_Pages"])
     for row in rows:
         writer.writerow(
             [
@@ -158,7 +158,7 @@ def to_csv(rows: list[Row]) -> str:
                 row.prompt,
                 "" if row.overall is None else f"{row.overall:.2f}",
                 *["" if (v := _cell_value(row, n)) is None else f"{v:.2f}" for n in names],
-                "" if row.cents_per_page is None else f"{row.cents_per_page:.4f}",
+                "" if row.usd_per_1k is None else f"{row.usd_per_1k:.3f}",
             ]
         )
     return buffer.getvalue()
@@ -286,12 +286,12 @@ def to_html(rows: list[Row], *, title: str = "vlmbench leaderboard") -> str:
             ),
         ]
         cells += [_score_cell(row, _cell_value(row, name), _cell_detail(row, name)) for name in names]
-        cents = (
-            f'<td class="num muted">{row.cents_per_page:.3f}</td>'
-            if row.cents_per_page is not None
+        cost = (
+            f'<td class="num muted">{row.usd_per_1k:.2f}</td>'
+            if row.usd_per_1k is not None
             else '<td class="num muted" data-tip="provider reported no cost">—</td>'
         )
-        body.append("<tr>" + "".join(cells) + cents + "</tr>")
+        body.append("<tr>" + "".join(cells) + cost + "</tr>")
 
     banner = (
         f'<div class="banner">⚠ <strong>Partial run</strong> — {partial.pages} of {partial.of_pages} pages. '
@@ -311,11 +311,11 @@ def to_html(rows: list[Row], *, title: str = "vlmbench leaderboard") -> str:
 </head><body>
 <div class="wrap">
 <h1>{html.escape(title)}</h1>
-<p class="sub">{html.escape(", ".join(suites) or "eval")} · {len(rows)} rows · higher is better except ¢/page</p>
+<p class="sub">{html.escape(", ".join(suites) or "eval")} · {len(rows)} rows · higher is better except $/1K pages</p>
 {banner}
 <div class="bar"><div class="legend">{legend}</div><button id="csv">Download CSV</button></div>
 <div class="scroll"><table><thead><tr>
-{"<th>Provider</th>" if show_provider else ""}<th>Model</th>{"<th>Prompt</th>" if show_prompt else ""}<th class="num">Overall</th>{head}<th class="num">¢/Page</th>
+{"<th>Provider</th>" if show_provider else ""}<th>Model</th>{"<th>Prompt</th>" if show_prompt else ""}<th class="num">Overall</th>{head}<th class="num">$/1K pages</th>
 </tr></thead><tbody>
 {"".join(body)}
 </tbody></table></div>

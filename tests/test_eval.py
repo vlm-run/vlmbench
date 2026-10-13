@@ -173,3 +173,32 @@ def test_unresolved_media_never_reaches_the_request():
     assert build_messages("go", "data:image/jpeg;base64,AAA")[0]["content"][0]["type"] == "image_url"
     with pytest.raises(EvalError, match="never resolved"):
         build_messages("go", "docs/layout/page.pdf#1")
+
+
+def test_cache_key_changes_with_the_prompt():
+    from vlmbench.eval import build_subjects, response_cache_key
+
+    sample = Sample(id="p1", media="text:body")
+    (plain,) = build_subjects(["fake::acme/general-vlm"], [], "fake", "suite default")
+    (terse,) = build_subjects(["fake::acme/general-vlm"], [Terse], "fake", "suite default")
+    assert response_cache_key(plain, sample, plain.prompt_text(sample)) != response_cache_key(
+        terse, sample, terse.prompt_text(sample)
+    )
+
+
+def test_cache_key_is_stable_for_identical_inputs():
+    from vlmbench.eval import build_subjects, response_cache_key
+
+    sample = Sample(id="p1", media="text:body")
+    (subject,) = build_subjects(["fake::acme/general-vlm"], [Terse], "fake", "d")
+    prompt = subject.prompt_text(sample)
+    assert response_cache_key(subject, sample, prompt) == response_cache_key(subject, sample, prompt)
+
+
+def test_judge_is_not_implemented():
+    import asyncio as aio
+
+    from vlmbench.eval import judge_predictions
+
+    with pytest.raises(NotImplementedError):
+        aio.run(judge_predictions())

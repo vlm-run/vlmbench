@@ -56,12 +56,15 @@ class OmniParseBench(Eval):
                     if not cell:
                         yield "tables", None
                         continue
-                    yield "tables", checks.table_cell_matches(
-                        output,
-                        cell,
-                        top_heading=args.get("top_heading"),
-                        left_heading=args.get("left_heading"),
-                        max_diffs=diffs,
+                    yield (
+                        "tables",
+                        checks.table_cell_matches(
+                            output,
+                            cell,
+                            top_heading=args.get("top_heading"),
+                            left_heading=args.get("left_heading"),
+                            max_diffs=diffs,
+                        ),
                     )
                 case _:
                     yield kind, None
