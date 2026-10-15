@@ -103,7 +103,7 @@ class DotsOcr(Model):
 
 
 class PaddleOcrVl(Model):
-    model = "paddlepaddle/paddleocr-vl"
+    model = "paddlepaddle/paddleocr-vl-1.6"
     takes_prompt = False
     extra_body = {"method": "markdown"}
 

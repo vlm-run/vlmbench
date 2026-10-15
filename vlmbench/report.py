@@ -150,10 +150,19 @@ def to_markdown(rows: list[Row]) -> str:
             ]
         )
         lines.append("| " + " | ".join(cells) + " |")
-    if any(row.partial for row in rows):
-        sample = next(row for row in rows if row.partial)
+    partials = [row for row in rows if row.partial]
+    if partials:
+        counts = sorted({row.pages for row in partials})
         lines.append("")
-        lines.append(f"> ⚠ PARTIAL — {sample.pages} of {sample.of_pages} pages. Not comparable to published numbers.")
+        if len(counts) > 1:
+            lines.append(
+                f"> ⚠ PARTIAL, MIXED — rows cover {counts[0]}–{counts[-1]} pages each. "
+                "Rows are not comparable to published numbers, nor to each other."
+            )
+        else:
+            lines.append(
+                f"> ⚠ PARTIAL — {counts[0]} of {partials[0].of_pages} pages. Not comparable to published numbers."
+            )
     return "\n".join(lines)
 
 
@@ -399,17 +408,23 @@ function render() {
   const suites = [...new Set(docs.map(d => (d.eval || {}).name).filter(Boolean))];
   const showPrompt = all.some(r => r.prompt !== '\u2014');
   const showSuite = suitesShown > 1;
-  const partial = all.find(r => r.partial);
+  const partials = all.filter(r => r.partial);
+  const partial = partials[0];
+  const pageCounts = [...new Set(partials.map(r => r.pages))].sort((a, b) => a - b);
 
   document.getElementById('sub').textContent = docs.length
     ? `${suites.join(', ')} \u00b7 ${list.length} rows \u00b7 ${docs.length} run${docs.length > 1 ? 's' : ''}` +
       (suitesShown > 1 ? ' \u00b7 pick a suite to see its columns' : ' \u00b7 higher is better except $/1K pages')
     : 'Drop result.json files below to build a leaderboard.';
 
-  document.getElementById('banner').innerHTML = partial
-    ? `<div class="banner">\u26a0 <strong>Partial run</strong> \u2014 ${partial.pages} of ${partial.ofPages} pages. ` +
-      'Useful for iterating on a prompt; not comparable to published numbers.</div>'
-    : '';
+  document.getElementById('banner').innerHTML = !partial
+    ? ''
+    : pageCounts.length > 1
+      ? `<div class="banner">\u26a0 <strong>Partial runs, mixed sizes</strong> \u2014 rows cover ` +
+        `${pageCounts[0]}\u2013${pageCounts[pageCounts.length - 1]} pages each. ` +
+        'Not comparable to published numbers, nor to each other.</div>'
+      : `<div class="banner">\u26a0 <strong>Partial run</strong> \u2014 ${partial.pages} of ${partial.ofPages} pages. ` +
+        'Useful for iterating on a prompt; not comparable to published numbers.</div>';
 
   document.getElementById('suites').innerHTML = suites.length > 1
     ? ['all', ...suites].map(name =>
