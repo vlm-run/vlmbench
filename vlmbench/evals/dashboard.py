@@ -9,6 +9,7 @@ import zlib
 from pathlib import Path
 
 from vlmbench.evals.config import Settings, backend_name
+from vlmbench.evals.datasets import DATASETS
 from vlmbench.evals.results import draws, interval, latest
 
 
@@ -22,7 +23,8 @@ def _eval(root: Path) -> dict:
     acc = [v for k, v in rows.items() if k[0] == "acc"]
     perf = [v for k, v in rows.items() if k[0] == "perf"]
     datasets = sorted({a["dataset"] for a in acc if "judge" not in a})
-    out = {"name": root.name, "datasets": datasets, "splits": {}}
+    doc = all(getattr(DATASETS.get(a["metric"]), "DOCUMENT", False) for a in acc if "judge" not in a)
+    out = {"name": root.name, "datasets": datasets, "splits": {}, "unit": "docs" if doc and acc else "pages"}
     for split in sorted({a["split"] for a in acc}):
         serves = []
         for cid, cfg in configs.items():
@@ -288,8 +290,8 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   const fast=ok.filter(r=>r.pages_s).sort((a,b)=>b.pages_s-a.pages_s)[0];
   const tile=(k,v,w)=>`<div class="tile"><div class="lab">${k}</div><div class="v">${v}</div><div class="w">${esc(w)}</div></div>`;
   if(best)body.append(el("div",{className:"tiles"},tile("Most accurate",f(best.mean),best.serve)+
-   (value?tile("Best value",`${f(value.mean)}<small>$${f(value.usd_1k,2)} / 1k</small>`,value.serve):"")+
-   (fast?tile("Fastest",`${f(fast.pages_s,2)}<small>items/s</small>`,fast.serve):"")+
+   (value?tile("Best value",`${f(value.mean)}<small>$${f(value.usd_1k,2)} / 1k ${ev.unit}</small>`,value.serve):"")+
+   (fast?tile("Fastest",`${f(fast.pages_s,2)}<small>${ev.unit}/s</small>`,fast.serve):"")+
    tile("Models",`${ok.length}<small>${ds?esc(ds):`× ${sel.length} benchmarks`}</small>`,`${split} split`)));
   const g=el("div",{className:"grid2"});body.append(g);
   const card=el("div",{className:"card"});g.append(card);
@@ -304,7 +306,7 @@ function accTab(){const root=$("#acc");root.replaceChildren();
     mid.push({t:k,key:`scores.${ds}.${part}.${k}`,get:r=>r.scores[ds]?.[part]?.[k],cat:part==="cats"})}}
   const ratio=k=>/ratio/i.test(k);
   const cols=[{t:"#"},{t:"model",key:"serve",l:1},{t:"backend",key:"backend",l:1},{t:ds?"score":"mean",key:"mean"},...mid,
-   {t:"judge",key:"judge"},{t:"items/s",key:"pages_s"},...(ds||mid.length>3?[]:[{t:"$ / 1k",key:"usd_1k"}]),{t:"cost",key:"cost"}];
+   {t:"judge",key:"judge"},{t:`${ev.unit}/s`,key:"pages_s"},{t:`$/1k ${ev.unit}`,key:"usd_1k"}];
   const dense=mid.length>3, tbl=el("table",{className:dense?"dense":""});tbl.createTHead().append(el("tr",{},cols.map(c=>`<th class="${c.l?"l":""}${c.cat?" cat":""}"${c.cat?' title="category"':""}>${esc(dense?c.t.replace(/_/g," "):c.t)}</th>`).join("")));tbl.createTBody();card.append(tbl);
   let rad=null;
   sortable(tbl,rows,cols,(r,i)=>hover(el("tr",{},`<td class="rank">${String(i+1).padStart(2,"0")}</td>`+
@@ -315,7 +317,7 @@ function accTab(){const root=$("#acc");root.replaceChildren();
     if(dense)return `<td><span class="cell stack" data-tip="${esc(c.t)} ${f(v)}${ci?` · 95% CI ${f(ci[0])}–${f(ci[1])}`:""}">${f(v)}${v!=null?meter(v,ci,1):""}</span></td>`;
     return `<td><span class="cell" data-tip="${esc(c.t)} ${f(v)}${ci?` · 95% CI ${f(ci[0])}–${f(ci[1])}`:""}">${f(v)}${v!=null?meter(v,ci,1):""}</span></td>`}).join("")+
    `<td><span class="cell" data-tip="LLM judge, 0–100">${f(r.judge)}${r.judge!=null?meter(r.judge,null,1):""}</span></td>`+
-   `<td>${f(r.pages_s,2)}</td>${ds||dense?"":`<td>${r.usd_1k==null?"—":f(r.usd_1k,2)}</td>`}<td>${usd(r.cost,r.gpu_rate)}</td>`),r));
+   `<td>${f(r.pages_s,2)}</td><td>${r.usd_1k==null?"—":(r.gpu_rate?`<span class="cell" data-tip="GPU time at $${f(r.gpu_rate,2)}/h, not billed">~$${f(r.usd_1k,2)}</span>`:"$"+f(r.usd_1k,2))}</td>`),r));
   function hover(tr,r){tr.onmouseenter=()=>rad?.focus(r.serve);tr.onmouseleave=()=>rad?.focus(null);return tr}
   rad=radar(ds?ev:{...ev,datasets:sel},rows);g.append(rad.card)}
  pick.onchange=draw;dpick.onchange=draw;draw()}
