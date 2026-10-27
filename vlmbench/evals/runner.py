@@ -216,26 +216,31 @@ def _config(s: Serve) -> dict:
 
 
 def board(bench: Path, split: str, log=print) -> list[dict]:
-    """The latest result per serve on a split, best mean first: benchmark scores, judge, throughput, cost."""
+    """Per serve, each dataset's latest score; the mean (and its interval) only when every dataset has one;
+    throughput and cost from each dataset's most complete live pass. Best mean first."""
     from vlmbench.evals.results import latest
 
     ev, serves, metrics = bench_files(bench)
     rows, kinds = latest(Settings().home / "evals" / ev.name), {d: s.kind for d, s in ev.datasets.items()}
     out = []
     for n, s in serves.items():
-        if (summ := rows.get(("sum", s.config_id, split))) is None:
-            continue
         acc = {(k[2], k[4]): v for k, v in rows.items() if k[0] == "acc" and k[1] == s.config_id and k[3] == split}
+        bench_acc = {d: acc[d, kind] for d, kind in kinds.items() if (d, kind) in acc}
+        if not bench_acc:
+            continue
+        perf = [v for k, v in rows.items() if k[0] == "perf" and k[1] == s.config_id and k[3] == split]
         judged = [v["score"] for (d, m), v in acc.items() if m != kinds.get(d)]
+        full = len(bench_acc) == len(kinds)
+        ci = interval([(v["score"], v["units"]) for v in bench_acc.values()]) if full else None
         out.append(
             {
                 "serve": n.removeprefix(f"{ev.name}-"),
-                "mean": summ["mean_score"],
-                "ci95": "{:.0f}–{:.0f}".format(*summ["ci95"]),
-                **{d: v["score"] for (d, m), v in acc.items() if m == kinds.get(d)},
+                "mean": round(sum(v["score"] for v in bench_acc.values()) / len(kinds), 1) if full else None,
+                "ci95": "{:.0f}–{:.0f}".format(*ci) if ci else None,
+                **{d: v["score"] for d, v in bench_acc.items()},
                 "judge": round(sum(judged) / len(judged), 1) if judged else None,
-                "pages/s": summ["items_per_s"],
-                "$/1k pages": summ["usd_per_1k_items"],
+                "pages/s": _mean([p["items_per_s"] for p in perf]),
+                "$/1k pages": _mean([p["usd_per_1k_items"] for p in perf]),
             }
         )
     return sorted(out, key=lambda r: -(r["mean"] or 0))

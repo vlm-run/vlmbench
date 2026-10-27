@@ -86,18 +86,27 @@ def write(run_dir: Path, doc: dict, replies: list[dict], units: list[dict]) -> P
 
 
 def latest(root: Path) -> dict[tuple, dict]:
-    """The newest accuracy / performance rows per (config, dataset, split, metric) across every run of an eval."""
+    """Across every run of an eval: the newest accuracy row per (config, dataset, split, metric), with its per-item
+    units; and per (config, dataset, split) the performance row with the most live calls (a pass that re-called
+    a few uncached pages says nothing about throughput)."""
     rows: dict[tuple, dict] = {}
     for f in sorted(root.glob("*/result.json")):
         doc = json.loads(f.read_text())
         split = doc["run"]["split"]
+        units: dict[tuple, dict] = {}
+        if (u := f.parent / "units.jsonl").exists():
+            for line in u.read_text().splitlines():
+                r = json.loads(line)
+                units.setdefault((r["config_id"], r["dataset"], r["metric"]), {})[r["item"]] = r["units"]
         for a in doc["accuracy"]:
-            rows[("acc", a["config_id"], a["dataset"], split, a["metric"])] = a | {"split": split}
+            rows[("acc", a["config_id"], a["dataset"], split, a["metric"])] = a | {
+                "split": split,
+                "units": units.get((a["config_id"], a["dataset"], a["metric"]), {}),
+            }
         for p in doc["performance"]:
-            if p["live"]:
-                rows[("perf", p["config_id"], p["dataset"], split)] = p | {"split": split}
+            k = ("perf", p["config_id"], p["dataset"], split)
+            if p["live"] and p["live"] >= rows.get(k, {}).get("live", 0):
+                rows[k] = p | {"split": split}
         for c in doc["configs"]:
             rows[("cfg", c["config_id"])] = c
-        for m in doc.get("summary", []):
-            rows[("sum", m["config_id"], split)] = m
     return rows
