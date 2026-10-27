@@ -200,3 +200,12 @@ def test_longarray_scores_rows_order_insensitively():
     assert score_document({"t": [{"a": 2, "b": "y"}, {"a": 1, "b": "x"}]}, gold, schema, {}) == (4, 4)
     assert score_document({"t": [{"a": 1, "b": "x"}]}, gold, schema, {}) == (2, 4)  # a dropped row scores 0
     assert score_document({"value": {"t": []}}, gold, schema, {}) == (0, 4)
+
+
+def test_a_field_added_at_its_default_keeps_earlier_config_ids(tmp_path):
+    base = "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: https://gateway.vlm.run/v1/openai}\n"
+    a = load(_write(tmp_path, "a.yaml", base))
+    b = load(_write(tmp_path, "b.yaml", base + "request: {pages_per_call: 2}\n"))
+    assert a.config_id != b.config_id and a.backend_name == "vlmrun"
+    d = a.model_dump(mode="json")
+    assert "pages_per_call" in d["request"]  # in the dump, but not in the id at its default

@@ -7,7 +7,7 @@ import http.server
 import json
 from pathlib import Path
 
-from vlmbench.evals.config import Settings
+from vlmbench.evals.config import Settings, backend_name
 from vlmbench.evals.results import interval, latest
 
 
@@ -38,7 +38,7 @@ def _eval(root: Path) -> dict:
                     "serve": cfg["serve"].removeprefix(f"{root.name}-"),
                     "model": cfg["model_id"],
                     "config_id": cid,
-                    "backend": cfg["backend"]["type"],
+                    "backend": backend_name(cfg["backend"]),
                     "prompt": Path(cfg["prompt_file"]).name if cfg.get("prompt_file") else cfg["request"].get("method"),
                     "mean": round(sum(a["score"] for a in bench.values()) / len(datasets), 1) if full else None,
                     "ci": list(ci) if ci else None,
@@ -230,12 +230,12 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   const g=el("div",{className:"grid2"});body.append(g);
   const card=el("div",{className:"card"});g.append(card);
   card.append(el("h2",{textContent:"Leaderboard"}),el("div",{className:"key"},`<span><span class="dot" style="background:var(--good)"></span>≥ 80</span><span><span class="dot" style="background:var(--warn)"></span>60–80</span><span><span class="dot" style="background:var(--bad)"></span>&lt; 60</span><span>hairline = 95% CI</span><span>mean of ${ev.datasets.length} benchmarks; judge not averaged in</span>`));
-  const cols=[{t:"#"},{t:"model",key:"serve",l:1},{t:"mean",key:"mean"},...ev.datasets.map(d=>({t:d,key:`scores.${d}.score`})),
+  const cols=[{t:"#"},{t:"model",key:"serve",l:1},{t:"backend",key:"backend",l:1},{t:"mean",key:"mean"},...ev.datasets.map(d=>({t:d,key:`scores.${d}.score`})),
    {t:"judge",key:"judge"},{t:"items/s",key:"pages_s"},{t:"$ / 1k",key:"usd_1k"}];
   const tbl=el("table");tbl.createTHead().append(el("tr",{},cols.map(c=>`<th class="${c.l?"l":""}">${esc(c.t)}</th>`).join("")));tbl.createTBody();card.append(tbl);
   let rad=null;
   sortable(tbl,rows,cols,(r,i)=>hover(el("tr",{},`<td class="rank">${String(i+1).padStart(2,"0")}</td>`+
-   `<td class="l name">${esc(r.serve)}<span class="meta">${esc(r.prompt||"")} · ${r.backend==="vllm"?"local vLLM":"API"}</span></td>`+
+   `<td class="l name">${esc(r.serve)}<span class="meta">${esc(r.prompt||"")}</span></td><td class="l note">${esc(r.backend)}</td>`+
    `<td><span class="cell" data-tip="${r.ci?`95% CI ${f(r.ci[0])}–${f(r.ci[1])}`:"not every dataset graded"}"><span class="big">${f(r.mean)}</span>${meter(r.mean,r.ci)}</span></td>`+
    ev.datasets.map(d=>{const s=r.scores[d];return `<td><span class="cell" data-tip="${esc(d)} ${s?f(s.score):"—"}${s&&s.ci?` · 95% CI ${f(s.ci[0])}–${f(s.ci[1])}`:""}">${s?f(s.score):"—"}${s?meter(s.score,s.ci,1):""}</span></td>`}).join("")+
    `<td><span class="cell" data-tip="LLM judge, 0–100">${f(r.judge)}${r.judge!=null?meter(r.judge,null,1):""}</span></td>`+

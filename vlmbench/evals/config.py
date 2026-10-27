@@ -85,11 +85,37 @@ class Serve(Strict):
             d["backend"].pop(k, None)
         for k in ("concurrency", "timeout", "stream"):
             d["request"].pop(k, None)
+        for k in ("pages_per_call",):  # added later: left out at its default so earlier ids (and caches) hold
+            if d["request"].get(k) is None:
+                d["request"].pop(k, None)
         return "c-" + hashlib.sha256(json.dumps(d, sort_keys=True).encode()).hexdigest()[:8]
 
     @property
     def local(self) -> bool:
         return isinstance(self.backend, Vllm)
+
+    @property
+    def backend_name(self) -> str:
+        return backend_name(self.backend.model_dump())
+
+
+_HOSTS = {
+    "gateway.vlm.run": "vlmrun",
+    "openrouter.ai": "openrouter",
+    "generativelanguage.googleapis.com": "gemini",
+    "api.openai.com": "openai",
+    "api.anthropic.com": "anthropic",
+}
+
+
+def backend_name(backend: dict) -> str:
+    """What serves the model, for reports: `vllm` locally, else the endpoint (`vlmrun`, `openrouter`, its host)."""
+    if backend["type"] == "vllm":
+        return "vllm"
+    from urllib.parse import urlparse
+
+    host = urlparse(backend["base_url"]).hostname or backend["base_url"]
+    return _HOSTS.get(host, host)
 
 
 Kind = Literal["omniparse", "olmocr_bench", "parsebench", "extractbench", "longarray"]

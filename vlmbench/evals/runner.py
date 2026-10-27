@@ -301,6 +301,7 @@ def board(bench: Path, split: str, log=print) -> list[dict]:
         out.append(
             {
                 "serve": n.removeprefix(f"{ev.name}-"),
+                "backend": s.backend_name,
                 "mean": round(sum(v["score"] for v in bench_acc.values()) / len(kinds), 1) if full else None,
                 "ci95": "{:.0f}–{:.0f}".format(*ci) if ci else None,
                 **{d: v["score"] for d, v in bench_acc.items()},
