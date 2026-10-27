@@ -203,7 +203,7 @@ td.none{text-align:left;color:var(--ink-3);padding:28px 10px}
 .pop{position:fixed;z-index:20;display:flex;visibility:hidden;flex-direction:column;gap:3px;padding:6px 9px;background:#fff;border:1px solid #e7e6e1;
  box-shadow:0 2px 8px rgba(0,0,0,.08);border-radius:4px;font:500 11px "Geist Mono",monospace}
 .pop.on{visibility:visible}.pop a{color:#0b0b0b;text-decoration:none}.pop a:hover{text-decoration:underline}.pop a.rev{color:#9a9993}
-th[data-ds]{cursor:help}
+th[data-ds],.dsets label span,.bars .key [data-ds]{cursor:help}
 .chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px 18px;margin:-28px 0 40px}
 .chips button{font:500 12.5px "Geist Mono",monospace;color:var(--ink-3);background:none;border:0;padding:2px 0;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
 .chips button::before{content:"";width:9px;height:9px;border:1px solid var(--ink-3);border-radius:2px}
@@ -388,7 +388,7 @@ function accTab(){const root=$("#acc");root.replaceChildren();
    p.append(el("h2",{textContent:"Benchmarks"}),el("div",{className:"key",textContent:"averaged into the mean · kept in this browser"}));
    const list=el("div",{className:"legend"});p.append(list);
    ev.datasets.forEach(d=>{const on=sel.includes(d);
-    const lab=el("label",{},`<input type="checkbox" ${on?"checked":""}><span>${esc(d)}</span>`);list.append(lab);
+    const lab=el("label",{},`<input type="checkbox" ${on?"checked":""}><span>${esc(d)}</span>`);list.append(lab);link(lab.querySelector("span"),ev.links?.[d]);
     lab.querySelector("input").onchange=e=>{if(!e.target.checked&&sel.length===1){e.target.checked=true;return}
      keep(ev,e.target.checked?ev.datasets.filter(x=>x===d||sel.includes(x)):sel.filter(x=>x!==d));draw()}})}
   const colm=el("div",{className:"colm"});g.append(colm);
@@ -444,8 +444,9 @@ function bars(ev,rows,mid,ds,rad){
  const pat=(c,i)=>PATS[(ds?i:Math.max(0,order.indexOf(c.t)))%PATS.length];
  const sw=(kind,i)=>`<svg width="16" height="11" class="psw"><defs>${patDef("lg"+i,kind,"#8f8f8f")}</defs><rect width="16" height="11" rx="2" fill="${patFill("lg"+i,kind,"#8f8f8f")}"/></svg>`;
  card.append(el("h2",{textContent:ds?`${ds}, by metric and category`:"Scores by benchmark"}),
-  el("div",{className:"key"},ser.map((c,i)=>`<span>${sw(pat(c,i),i)}${esc(c.t)}</span>`).join("")+
+  el("div",{className:"key"},ser.map((c,i)=>`<span${ds?"":` data-ds="${esc(c.t)}"`}>${sw(pat(c,i),i)}${esc(c.t)}</span>`).join("")+
    `<span><span class="sw lead"></span>leader's mean</span><span>number = mean · colour = model</span>`));
+ card.querySelectorAll(".key [data-ds]").forEach(x=>link(x,ev.links?.[x.dataset.ds]));
  const wrap=el("div",{className:"barsvg"});card.append(wrap);
  function draw(){
   const rs=rows.filter(match).filter(r=>r.mean!=null||ser.some(c=>c.get(r)!=null));
