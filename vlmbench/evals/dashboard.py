@@ -178,9 +178,13 @@ nav.tabs button,.seg button,select{font:500 13px "Space Grotesk",sans-serif;colo
 nav.tabs button[aria-selected=true]{color:var(--ink-1);box-shadow:inset 0 -1.5px 0 var(--ink-1)}
 .seg{display:inline-flex;gap:14px}.seg button[aria-pressed=true]{color:var(--ink-1)}
 .chips[hidden]{display:none}
-.frame{max-height:calc(100vh - 96px);overflow:auto}
+.frame.box{max-height:calc(100vh - 96px);overflow:auto}
+#q{font:500 13px "Geist Mono",monospace;color:var(--ink-1);background:none;border:0;border-bottom:1px solid var(--hair);padding:4px 0;width:220px;outline:none}
+#q:focus{border-bottom-color:var(--ink-1)}#q::placeholder{color:var(--ink-3)}
+td.none{text-align:left;color:var(--ink-3);padding:28px 10px}
 .frame thead th{position:sticky;top:0;z-index:2;background:var(--surface-1);border-bottom:0;box-shadow:inset 0 -1px 0 var(--ink-1);padding-top:8px}
-.frame table.dense th:nth-child(2){z-index:3}
+.frame table.dense th:nth-child(2){z-index:3;box-shadow:inset 0 -1px 0 var(--ink-1),8px 0 8px -8px var(--hair)}
+.radar svg{overflow:visible}
 .pop{position:fixed;z-index:20;display:none;flex-direction:column;gap:6px;min-width:280px;padding:12px 14px;background:var(--ink-1);border-radius:6px;font:500 12px "Geist Mono",monospace}
 .pop.on{display:flex}.pop a{color:var(--surface-1);text-decoration:none}.pop a:hover{text-decoration:underline}.pop a.rev{color:var(--ink-3)}
 th[data-ds]{cursor:help}
@@ -191,7 +195,7 @@ th[data-ds]{cursor:help}
 select{color:var(--ink-1);border-bottom:1px solid var(--hair);padding-right:4px}
 .controls{display:flex;gap:28px;align-items:center;margin:40px 0 28px}
 .lab{font:500 10.5px "Space Grotesk",sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
-.card{margin:0 0 64px;overflow-x:auto}
+.card{margin:0 0 64px}
 .card h2{font:600 13px "Space Grotesk",sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);margin:0 0 4px}
 .key{font-size:12px;color:var(--ink-3);display:flex;gap:18px;align-items:center;margin:0 0 18px}
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:middle}
@@ -230,6 +234,13 @@ table.dense tr:hover td.name{background:var(--hover)}
 .legend input{accent-color:var(--ink-1)}
 .legend .sw{width:14px;height:2px;border-radius:1px;display:inline-block}
 .legend input:disabled+span{opacity:.35}
+/* the profile sits above the leaderboard; on a wide screen, beside it and pinned, so a hovered row's profile stays in view */
+.grid2{display:flex;flex-direction:column}.grid2>.side{order:-1}
+@media (min-width:1760px){main{max-width:1720px}
+ .grid2{display:grid;grid-template-columns:400px minmax(0,1fr);gap:56px;align-items:start}
+ .grid2>.side{position:sticky;top:24px;margin:0;overflow:visible}
+ .grid2>.side .radar{grid-template-columns:1fr;gap:12px}
+ .grid2>.side .legend{grid-template-columns:1fr;max-height:calc(100vh - 560px);overflow:auto}}
 svg text{fill:var(--ink-3);font:500 10.5px "Space Grotesk",sans-serif;letter-spacing:.1em;text-transform:uppercase}
 svg .tick{font:400 9.5px "Geist Mono",monospace;letter-spacing:0;text-transform:none}
 svg polygon.s{transition:opacity .15s}
@@ -241,7 +252,7 @@ svg polygon.s{transition:opacity .15s}
 <header><h1>vlmbench</h1>
 <nav class="tabs" role="tablist"><button role="tab" data-tab="acc" aria-selected="true">Accuracy</button>
 <button role="tab" data-tab="runs" aria-selected="false">Runs</button></nav>
-<span style="flex:1"></span><span class="sub mono" id="sub"></span><div class="seg" id="theme"><button data-t="light">Light</button><button data-t="dark">Dark</button></div></header>
+<span style="flex:1"></span><input id="q" type="search" placeholder="search models   /" autocomplete="off" spellcheck="false" aria-label="Search models, backends, prompts, datasets"><span class="sub mono" id="sub"></span><div class="seg" id="theme"><button data-t="light">Light</button><button data-t="dark">Dark</button></div></header>
 <section id="acc"></section><section id="runs" hidden></section>
 </main><div class="tip" id="tip"></div></div>
 <script>
@@ -252,7 +263,15 @@ const usd=(v,rate)=>{if(v==null)return"—";const t="$"+(+v).toFixed(v>=1?2:v>=.
 const f=(v,d=1)=>v==null?"—":(+v).toFixed(d), esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const tip=$("#tip");
 // a table scrolls in its own box, at most a screen tall, so its header row stays in view
-const frame=t=>{const w=el("div",{className:"frame"});w.append(t);return w};
+const frame=t=>{const w=el("div",{className:"frame"});w.append(t);
+ new ResizeObserver(()=>w.classList.toggle("box",t.scrollWidth>w.clientWidth+1)).observe(w);return w};
+// search: every word must appear in a row's model, backend, prompt, eval, dataset or split; ranks are kept
+const Q={terms:[]}, hay=r=>[r.serve,r.model,r.backend,r.prompt,r.eval,r.dataset,r.split,r.gpu].filter(Boolean).join(" ").toLowerCase();
+const match=r=>Q.terms.every(t=>hay(r).includes(t));
+$("#q").oninput=e=>{Q.terms=e.target.value.toLowerCase().split(/\s+/).filter(Boolean);document.querySelectorAll("table").forEach(t=>t.redraw?.())};
+document.addEventListener("keydown",e=>{const q=$("#q");
+ if(e.key==="/"&&document.activeElement!==q&&!/input|select|textarea/i.test(document.activeElement?.tagName)){e.preventDefault();q.focus()}
+ else if(e.key==="Escape"&&document.activeElement===q){q.value="";q.oninput({target:q});q.blur()}});
 // a dataset header opens a card with its Hugging Face repo and pinned revision (hover; it stays while the pointer is on it)
 const pop=el("div",{className:"pop"});(document.querySelector(".viz-root")||document.body).append(pop);let popT=0;
 pop.onmouseenter=()=>clearTimeout(popT);pop.onmouseleave=()=>{popT=setTimeout(()=>pop.classList.remove("on"),150)};
@@ -282,8 +301,10 @@ function sortable(tbl,rows,cols,render){let key=null,dir=-1;
   [...head.cells].forEach(c=>c.removeAttribute("aria-sort"));th.setAttribute("aria-sort",dir<0?"descending":"ascending");draw()}});
  function val(r,k){const v=k.split(".").reduce((o,p)=>o?.[p],r);return v==null?-Infinity:v}
  function draw(){const rs=key?[...rows].sort((a,b)=>{const x=val(a,key),y=val(b,key);return (typeof x==="string"?x.localeCompare(y):x-y)*dir}):rows;
-  tbl.tBodies[0].replaceChildren(...rs.map((r,i)=>render(r,i)))}
- draw()}
+  const shown=rs.map((r,i)=>[r,i]).filter(([r])=>match(r));
+  tbl.tBodies[0].replaceChildren(...(shown.length?shown.map(([r,i])=>render(r,i)):
+   [el("tr",{},`<td class="none" colspan="${cols.length}">Nothing matches “${esc(Q.terms.join(" "))}”</td>`)]))}
+ tbl.redraw=draw;draw()}
 
 // ── accuracy tab ──
 function accTab(){const root=$("#acc");root.replaceChildren();
@@ -359,7 +380,7 @@ function accTab(){const root=$("#acc");root.replaceChildren();
  pick.onchange=draw;dpick.onchange=draw;draw()}
 
 function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relative to the fastest serve
- const card=el("div",{className:"card"});card.append(el("h2",{textContent:"Profile"}),
+ const card=el("div",{className:"card side"});card.append(el("h2",{textContent:"Profile"}),
   el("div",{className:"key",textContent:"0–100 per axis · speed relative to the fastest · up to 8 · hover a name to isolate it"}));
  const wrap=el("div",{className:"radar"});card.append(wrap);
  const axes=[...ev.datasets.map(d=>({k:d,get:r=>r.scores[d]?.score})),{k:"judge",get:r=>r.judge}];
