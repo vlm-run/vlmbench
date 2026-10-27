@@ -42,7 +42,24 @@ def _eval(root: Path) -> dict:
                     "prompt": Path(cfg["prompt_file"]).name if cfg.get("prompt_file") else cfg["request"].get("method"),
                     "mean": round(sum(a["score"] for a in bench.values()) / len(datasets), 1) if full else None,
                     "ci": list(ci) if ci else None,
-                    "scores": {d: {"score": a["score"], "ci": a.get("ci95")} for d, a in bench.items()},
+                    "scores": {
+                        d: {
+                            "score": a["score"],
+                            "ci": a.get("ci95"),
+                            "metrics": a.get("metrics") or {},
+                            "cats": a.get("by_category") or {},
+                        }
+                        for d, a in bench.items()
+                    },
+                    "judge_by": {a["dataset"]: a["score"] for a in mine if "judge" in a},
+                    "perf_by": {
+                        p["dataset"]: {
+                            "pages_s": p["items_per_s"],
+                            "usd_1k": p["usd_per_1k_items"],
+                            "cost": p["cost_usd"],
+                        }
+                        for p in ps
+                    },
                     "judge": round(sum(judged) / len(judged), 1) if judged else None,
                     "pages_s": _mean([p["items_per_s"] for p in ps]),
                     "usd_1k": _mean([p["usd_per_1k_items"] for p in ps]),
@@ -151,6 +168,7 @@ select{color:var(--ink-1);border-bottom:1px solid var(--hair);padding-right:4px}
 .tile .v small{font-size:13px;color:var(--ink-3);letter-spacing:0;margin-left:6px}
 .tile .w{font-size:13px;color:var(--ink-2)}
 table{border-collapse:collapse;width:100%}
+th.cat{font-style:italic}
 th{font:500 10.5px "Space Grotesk",sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);
  text-align:right;padding:0 10px 10px;border-bottom:1px solid var(--ink-1);cursor:pointer;user-select:none;white-space:nowrap}
 td{padding:11px 10px;border-bottom:1px solid var(--hair);text-align:right;white-space:nowrap;font-size:13px}
@@ -163,6 +181,10 @@ td.name{font-family:"Space Grotesk",sans-serif;font-size:14px;font-weight:500}
 td.name .meta{display:block;font:400 11px "Geist Mono",monospace;color:var(--ink-3);margin-top:1px}
 .cell{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .meter{position:relative;display:inline-block;width:84px;height:3px}.meter.sm{width:48px}
+table.dense th,table.dense td{padding-left:7px;padding-right:7px}table.dense th{letter-spacing:.06em;white-space:normal;max-width:72px;line-height:1.3;vertical-align:bottom}
+table.dense .dot{margin-right:6px}
+table.dense td.name,table.dense th:nth-child(2){position:sticky;left:0;z-index:1;background:var(--surface-1);box-shadow:8px 0 8px -8px var(--hair)}
+table.dense tr:hover td.name{background:var(--hover)}
 .meter>i{position:absolute;left:0;top:0;bottom:0;border-radius:2px}
 .meter>b{position:absolute;top:1px;height:1px;background:var(--ink-3);opacity:.6}
 .meter>u{position:absolute;top:-3px;bottom:-3px;width:1px;background:var(--ink-3);opacity:.6}
@@ -225,11 +247,18 @@ function accTab(){const root=$("#acc");root.replaceChildren();
  const pick=el("select");D.evals.forEach((e,i)=>pick.append(el("option",{value:i,textContent:e.name})));
  ctl.append(el("span",{className:"lab",textContent:"Eval"}),pick);
  const seg=el("div",{className:"seg"});ctl.append(el("span",{className:"lab",textContent:"Split"}),seg);
+ const dpick=el("select");ctl.append(el("span",{className:"lab",textContent:"Dataset"}),dpick);
  const body=el("div");root.append(body);let split;
  function draw(){const ev=D.evals[pick.value], splits=Object.keys(ev.splits);
   if(!splits.includes(split))split=splits.includes("test")?"test":splits[0];
   seg.replaceChildren(...splits.map(s=>{const b=el("button",{textContent:s});b.setAttribute("aria-pressed",s===split);b.onclick=()=>{split=s;draw()};return b}));
-  const rows=ev.splits[split]||[];body.replaceChildren();
+  const ds=ev.datasets.includes(dpick.value)?dpick.value:"";
+  dpick.replaceChildren(el("option",{value:"",textContent:"all"}),...ev.datasets.map(d=>el("option",{value:d,textContent:d})));dpick.value=ds;
+  const all=ev.splits[split]||[];body.replaceChildren();
+  // one dataset: its score is the mean, its metrics and categories the columns, its own judge, speed and cost
+  const rows=!ds?all:all.map(r=>{const s=r.scores[ds],p=r.perf_by?.[ds]||{};
+   return {...r,mean:s?s.score:null,ci:s?.ci,judge:r.judge_by?.[ds]??null,pages_s:p.pages_s??null,usd_1k:p.usd_1k??null,cost:p.cost??null}})
+   .sort((a,b)=>(b.mean??-1)-(a.mean??-1));
   const ok=rows.filter(r=>r.mean!=null), best=ok[0];
   const value=ok.filter(r=>r.usd_1k).sort((a,b)=>b.mean/b.usd_1k-a.mean/a.usd_1k)[0];
   const fast=ok.filter(r=>r.pages_s).sort((a,b)=>b.pages_s-a.pages_s)[0];
@@ -237,23 +266,35 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   if(best)body.append(el("div",{className:"tiles"},tile("Most accurate",f(best.mean),best.serve)+
    (value?tile("Best value",`${f(value.mean)}<small>$${f(value.usd_1k,2)} / 1k</small>`,value.serve):"")+
    (fast?tile("Fastest",`${f(fast.pages_s,2)}<small>items/s</small>`,fast.serve):"")+
-   tile("Models",`${ok.length}<small>× ${ev.datasets.length} benchmarks</small>`,`${split} split`)));
+   tile("Models",`${ok.length}<small>${ds?esc(ds):`× ${ev.datasets.length} benchmarks`}</small>`,`${split} split`)));
   const g=el("div",{className:"grid2"});body.append(g);
   const card=el("div",{className:"card"});g.append(card);
-  card.append(el("h2",{textContent:"Leaderboard"}),el("div",{className:"key"},`<span><span class="dot" style="background:var(--good)"></span>≥ 80</span><span><span class="dot" style="background:var(--warn)"></span>60–80</span><span><span class="dot" style="background:var(--bad)"></span>&lt; 60</span><span>hairline = 95% CI</span><span>mean of ${ev.datasets.length} benchmarks; judge not averaged in</span>`));
-  const cols=[{t:"#"},{t:"model",key:"serve",l:1},{t:"backend",key:"backend",l:1},{t:"mean",key:"mean"},...ev.datasets.map(d=>({t:d,key:`scores.${d}.score`})),
-   {t:"judge",key:"judge"},{t:"items/s",key:"pages_s"},{t:"$ / 1k",key:"usd_1k"},{t:"cost",key:"cost"}];
-  const tbl=el("table");tbl.createTHead().append(el("tr",{},cols.map(c=>`<th class="${c.l?"l":""}">${esc(c.t)}</th>`).join("")));tbl.createTBody();card.append(tbl);
+  card.append(el("h2",{textContent:"Leaderboard"}),el("div",{className:"key"},`<span><span class="dot" style="background:var(--good)"></span>≥ 80</span><span><span class="dot" style="background:var(--warn)"></span>60–80</span><span><span class="dot" style="background:var(--bad)"></span>&lt; 60</span><span>hairline = 95% CI</span><span>${ds?`${esc(ds)} score, then its metrics and categories`:`mean of ${ev.datasets.length} benchmarks; judge not averaged in`}</span>`));
+  // between score and judge: every dataset, or one dataset's metrics then its categories (each name once)
+  const mid=[];
+  if(!ds)ev.datasets.forEach(d=>mid.push({t:d,key:`scores.${d}.score`,get:r=>r.scores[d]?.score,ci:r=>r.scores[d]?.ci}));
+  else{const seen=new Set();
+   for(const part of ["metrics","cats"])for(const r of all)for(const k of Object.keys(r.scores[ds]?.[part]||{})){
+    if(seen.has(k))continue;seen.add(k);
+    if(part==="metrics"&&all.every(r=>{const v=r.scores[ds]?.metrics?.[k];return v==null||Math.abs(v-r.scores[ds].score)<.05}))continue; // the score again
+    mid.push({t:k,key:`scores.${ds}.${part}.${k}`,get:r=>r.scores[ds]?.[part]?.[k],cat:part==="cats"})}}
+  const ratio=k=>/ratio/i.test(k);
+  const cols=[{t:"#"},{t:"model",key:"serve",l:1},{t:"backend",key:"backend",l:1},{t:ds?"score":"mean",key:"mean"},...mid,
+   {t:"judge",key:"judge"},{t:"items/s",key:"pages_s"},...(ds?[]:[{t:"$ / 1k",key:"usd_1k"}]),{t:"cost",key:"cost"}];
+  const dense=mid.length>5, tbl=el("table",{className:dense?"dense":""});tbl.createTHead().append(el("tr",{},cols.map(c=>`<th class="${c.l?"l":""}${c.cat?" cat":""}"${c.cat?' title="category"':""}>${esc(dense?c.t.replace(/_/g," "):c.t)}</th>`).join("")));tbl.createTBody();card.append(tbl);
   let rad=null;
   sortable(tbl,rows,cols,(r,i)=>hover(el("tr",{},`<td class="rank">${String(i+1).padStart(2,"0")}</td>`+
    `<td class="l name">${esc(r.serve)}<span class="meta">${esc(r.prompt||"")}</span></td><td class="l note">${esc(r.backend)}</td>`+
-   `<td><span class="cell" data-tip="${r.ci?`95% CI ${f(r.ci[0])}–${f(r.ci[1])}`:"not every dataset graded"}"><span class="big">${f(r.mean)}</span>${meter(r.mean,r.ci)}</span></td>`+
-   ev.datasets.map(d=>{const s=r.scores[d];return `<td><span class="cell" data-tip="${esc(d)} ${s?f(s.score):"—"}${s&&s.ci?` · 95% CI ${f(s.ci[0])}–${f(s.ci[1])}`:""}">${s?f(s.score):"—"}${s?meter(s.score,s.ci,1):""}</span></td>`}).join("")+
+   `<td><span class="cell" data-tip="${r.ci?`95% CI ${f(r.ci[0])}–${f(r.ci[1])}`:ds?"":"not every dataset graded"}"><span class="big">${f(r.mean)}</span>${meter(r.mean,r.ci,dense)}</span></td>`+
+   mid.map(c=>{const v=c.get(r),ci=c.ci?.(r);
+    if(ratio(c.t))return `<td>${v==null?"—":f(v,2)+"×"}</td>`;
+    if(dense)return `<td><span class="cell" data-tip="${esc(c.t)} ${f(v)}">${v!=null?`<span class="dot" style="background:${tone(v)}"></span>`:""}${f(v)}</span></td>`;
+    return `<td><span class="cell" data-tip="${esc(c.t)} ${f(v)}${ci?` · 95% CI ${f(ci[0])}–${f(ci[1])}`:""}">${f(v)}${v!=null?meter(v,ci,1):""}</span></td>`}).join("")+
    `<td><span class="cell" data-tip="LLM judge, 0–100">${f(r.judge)}${r.judge!=null?meter(r.judge,null,1):""}</span></td>`+
-   `<td>${f(r.pages_s,2)}</td><td>${r.usd_1k==null?"—":f(r.usd_1k,2)}</td><td>${usd(r.cost,r.gpu_rate)}</td>`),r));
+   `<td>${f(r.pages_s,2)}</td>${ds?"":`<td>${r.usd_1k==null?"—":f(r.usd_1k,2)}</td>`}<td>${usd(r.cost,r.gpu_rate)}</td>`),r));
   function hover(tr,r){tr.onmouseenter=()=>rad?.focus(r.serve);tr.onmouseleave=()=>rad?.focus(null);return tr}
   rad=radar(ev,rows);g.append(rad.card)}
- pick.onchange=draw;draw()}
+ pick.onchange=draw;dpick.onchange=draw;draw()}
 
 function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relative to the fastest serve
  const card=el("div",{className:"card"});card.append(el("h2",{textContent:"Profile"}),

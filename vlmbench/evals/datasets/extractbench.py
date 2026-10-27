@@ -16,19 +16,20 @@ from vlmbench.evals.jsonx import parse
 
 REPO = "llamaindex/ExtractBench"
 DOCUMENT = True
+SUBSETS = ("short", "medium", "long")
 
 
 @cache
-def _cases(revision: str, subsets: tuple[str, ...]) -> dict[str, tuple[Path, Path, dict]]:
+def _cases(revision: str, subsets: tuple[str, ...], repo: str = REPO) -> dict[str, tuple[Path, Path, dict]]:
     """id -> (pdf, test.json, row) for every case in the subsets, written once beside the HF cache."""
     from extract_bench.data.download import _write_sidecar
     from huggingface_hub import constants, snapshot_download
 
     patterns = [f"{s}.jsonl" for s in subsets] + [f"docs/{s}/**" for s in subsets]
-    snap = Path(snapshot_download(REPO, repo_type="dataset", revision=revision, allow_patterns=patterns, max_workers=8))
+    snap = Path(snapshot_download(repo, repo_type="dataset", revision=revision, allow_patterns=patterns, max_workers=8))
     out = {}
     for s in subsets:
-        split_dir = Path(constants.HF_HOME) / "vlmbench" / "extractbench" / revision[:12] / s
+        split_dir = Path(constants.HF_HOME) / "vlmbench" / repo.split("/")[1].lower() / revision[:12] / s
         for line in (snap / f"{s}.jsonl").read_text().splitlines():
             row = json.loads(line)
             sidecar = split_dir / Path(row["pdf"]).relative_to(Path("docs") / s).with_suffix(".test.json")
@@ -38,19 +39,16 @@ def _cases(revision: str, subsets: tuple[str, ...]) -> dict[str, tuple[Path, Pat
     return out
 
 
-def _subsets(spec: DatasetSpec) -> tuple[str, ...]:
-    return tuple(spec.subsets or ("short", "medium", "long"))
+def _all(spec: DatasetSpec, repo: str = REPO, subsets: tuple[str, ...] = SUBSETS):
+    return _cases(spec.revision, tuple(spec.subsets or subsets), repo)
 
 
-def items(spec: DatasetSpec) -> list[Item]:
-    return [
-        Item(i, row["category"], str(pdf), doc=True)
-        for i, (pdf, _, row) in _cases(spec.revision, _subsets(spec)).items()
-    ]
+def items(spec: DatasetSpec, repo: str = REPO, subsets: tuple[str, ...] = SUBSETS) -> list[Item]:
+    return [Item(i, row["category"], str(pdf), doc=True) for i, (pdf, _, row) in _all(spec, repo, subsets).items()]
 
 
-def instruction(spec: DatasetSpec, item: Item) -> str:
-    schema = _cases(spec.revision, _subsets(spec))[item.id][2]["data_schema"]
+def instruction(spec: DatasetSpec, item: Item, repo: str = REPO, subsets: tuple[str, ...] = SUBSETS) -> str:
+    schema = _all(spec, repo, subsets)[item.id][2]["data_schema"]
     return (
         "Extract the data this JSON Schema describes from the document. Fill every field the document supports, "
         "use null where it does not, and include every record of every array.\n\nJSON Schema:\n" + schema
@@ -73,8 +71,10 @@ def _pool() -> ProcessPoolExecutor:
     return ProcessPoolExecutor(8, mp_context=multiprocessing.get_context("spawn"))
 
 
-def score(spec: DatasetSpec, its: list[Item], replies: dict[str, str]) -> dict:
-    cases = _cases(spec.revision, _subsets(spec))
+def score(
+    spec: DatasetSpec, its: list[Item], replies: dict[str, str], repo: str = REPO, subsets: tuple[str, ...] = SUBSETS
+) -> dict:
+    cases = _all(spec, repo, subsets)
     jobs = [(str(cases[it.id][1]), replies.get(it.id) or "") for it in its]
     got = list(_pool().map(_score_one, jobs))
     units = {it.id: {"value_f1": [f1 / 100, 1]} for it, (f1, _, _) in zip(its, got)}
