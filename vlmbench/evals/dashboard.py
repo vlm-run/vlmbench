@@ -21,6 +21,19 @@ def collect(home: Path) -> dict:
     return {"evals": [_eval(d) for d in evals], "runs": _runs(home)}
 
 
+def _links(root: Path, kinds: dict[str, str]) -> dict[str, dict]:
+    """Each dataset's Hugging Face repo and the revision its newest result pinned."""
+    out = {}
+    for f in sorted(root.glob("*/result.json"), reverse=True):
+        for name, spec in json.loads(f.read_text())["run"].get("datasets", {}).items():
+            repo = getattr(DATASETS.get(kinds.get(name, "")), "REPO", None)
+            if name in kinds and name not in out and repo:
+                out[name] = {"repo": repo, "revision": spec.get("revision")}
+        if len(out) == len(kinds):
+            break
+    return out
+
+
 def _eval(root: Path) -> dict:
     rows = latest(root)
     configs = {k[1]: v for k, v in rows.items() if k[0] == "cfg"}
@@ -29,6 +42,7 @@ def _eval(root: Path) -> dict:
     datasets = sorted({a["dataset"] for a in acc if "judge" not in a})
     doc = all(getattr(DATASETS.get(a["metric"]), "DOCUMENT", False) for a in acc if "judge" not in a)
     out = {"name": root.name, "datasets": datasets, "splits": {}, "unit": "docs" if doc and acc else "pages"}
+    out["links"] = _links(root, {a["dataset"]: a["metric"] for a in acc if "judge" not in a})
     for split in sorted({a["split"] for a in acc}):
         serves = []
         for cid, cfg in configs.items():
@@ -164,6 +178,12 @@ nav.tabs button,.seg button,select{font:500 13px "Space Grotesk",sans-serif;colo
 nav.tabs button[aria-selected=true]{color:var(--ink-1);box-shadow:inset 0 -1.5px 0 var(--ink-1)}
 .seg{display:inline-flex;gap:14px}.seg button[aria-pressed=true]{color:var(--ink-1)}
 .chips[hidden]{display:none}
+.frame{max-height:calc(100vh - 96px);overflow:auto}
+.frame thead th{position:sticky;top:0;z-index:2;background:var(--surface-1);border-bottom:0;box-shadow:inset 0 -1px 0 var(--ink-1);padding-top:8px}
+.frame table.dense th:nth-child(2){z-index:3}
+.pop{position:fixed;z-index:20;display:none;flex-direction:column;gap:6px;min-width:280px;padding:12px 14px;background:var(--ink-1);border-radius:6px;font:500 12px "Geist Mono",monospace}
+.pop.on{display:flex}.pop a{color:var(--surface-1);text-decoration:none}.pop a:hover{text-decoration:underline}.pop a.rev{color:var(--ink-3)}
+th[data-ds]{cursor:help}
 .chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px 18px;margin:-28px 0 40px}
 .chips button{font:500 12.5px "Geist Mono",monospace;color:var(--ink-3);background:none;border:0;padding:2px 0;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
 .chips button::before{content:"";width:9px;height:9px;border:1px solid var(--ink-3);border-radius:2px}
@@ -231,6 +251,18 @@ const usd=(v,rate)=>{if(v==null)return"—";const t="$"+(+v).toFixed(v>=1?2:v>=.
  return rate?`<span class="cell" data-tip="GPU time at $${f(rate,2)}/h, not billed">~${t}</span>`:t};
 const f=(v,d=1)=>v==null?"—":(+v).toFixed(d), esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const tip=$("#tip");
+// a table scrolls in its own box, at most a screen tall, so its header row stays in view
+const frame=t=>{const w=el("div",{className:"frame"});w.append(t);return w};
+// a dataset header opens a card with its Hugging Face repo and pinned revision (hover; it stays while the pointer is on it)
+const pop=el("div",{className:"pop"});(document.querySelector(".viz-root")||document.body).append(pop);let popT=0;
+pop.onmouseenter=()=>clearTimeout(popT);pop.onmouseleave=()=>{popT=setTimeout(()=>pop.classList.remove("on"),150)};
+function link(th,l){if(!l)return;
+ const hf=`https://huggingface.co/datasets/${l.repo}`, rev=l.revision?`${hf}/tree/${l.revision}`:null;
+ th.onmouseenter=()=>{clearTimeout(popT);
+  pop.innerHTML=`<a href="${hf}" target="_blank" rel="noopener">${esc(l.repo)} ↗</a>`+(rev?`<a class="rev" href="${rev}" target="_blank" rel="noopener">pinned @ ${esc(l.revision.slice(0,10))}</a>`:"");
+  const b=th.getBoundingClientRect();pop.style.left=`${Math.max(8,Math.min(innerWidth-pop.offsetWidth-8,b.left+b.width/2-140))}px`;pop.style.top=`${b.bottom+6}px`;pop.classList.add("on")};
+ th.onmouseleave=()=>{popT=setTimeout(()=>pop.classList.remove("on"),150)}}
+window.addEventListener("scroll",()=>pop.classList.remove("on"),true);
 document.addEventListener("mousemove",e=>{const t=e.target.closest("[data-tip]");if(!t){tip.style.opacity=0;return}
  tip.textContent=t.dataset.tip;tip.style.left=(e.clientX+12)+"px";tip.style.top=(e.clientY+12)+"px";tip.style.opacity=1});
 // theme toggle: an explicit choice beats the OS setting both ways
@@ -302,16 +334,17 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   card.append(el("h2",{textContent:"Leaderboard"}),el("div",{className:"key"},`<span><span class="dot" style="background:var(--good)"></span>≥ 80</span><span><span class="dot" style="background:var(--warn)"></span>60–80</span><span><span class="dot" style="background:var(--bad)"></span>&lt; 60</span><span>hairline = 95% CI</span><span>${ds?`${esc(ds)} score, then its metrics and categories`:`mean of ${sel.length} benchmarks; judge not averaged in`}</span>`));
   // between score and judge: every dataset, or one dataset's metrics then its categories (each name once)
   const mid=[];
-  if(!ds)sel.forEach(d=>mid.push({t:d,key:`scores.${d}.score`,get:r=>r.scores[d]?.score,ci:r=>r.scores[d]?.ci}));
+  if(!ds)sel.forEach(d=>mid.push({t:d,ds:d,key:`scores.${d}.score`,get:r=>r.scores[d]?.score,ci:r=>r.scores[d]?.ci}));
   else{const seen=new Set();
    for(const part of ["metrics","cats"])for(const r of all)for(const k of Object.keys(r.scores[ds]?.[part]||{})){
     if(seen.has(k))continue;seen.add(k);
     if(part==="metrics"&&all.every(r=>{const v=r.scores[ds]?.metrics?.[k];return v==null||Math.abs(v-r.scores[ds].score)<.05}))continue; // the score again
     mid.push({t:k,key:`scores.${ds}.${part}.${k}`,get:r=>r.scores[ds]?.[part]?.[k],cat:part==="cats"})}}
   const ratio=k=>/ratio/i.test(k);
-  const cols=[{t:"#"},{t:"model",key:"serve",l:1},{t:"backend",key:"backend",l:1},{t:ds?"score":"mean",key:"mean"},...mid,
+  const cols=[{t:"#"},{t:"model",key:"serve",l:1},{t:"backend",key:"backend",l:1},{t:ds?"score":"mean",key:"mean",ds:ds||null},...mid,
    {t:"judge",key:"judge"},{t:`${ev.unit}/s`,key:"pages_s"},{t:`$/1k ${ev.unit}`,key:"usd_1k"}];
-  const dense=mid.length>3, tbl=el("table",{className:dense?"dense":""});tbl.createTHead().append(el("tr",{},cols.map(c=>`<th class="${c.l?"l":""}${c.cat?" cat":""}"${c.cat?' title="category"':""}>${esc(dense?c.t.replace(/_/g," "):c.t)}</th>`).join("")));tbl.createTBody();card.append(tbl);
+  const dense=mid.length>3, tbl=el("table",{className:dense?"dense":""});tbl.createTHead().append(el("tr",{},cols.map(c=>`<th class="${c.l?"l":""}${c.cat?" cat":""}"${c.cat?' title="category"':""}${c.ds?` data-ds="${esc(c.ds)}"`:""}>${esc(dense?c.t.replace(/_/g," "):c.t)}</th>`).join("")));tbl.createTBody();card.append(frame(tbl));
+  tbl.tHead.querySelectorAll("th[data-ds]").forEach(th=>link(th,ev.links?.[th.dataset.ds]));
   let rad=null;
   sortable(tbl,rows,cols,(r,i)=>hover(el("tr",{},`<td class="rank">${String(i+1).padStart(2,"0")}</td>`+
    `<td class="l name">${esc(r.serve)}<span class="meta">${esc(r.prompt||"")}</span></td><td class="l note">${esc(r.backend)}</td>`+
@@ -374,7 +407,7 @@ function runsTab(){const root=$("#runs");
   const cols=[{t:"serve",key:"serve",l:1},{t:"dataset",key:"dataset",l:1},{t:"split",key:"split",l:1},{t:"conc.",key:"concurrency"},
    {t:"items/s",key:"items_per_s"},{t:"cost",key:"cost_usd"},{t:"$/1k items",key:"usd_per_1k_items"},{t:"out tok/s",key:"output_tok_per_s"},
    {t:"TTFT p50 s",key:"ttft_s.p50"},{t:"latency p50 · p95 s",key:"latency_s.p50"},{t:"errors",key:"errors"},{t:"cut",key:"truncated"}];
-  const t=el("table");t.createTHead().append(el("tr",{},cols.map(x=>`<th class="${x.l?"l":""}">${x.t}</th>`).join("")));t.createTBody();c.append(t);
+  const t=el("table");t.createTHead().append(el("tr",{},cols.map(x=>`<th class="${x.l?"l":""}">${x.t}</th>`).join("")));t.createTBody();c.append(frame(t));
   sortable(t,ev,cols,p=>el("tr",{},`<td class="l name">${esc(p.serve)}<span class="meta">${esc(p.eval)}</span></td><td class="l">${esc(p.dataset)}</td><td class="l">${esc(p.split)}</td><td>${p.concurrency}</td>`+
    `<td><span class="cell"><span class="num">${f(p.items_per_s,2)}</span>${meter(top?100*(p.items_per_s||0)/top:0,null,1,"var(--ink-2)")}</span></td>`+
    `<td>${usd(p.cost_usd,p.gpu_rate)}</td><td>${p.usd_per_1k_items==null?"—":"$"+f(p.usd_per_1k_items,2)}</td><td>${f(p.output_tok_per_s,0)}</td>`+
@@ -385,7 +418,7 @@ function runsTab(){const root=$("#runs");
  const top=Math.max(...D.runs.map(r=>r.tok_s||0));
  const cols=[{t:"model",key:"model",l:1},{t:"backend",key:"backend",l:1},{t:"GPU",key:"gpu",l:1},{t:"conc.",key:"concurrency"},{t:"inputs",key:"inputs"},
   {t:"items/s",key:"items_s"},{t:"tok/s",key:"tok_s"},{t:"TTFT p50 ms",key:"ttft_p50"},{t:"TTFT p95 ms",key:"ttft_p95"},{t:"e2e p50 ms",key:"e2e_p50"},{t:"VRAM MiB",key:"vram_mib"},{t:"when",key:"when",l:1}];
- const t=el("table");t.createTHead().append(el("tr",{},cols.map(x=>`<th class="${x.l?"l":""}">${x.t}</th>`).join("")));t.createTBody();c.append(t);
+ const t=el("table");t.createTHead().append(el("tr",{},cols.map(x=>`<th class="${x.l?"l":""}">${x.t}</th>`).join("")));t.createTBody();c.append(frame(t));
  sortable(t,D.runs,cols,r=>el("tr",{},`<td class="l">${esc(r.model)}</td><td class="l">${esc(r.backend)}</td><td class="l note">${esc(r.gpu)}</td><td>${r.concurrency??"—"}</td><td>${r.inputs??"—"}</td>`+
   `<td>${f(r.items_s,2)}</td><td><span class="cell"><span class="num">${f(r.tok_s,0)}</span>${meter(top?100*(r.tok_s||0)/top:0,null,1,"var(--ink-2)")}</span></td>`+
   `<td>${f(r.ttft_p50,0)}</td><td>${f(r.ttft_p95,0)}</td><td>${f(r.e2e_p50,0)}</td><td>${r.vram_mib??"—"}</td><td class="l note">${esc(r.when)}</td>`))}
