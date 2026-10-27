@@ -225,13 +225,13 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   const tile=(k,v,w)=>`<div class="tile"><div class="lab">${k}</div><div class="v">${v}</div><div class="w">${esc(w)}</div></div>`;
   if(best)body.append(el("div",{className:"tiles"},tile("Most accurate",f(best.mean),best.serve)+
    (value?tile("Best value",`${f(value.mean)}<small>$${f(value.usd_1k,2)} / 1k</small>`,value.serve):"")+
-   (fast?tile("Fastest",`${f(fast.pages_s,2)}<small>pages/s</small>`,fast.serve):"")+
+   (fast?tile("Fastest",`${f(fast.pages_s,2)}<small>items/s</small>`,fast.serve):"")+
    tile("Models",`${ok.length}<small>× ${ev.datasets.length} benchmarks</small>`,`${split} split`)));
   const g=el("div",{className:"grid2"});body.append(g);
   const card=el("div",{className:"card"});g.append(card);
   card.append(el("h2",{textContent:"Leaderboard"}),el("div",{className:"key"},`<span><span class="dot" style="background:var(--good)"></span>≥ 80</span><span><span class="dot" style="background:var(--warn)"></span>60–80</span><span><span class="dot" style="background:var(--bad)"></span>&lt; 60</span><span>hairline = 95% CI</span><span>mean of ${ev.datasets.length} benchmarks; judge not averaged in</span>`));
   const cols=[{t:"#"},{t:"model",key:"serve",l:1},{t:"mean",key:"mean"},...ev.datasets.map(d=>({t:d,key:`scores.${d}.score`})),
-   {t:"judge",key:"judge"},{t:"pages/s",key:"pages_s"},{t:"$ / 1k",key:"usd_1k"}];
+   {t:"judge",key:"judge"},{t:"items/s",key:"pages_s"},{t:"$ / 1k",key:"usd_1k"}];
   const tbl=el("table");tbl.createTHead().append(el("tr",{},cols.map(c=>`<th class="${c.l?"l":""}">${esc(c.t)}</th>`).join("")));tbl.createTBody();card.append(tbl);
   let rad=null;
   sortable(tbl,rows,cols,(r,i)=>hover(el("tr",{},`<td class="rank">${String(i+1).padStart(2,"0")}</td>`+
@@ -291,8 +291,8 @@ function runsTab(){const root=$("#runs");
   c.append(el("h2",{textContent:"Eval throughput"}),el("div",{className:"key",textContent:"per serve × dataset · live calls only"}));
   const top=Math.max(...ev.map(p=>p.items_per_s||0));
   const cols=[{t:"eval",key:"eval",l:1},{t:"serve",key:"serve",l:1},{t:"dataset",key:"dataset",l:1},{t:"split",key:"split",l:1},{t:"conc.",key:"concurrency"},
-   {t:"pages/s",key:"items_per_s"},{t:"out tok/s",key:"output_tok_per_s"},{t:"TTFT p50 s",key:"ttft_s.p50"},{t:"latency p50 s",key:"latency_s.p50"},
-   {t:"latency p95 s",key:"latency_s.p95"},{t:"errors",key:"errors"},{t:"cut",key:"truncated"},{t:"$/1k pages",key:"usd_per_1k_items"}];
+   {t:"items/s",key:"items_per_s"},{t:"out tok/s",key:"output_tok_per_s"},{t:"TTFT p50 s",key:"ttft_s.p50"},{t:"latency p50 s",key:"latency_s.p50"},
+   {t:"latency p95 s",key:"latency_s.p95"},{t:"errors",key:"errors"},{t:"cut",key:"truncated"},{t:"$/1k items",key:"usd_per_1k_items"}];
   const t=el("table");t.createTHead().append(el("tr",{},cols.map(x=>`<th class="${x.l?"l":""}">${x.t}</th>`).join("")));t.createTBody();c.append(t);
   sortable(t,ev,cols,p=>el("tr",{},`<td class="l">${esc(p.eval)}</td><td class="l">${esc(p.serve)}</td><td class="l">${esc(p.dataset)}</td><td class="l">${esc(p.split)}</td><td>${p.concurrency}</td>`+
    `<td><span class="cell"><span class="num">${f(p.items_per_s,2)}</span>${meter(top?100*(p.items_per_s||0)/top:0,null,1,"var(--ink-2)")}</span></td><td>${f(p.output_tok_per_s,0)}</td>`+

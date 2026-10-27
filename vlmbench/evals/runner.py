@@ -305,8 +305,8 @@ def board(bench: Path, split: str, log=print) -> list[dict]:
                 "ci95": "{:.0f}–{:.0f}".format(*ci) if ci else None,
                 **{d: v["score"] for d, v in bench_acc.items()},
                 "judge": round(sum(judged) / len(judged), 1) if judged else None,
-                "pages/s": _mean([p["items_per_s"] for p in perf]),
-                "$/1k pages": _mean([p["usd_per_1k_items"] for p in perf]),
+                "items/s": _mean([p["items_per_s"] for p in perf]),
+                "$/1k items": _mean([p["usd_per_1k_items"] for p in perf]),
             }
         )
     return sorted(out, key=lambda r: -(r["mean"] or 0))
