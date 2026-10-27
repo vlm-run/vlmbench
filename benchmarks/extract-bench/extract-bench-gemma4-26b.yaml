@@ -1,8 +1,8 @@
 kind: Serve
 extends: ../../configs/gemma4-26b.yaml
 backend:
-  args:  # appended: vLLM keeps the last value, so a 32K window and up to 8 page images per request
-    - --max-model-len=32768
+  args:  # appended: vLLM keeps the last value, so a 131K window (ExtractBench schemas run to 16K tokens at p90) and up to 8 page images per request
+    - --max-model-len=131072
     - '--limit-mm-per-prompt={"image": 8, "audio": 0}'
 request:
   prompt: prompts/extract-json-v1.md
