@@ -10,11 +10,15 @@ from pathlib import Path
 
 from vlmbench.evals.config import Settings, backend_name
 from vlmbench.evals.datasets import DATASETS
+
+FIRST = ("ocr-bench",)
+"""The eval the page opens on; the rest follow by name."""
 from vlmbench.evals.results import draws, interval, latest
 
 
 def collect(home: Path) -> dict:
-    return {"evals": [_eval(d) for d in sorted((home / "evals").glob("*")) if d.is_dir()], "runs": _runs(home)}
+    evals = sorted((d for d in (home / "evals").glob("*") if d.is_dir()), key=lambda d: (d.name not in FIRST, d.name))
+    return {"evals": [_eval(d) for d in evals], "runs": _runs(home)}
 
 
 def _eval(root: Path) -> dict:
@@ -191,13 +195,13 @@ td.name .meta{display:block;font:400 11px "Geist Mono",monospace;color:var(--ink
 .cell{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .meter{position:relative;display:inline-block;width:84px;height:3px}.meter.sm{width:48px}
 table.dense th,table.dense td{padding-left:6px;padding-right:6px}table.dense th{letter-spacing:.04em;white-space:normal;line-height:1.3;vertical-align:bottom}
-table.dense .stack{display:inline-flex;flex-direction:column;align-items:flex-end;gap:5px}table.dense .stack .meter{width:44px}
+.cell.stack{display:inline-flex;flex-direction:column;align-items:flex-end;gap:5px}.stack .meter.sm{width:44px}.stack .meter:not(.sm){width:64px}
 table.dense td.name,table.dense th:nth-child(2){position:sticky;left:0;z-index:1;background:var(--surface-1);box-shadow:8px 0 8px -8px var(--hair)}
 table.dense tr:hover td.name{background:var(--hover)}
 .meter>i{position:absolute;left:0;top:0;bottom:0;border-radius:2px}
 .meter>b{position:absolute;top:1px;height:1px;background:var(--ink-3);opacity:.6}
 .meter>u{position:absolute;top:-3px;bottom:-3px;width:1px;background:var(--ink-3);opacity:.6}
-.big{font-size:15px;font-weight:600}
+.big{font-size:15px;font-weight:700}
 .muted,.note{color:var(--ink-3)}.note{font-size:12px}
 .radar{display:grid;grid-template-columns:420px minmax(0,1fr);gap:40px;align-items:center}
 @media (max-width:900px){.radar{grid-template-columns:1fr}.tiles{grid-template-columns:1fr 1fr}}
@@ -311,12 +315,11 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   let rad=null;
   sortable(tbl,rows,cols,(r,i)=>hover(el("tr",{},`<td class="rank">${String(i+1).padStart(2,"0")}</td>`+
    `<td class="l name">${esc(r.serve)}<span class="meta">${esc(r.prompt||"")}</span></td><td class="l note">${esc(r.backend)}</td>`+
-   `<td><span class="cell" data-tip="${r.ci?`95% CI ${f(r.ci[0])}–${f(r.ci[1])}`:ds?"":"not every dataset graded"}"><span class="big">${f(r.mean)}</span>${meter(r.mean,r.ci,dense)}</span></td>`+
+   `<td><span class="cell stack" data-tip="${r.ci?`95% CI ${f(r.ci[0])}–${f(r.ci[1])}`:ds?"":"not every dataset graded"}"><span class="big">${f(r.mean)}</span>${r.mean!=null?meter(r.mean,r.ci):""}</span></td>`+
    mid.map(c=>{const v=c.get(r),ci=c.ci?.(r);
     if(ratio(c.t))return `<td>${v==null?"—":f(v,2)+"×"}</td>`;
-    if(dense)return `<td><span class="cell stack" data-tip="${esc(c.t)} ${f(v)}${ci?` · 95% CI ${f(ci[0])}–${f(ci[1])}`:""}">${f(v)}${v!=null?meter(v,ci,1):""}</span></td>`;
-    return `<td><span class="cell" data-tip="${esc(c.t)} ${f(v)}${ci?` · 95% CI ${f(ci[0])}–${f(ci[1])}`:""}">${f(v)}${v!=null?meter(v,ci,1):""}</span></td>`}).join("")+
-   `<td><span class="cell" data-tip="LLM judge, 0–100">${f(r.judge)}${r.judge!=null?meter(r.judge,null,1):""}</span></td>`+
+    return `<td><span class="cell stack" data-tip="${esc(c.t)} ${f(v)}${ci?` · 95% CI ${f(ci[0])}–${f(ci[1])}`:""}">${f(v)}${v!=null?meter(v,ci,1):""}</span></td>`}).join("")+
+   `<td><span class="cell stack" data-tip="LLM judge, 0–100">${f(r.judge)}${r.judge!=null?meter(r.judge,null,1):""}</span></td>`+
    `<td>${f(r.pages_s,2)}</td><td>${r.usd_1k==null?"—":(r.gpu_rate?`<span class="cell" data-tip="GPU time at $${f(r.gpu_rate,2)}/h, not billed">~$${f(r.usd_1k,2)}</span>`:"$"+f(r.usd_1k,2))}</td>`),r));
   function hover(tr,r){tr.onmouseenter=()=>rad?.focus(r.serve);tr.onmouseleave=()=>rad?.focus(null);return tr}
   rad=radar(ds?ev:{...ev,datasets:sel},rows);g.append(rad.card)}
