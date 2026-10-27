@@ -140,7 +140,7 @@ th:first-child,td:first-child,th.l,td.l{text-align:left}
 th[aria-sort=descending]::after{content:" ↓"}th[aria-sort=ascending]::after{content:" ↑"}
 tr:hover td{background:color-mix(in srgb,var(--bar) 6%,transparent)}
 .cell{display:flex;align-items:center;gap:8px;justify-content:flex-end}
-.meter{position:relative;width:96px;height:8px;background:var(--bar-track);border-radius:4px}
+.meter{position:relative;display:inline-block;vertical-align:middle;width:96px;height:8px;background:var(--bar-track);border-radius:4px}
 .meter.sm{width:56px;height:6px}
 .meter>i{position:absolute;left:0;top:0;bottom:0;background:var(--bar);border-radius:4px}
 .meter>b{position:absolute;top:-3px;bottom:-3px;border-left:2px solid var(--text-secondary);border-right:2px solid var(--text-secondary);opacity:.55}
@@ -157,6 +157,12 @@ svg text{fill:var(--text-secondary);font-size:11px}
 .tip{position:fixed;pointer-events:none;background:var(--text-primary);color:var(--surface-1);font-size:12px;
  padding:4px 8px;border-radius:6px;opacity:0;transition:opacity .08s;white-space:nowrap;z-index:9}
 .empty{color:var(--text-muted);padding:24px 0}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:0 0 16px}
+.tile{background:var(--surface-2);border:1px solid var(--grid);border-radius:10px;padding:12px 16px}
+.tile .k{font-size:12px;color:var(--text-muted)}.tile .v{font-size:26px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.2}
+.tile .w{font-size:13px;color:var(--text-secondary)}
+.key{font-size:12px;color:var(--text-muted);display:flex;gap:14px;align-items:center;margin:2px 0 8px}
+.key .meter{width:40px}
 </style></head>
 <body><div class="viz-root"><main>
 <header><h1>vlmbench</h1><span class="sub" id="sub"></span>
@@ -202,9 +208,17 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   if(!splits.includes(split))split=splits.includes("test")?"test":splits[0];
   seg.replaceChildren(...splits.map(s=>{const b=el("button",{textContent:s});b.setAttribute("aria-pressed",s===split);b.onclick=()=>{split=s;draw()};return b}));
   const rows=ev.splits[split]||[];body.replaceChildren();
+  const ok=rows.filter(r=>r.mean!=null), best=ok[0];
+  const value=ok.filter(r=>r.usd_1k).sort((a,b)=>b.mean/b.usd_1k-a.mean/a.usd_1k)[0];
+  const fast=ok.filter(r=>r.pages_s).sort((a,b)=>b.pages_s-a.pages_s)[0];
+  const tile=(k,v,w)=>`<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="w">${esc(w)}</div></div>`;
+  if(best)body.append(el("div",{className:"tiles"},tile("Most accurate",f(best.mean),best.serve)+
+   (value?tile("Best value",`${f(value.mean)} <span class="w">@ $${f(value.usd_1k,2)}/1k</span>`,value.serve):"")+
+   (fast?tile("Fastest",`${f(fast.pages_s,2)} <span class="w">pages/s</span>`,fast.serve):"")+
+   tile("Models",`${ok.length} <span class="w">× ${ev.datasets.length} benchmarks</span>`,`${split} split`)));
   const g=el("div",{className:"grid2"});body.append(g);
   const card=el("div",{className:"card"});g.append(card);
-  card.append(el("h2",{textContent:`${ev.name} · ${split}`}),el("div",{className:"note",textContent:"Each benchmark graded by its own package; bars show the score, brackets its 95% page-bootstrap interval. Judge: an LLM judge, shown beside the benchmarks, never averaged in."}));
+  card.append(el("h2",{textContent:"Leaderboard"}),el("div",{className:"key"},`<span>${meter(70,[60,80])} score · 95% CI</span><span>mean of ${ev.datasets.length} benchmarks · judge shown, not averaged</span>`));
   const cols=[{t:"serve",key:"serve",l:1},{t:"mean",key:"mean"},...ev.datasets.map(d=>({t:d,key:`scores.${d}.score`})),
    {t:"judge",key:"judge"},{t:"pages/s",key:"pages_s"},{t:"$/1k pages",key:"usd_1k"},{t:"prompt",key:"prompt",l:1}];
   const tbl=el("table");tbl.createTHead().append(el("tr",{},cols.map(c=>`<th class="${c.l?"l":""}">${esc(c.t)}</th>`).join("")));tbl.createTBody();card.append(tbl);
@@ -218,7 +232,7 @@ function accTab(){const root=$("#acc");root.replaceChildren();
 
 function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relative to the fastest serve
  const card=el("div",{className:"card"});card.append(el("h2",{textContent:"Profile"}),
-  el("div",{className:"note",textContent:"Each axis 0–100. Speed: pages/s as a share of the fastest serve here. Pick up to 8 to overlay."}));
+  el("div",{className:"key",textContent:"0–100 per axis · speed relative to the fastest · pick up to 8"}));
  const wrap=el("div",{className:"radar"});card.append(wrap);
  const axes=[...ev.datasets.map(d=>({k:d,get:r=>r.scores[d]?.score})),{k:"judge",get:r=>r.judge}];
  const fast=Math.max(...rows.map(r=>r.pages_s||0));if(fast>0)axes.push({k:"speed",get:r=>r.pages_s!=null?100*r.pages_s/fast:null});
@@ -249,7 +263,7 @@ function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relativ
 function runsTab(){const root=$("#runs");
  const ev=D.evals.flatMap(e=>e.perf.map(p=>({...p,eval:e.name})));
  if(ev.length){const c=el("div",{className:"card"});root.append(c);
-  c.append(el("h2",{textContent:"Eval throughput"}),el("div",{className:"note",textContent:"Per serve and dataset, from the most complete live pass (cache hits are never timed)."}));
+  c.append(el("h2",{textContent:"Eval throughput"}),el("div",{className:"key",textContent:"per serve × dataset · live calls only"}));
   const top=Math.max(...ev.map(p=>p.items_per_s||0));
   const cols=[{t:"eval",key:"eval",l:1},{t:"serve",key:"serve",l:1},{t:"dataset",key:"dataset",l:1},{t:"split",key:"split",l:1},{t:"conc.",key:"concurrency"},
    {t:"pages/s",key:"items_per_s"},{t:"out tok/s",key:"output_tok_per_s"},{t:"TTFT p50 s",key:"ttft_s.p50"},{t:"latency p50 s",key:"latency_s.p50"},
@@ -259,7 +273,7 @@ function runsTab(){const root=$("#runs");
    `<td><span class="cell"><span class="num">${f(p.items_per_s,2)}</span>${meter(top?100*(p.items_per_s||0)/top:0,null,1)}</span></td><td>${f(p.output_tok_per_s,0)}</td>`+
    `<td>${f(p.ttft_s?.p50,2)}</td><td>${f(p.latency_s?.p50,1)}</td><td>${f(p.latency_s?.p95,1)}</td><td>${p.errors}</td><td>${p.truncated}</td><td>${p.usd_per_1k_items==null?"—":"$"+f(p.usd_per_1k_items,2)}</td>`))}
  const c=el("div",{className:"card"});root.append(c);
- c.append(el("h2",{textContent:"Throughput runs"}),el("div",{className:"note",textContent:"vlmbench run results in ~/.vlmbench/benchmarks, one row per concurrency level."}));
+ c.append(el("h2",{textContent:"Throughput runs"}),el("div",{className:"key",textContent:"vlmbench run · one row per concurrency"}));
  if(!D.runs.length){c.append(el("p",{className:"empty",textContent:"No runs yet."}));return}
  const top=Math.max(...D.runs.map(r=>r.tok_s||0));
  const cols=[{t:"model",key:"model",l:1},{t:"backend",key:"backend",l:1},{t:"GPU",key:"gpu",l:1},{t:"conc.",key:"concurrency"},{t:"inputs",key:"inputs"},
