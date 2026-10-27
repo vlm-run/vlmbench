@@ -10,10 +10,10 @@ from pathlib import Path
 
 from vlmbench.evals.config import Settings, backend_name
 from vlmbench.evals.datasets import DATASETS
+from vlmbench.evals.results import draws, interval, latest
 
 FIRST = ("ocr-bench",)
 """The eval the page opens on; the rest follow by name."""
-from vlmbench.evals.results import draws, interval, latest
 
 
 def collect(home: Path) -> dict:
