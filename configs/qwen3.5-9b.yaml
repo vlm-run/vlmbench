@@ -1,6 +1,7 @@
 # Qwen3.5-9B on one RTX 5090. One visual token per 32 x 32 px.
 kind: Serve
 model: Qwen/Qwen3.5-9B
+weights: open
 backend:
   type: vllm
   image: vllm/vllm-openai:v0.30.0

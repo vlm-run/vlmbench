@@ -1,3 +1,4 @@
 kind: Serve
 extends: _vlmrun-gateway.yaml
 model: paddlepaddle/paddleocr-vl-1.6
+weights: open

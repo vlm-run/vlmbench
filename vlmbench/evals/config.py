@@ -74,13 +74,15 @@ class Serve(Strict):
     request: Request = Request()
     postprocess: str | None = None
     """`module:function(text, image_path) -> text`, e.g. a model's own renderer."""
+    weights: Literal["open", "closed"] | None = None
+    """Whether the model's weights are published, for grouping in reports; never part of the config id."""
     prompt_file: str | None = None
     """Set by the loader: where the prompt came from."""
 
     @property
     def config_id(self) -> str:
         """Everything that changes a reply, nothing that doesn't (name, key, concurrency, pacing)."""
-        d = self.model_dump(mode="json", exclude={"name", "prompt_file"})
+        d = self.model_dump(mode="json", exclude={"name", "prompt_file", "weights"})
         for k in ("api_key", "user_agent", "rpm", "port", "gpu_hour_usd"):
             d["backend"].pop(k, None)
         for k in ("concurrency", "timeout", "stream"):

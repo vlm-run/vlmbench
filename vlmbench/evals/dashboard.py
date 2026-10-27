@@ -34,6 +34,16 @@ def _links(root: Path, kinds: dict[str, str]) -> dict[str, dict]:
     return out
 
 
+def _weights(name: str) -> dict[str, str]:
+    """Open or closed weights per serve, from today's configs when a result predates the field (run from the repo)."""
+    from vlmbench.evals.config import bench_files
+
+    try:
+        return {n: s.weights for n, s in bench_files(Path("benchmarks") / name)[1].items() if s.weights}
+    except Exception:  # not run from the repo, or the benchmark has since gone
+        return {}
+
+
 def _eval(root: Path) -> dict:
     rows = latest(root)
     configs = {k[1]: v for k, v in rows.items() if k[0] == "cfg"}
@@ -42,6 +52,7 @@ def _eval(root: Path) -> dict:
     datasets = sorted({a["dataset"] for a in acc if "judge" not in a})
     doc = all(getattr(DATASETS.get(a["metric"]), "DOCUMENT", False) for a in acc if "judge" not in a)
     out = {"name": root.name, "datasets": datasets, "splits": {}, "unit": "docs" if doc and acc else "pages"}
+    known = _weights(root.name)
     out["links"] = _links(root, {a["dataset"]: a["metric"] for a in acc if "judge" not in a})
     for split in sorted({a["split"] for a in acc}):
         serves = []
@@ -60,6 +71,7 @@ def _eval(root: Path) -> dict:
                     "model": cfg["model_id"],
                     "config_id": cid,
                     "backend": backend_name(cfg["backend"]),
+                    "weights": cfg.get("weights") or known.get(cfg["serve"]),
                     "prompt": Path(cfg["prompt_file"]).name if cfg.get("prompt_file") else cfg["request"].get("method"),
                     "mean": round(sum(a["score"] for a in bench.values()) / len(datasets), 1) if full else None,
                     "ci": list(ci) if ci else None,
@@ -249,11 +261,13 @@ table.dense tr:hover td.name{background:var(--hover)}
 :root[data-theme="dark"] .barsvg .top{fill:#7aa5f5}:root[data-theme="dark"] .barsvg .ld{stroke:#7aa5f5}.barsvg g.grp{transition:opacity .12s}.barsvg.hov g.grp:not(.on){opacity:.3}
 /* the profile sits above the leaderboard; on a wide screen, beside it and pinned, so a hovered row's profile stays in view */
 .grid2{display:flex;flex-direction:column}.grid2>.side{order:-1}
+.dsets{margin-bottom:40px}.legend .lg{font:500 10.5px "Space Grotesk",sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin:10px 0 2px;grid-column:1/-1}
+.legend .lg:first-child{margin-top:0}
 @media (min-width:1760px){main{max-width:1720px}
  .grid2{display:grid;grid-template-columns:400px minmax(0,1fr);gap:56px;align-items:start}
- .grid2>.side{position:sticky;top:24px;margin:0;overflow:visible}
+ .grid2>.side{position:sticky;top:24px;margin:0;max-height:calc(100vh - 48px);overflow-y:auto;overflow-x:visible;scrollbar-width:thin;padding-right:8px}
  .grid2>.side .radar{grid-template-columns:1fr;gap:12px}
- .grid2>.side .legend{grid-template-columns:1fr;max-height:calc(100vh - 560px);overflow:auto}}
+ .grid2>.side .legend{grid-template-columns:1fr}.grid2>.side .dsets .legend{grid-template-columns:1fr 1fr}}
 svg text{fill:var(--ink-3);font:500 10.5px "Space Grotesk",sans-serif;letter-spacing:.1em;text-transform:uppercase}
 svg .tick{font:400 9.5px "Geist Mono",monospace;letter-spacing:0;text-transform:none}
 svg polygon.s{transition:opacity .15s}
@@ -336,7 +350,6 @@ function accTab(){const root=$("#acc");root.replaceChildren();
  ctl.append(el("span",{className:"lab",textContent:"Eval"}),pick);
  const seg=el("div",{className:"seg"});ctl.append(el("span",{className:"lab",textContent:"Split"}),seg);
  const dpick=el("select");ctl.append(el("span",{className:"lab",textContent:"Dataset"}),dpick);
- const chips=el("div",{className:"chips"});root.append(chips);
  const body=el("div");root.append(body);let split;
  // the datasets the "all" view averages: a checklist, kept per eval in this browser
  const DEFAULT=["olmocr","omnidocbench","omniparse","parsebench"];
@@ -356,11 +369,7 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   dpick.replaceChildren(el("option",{value:"",textContent:"all"}),...ev.datasets.map(d=>el("option",{value:d,textContent:d})));dpick.value=ds;
   const all=ev.splits[split]||[];body.replaceChildren();
   MCOL.clear();all.forEach((r,i)=>MCOL.set(r.serve,PAL[i%PAL.length]));
-  const sel=chosen(ev);chips.hidden=!!ds;
-  chips.replaceChildren(el("span",{className:"lab",textContent:"Averaged"}),...ev.datasets.map(d=>{
-   const b=el("button",{textContent:d});b.setAttribute("aria-pressed",sel.includes(d));
-   b.onclick=()=>{const on=sel.includes(d);if(on&&sel.length===1)return;
-    keep(ev,on?sel.filter(x=>x!==d):ev.datasets.filter(x=>x===d||sel.includes(x)));draw()};return b}));
+  const sel=chosen(ev);
   // one dataset: its score is the mean, its metrics and categories the columns, its own judge, speed and cost
   const rows=!ds?all.map(r=>({...r,...pooled(r,sel)})).sort((a,b)=>(b.mean??-1)-(a.mean??-1)):all.map(r=>{const s=r.scores[ds],p=r.perf_by?.[ds]||{};
    return {...r,mean:s?s.score:null,ci:s?.ci,judge:r.judge_by?.[ds]??null,pages_s:p.pages_s??null,usd_1k:p.usd_1k??null,cost:p.cost??null}})
@@ -374,6 +383,14 @@ function accTab(){const root=$("#acc");root.replaceChildren();
    (fast?tile("Fastest",`${f(fast.pages_s,2)}<small>${ev.unit}/s</small>`,fast.serve):"")+
    tile("Models",`${ok.length}<small>${ds?esc(ds):`× ${sel.length} benchmarks`}</small>`,`${split} split`)));
   const g=el("div",{className:"grid2"});body.append(g);
+  const side=el("div",{className:"side"});g.append(side);
+  if(!ds){const p=el("div",{className:"card dsets"});side.append(p);
+   p.append(el("h2",{textContent:"Benchmarks"}),el("div",{className:"key",textContent:"averaged into the mean · kept in this browser"}));
+   const list=el("div",{className:"legend"});p.append(list);
+   ev.datasets.forEach(d=>{const on=sel.includes(d);
+    const lab=el("label",{},`<input type="checkbox" ${on?"checked":""}><span>${esc(d)}</span>`);list.append(lab);
+    lab.querySelector("input").onchange=e=>{if(!e.target.checked&&sel.length===1){e.target.checked=true;return}
+     keep(ev,e.target.checked?ev.datasets.filter(x=>x===d||sel.includes(x)):sel.filter(x=>x!==d));draw()}})}
   const colm=el("div",{className:"colm"});g.append(colm);
   const card=el("div",{className:"card"});colm.append(card);
   card.append(el("h2",{textContent:"Leaderboard"}),el("div",{className:"key"},`<span><span class="dot" style="background:var(--good)"></span>≥ 80</span><span><span class="dot" style="background:var(--warn)"></span>60–80</span><span><span class="dot" style="background:var(--bad)"></span>&lt; 60</span><span>hairline = 95% CI</span><span>${ds?`${esc(ds)} score, then its metrics and categories`:`mean of ${sel.length} benchmarks; judge not averaged in`}</span>`));
@@ -401,7 +418,7 @@ function accTab(){const root=$("#acc");root.replaceChildren();
    `<td><span class="cell stack" data-tip="LLM judge, 0–100">${f(r.judge)}${r.judge!=null?meter(r.judge,null,1):""}</span></td>`+
    `<td>${f(r.pages_s,2)}</td><td>${r.usd_1k==null?"—":(r.gpu_rate?`<span class="cell" data-tip="GPU time at $${f(r.gpu_rate,2)}/h, not billed">~$${f(r.usd_1k,2)}</span>`:"$"+f(r.usd_1k,2))}</td>`),r));
   function hover(tr,r){tr.onmouseenter=()=>rad?.focus(r.serve);tr.onmouseleave=()=>rad?.focus(null);return tr}
-  rad=radar(ds?ev:{...ev,datasets:sel},rows);g.append(rad.card);
+  rad=radar(ds?ev:{...ev,datasets:sel},rows);side.append(rad.card);
   colm.append(bars(ev,rows,mid,ds,rad))}
  pick.onchange=draw;dpick.onchange=draw;draw()}
 
@@ -428,7 +445,7 @@ function bars(ev,rows,mid,ds,rad){
  const sw=(kind,i)=>`<svg width="16" height="11" class="psw"><defs>${patDef("lg"+i,kind,"#8f8f8f")}</defs><rect width="16" height="11" rx="2" fill="${patFill("lg"+i,kind,"#8f8f8f")}"/></svg>`;
  card.append(el("h2",{textContent:ds?`${ds}, by metric and category`:"Scores by benchmark"}),
   el("div",{className:"key"},ser.map((c,i)=>`<span>${sw(pat(c,i),i)}${esc(c.t)}</span>`).join("")+
-   `<span><span class="sw mean"></span>mean</span><span><span class="sw lead"></span>leader's mean</span><span>colour = model</span>`));
+   `<span><span class="sw lead"></span>leader's mean</span><span>number = mean · colour = model</span>`));
  const wrap=el("div",{className:"barsvg"});card.append(wrap);
  function draw(){
   const rs=rows.filter(match).filter(r=>r.mean!=null||ser.some(c=>c.get(r)!=null));
@@ -447,8 +464,7 @@ function bars(ev,rows,mid,ds,rad){
     const x=bx+i*(bw+2),yt=y(v),yb=y(0),rr=Math.min(3,bw/2,yb-yt),id=`bp${gi}_${i}`,k=pat(c,i);
     if(k!=="solid")defs+=patDef(id,k,col);
     o+=`<path d="M${x},${yb}V${yt+rr}Q${x},${yt} ${x+rr},${yt}H${x+bw-rr}Q${x+bw},${yt} ${x+bw},${yt+rr}V${yb}Z" fill="${patFill(id,k,col)}" stroke="${col}" stroke-width="${k==="solid"?0:1}" data-tip="${esc(r.serve)} · ${esc(c.t)} ${f(v)}"/>`});
-   if(r.mean!=null)o+=`<line x1="${bx-3}" x2="${bx+cw+3}" y1="${y(r.mean)}" y2="${y(r.mean)}" stroke="var(--ink-1)" stroke-width="1.5" data-tip="${esc(r.serve)} · mean ${f(r.mean)}"/>`+
-    `<text x="${x0+gw/2}" y="${y(hi)-8}" text-anchor="middle" class="mv${top?" top":""}">${f(r.mean)}</text>`;
+   if(r.mean!=null)o+=`<text x="${x0+gw/2}" y="${y(hi)-8}" text-anchor="middle" class="mv${top?" top":""}">${f(r.mean)}</text>`;
    o+=`<text transform="translate(${x0+gw/2+3},${H-B+14}) rotate(-45)" text-anchor="end" class="xl${top?" top":""}">${esc(r.serve)}</text></g>`});
   if(lead)o+=`<line x1="${L}" x2="${W-6}" y1="${y(lead.mean)}" y2="${y(lead.mean)}" class="ld" stroke-width="1" stroke-dasharray="4 4" opacity=".6"/>`;
   wrap.innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Scores per model and benchmark"><defs>${defs}</defs>${o}</svg>`;
@@ -457,12 +473,12 @@ function bars(ev,rows,mid,ds,rad){
  card.redraw=draw;draw();return card}
 
 function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relative to the fastest serve
- const card=el("div",{className:"card side"});card.append(el("h2",{textContent:"Profile"}),
+ const card=el("div",{className:"card"});card.append(el("h2",{textContent:"Profile"}),
   el("div",{className:"key",textContent:"0–100 per axis · speed relative to the fastest · up to 8 · hover a name to isolate it"}));
  const wrap=el("div",{className:"radar"});card.append(wrap);
  const axes=[...ev.datasets.map(d=>({k:d,get:r=>r.scores[d]?.score})),{k:"judge",get:r=>r.judge}];
  const fast=Math.max(...rows.map(r=>r.pages_s||0));if(fast>0)axes.push({k:"speed",get:r=>r.pages_s!=null?100*r.pages_s/fast:null});
- const W=400,H=330,cx=W/2,cy=H/2+6,R=118,n=axes.length,ang=i=>-Math.PI/2+2*Math.PI*i/n,pt=(i,v)=>[cx+R*v/100*Math.cos(ang(i)),cy+R*v/100*Math.sin(ang(i))];
+ const W=470,H=330,cx=W/2,cy=H/2+6,R=118,n=axes.length,ang=i=>-Math.PI/2+2*Math.PI*i/n,pt=(i,v)=>[cx+R*v/100*Math.cos(ang(i)),cy+R*v/100*Math.sin(ang(i))];
  const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");svg.setAttribute("viewBox",`0 0 ${W} ${H}`);svg.setAttribute("width","100%");
  svg.setAttribute("role","img");svg.setAttribute("aria-label","Radar of each selected serve across "+axes.map(a=>a.k).join(", "));wrap.append(svg);
  const slots=new Map(), free=[1,2,3,4,5,6,7,8]; // a serve keeps its colour while it is selected
@@ -472,10 +488,15 @@ function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relativ
  for(const r of rows)if(pickd.length<4&&!pickd.includes(r))pickd.push(r);
  pickd.slice(0,4).forEach(r=>slots.set(r.serve,free.shift()));
  const leg=el("div",{className:"legend"});wrap.append(leg);
- function drawLegend(){leg.replaceChildren(...rows.map(r=>{const on=slots.has(r.serve);
+ const GROUPS=[["closed","Closed"],["open","Open-weight"],[null,"Unlabelled"]];
+ function drawLegend(){leg.replaceChildren(...GROUPS.flatMap(([w,t])=>{
+  const rs=rows.filter(r=>(r.weights||null)===w).sort((a,b)=>a.serve.localeCompare(b.serve));
+  return rs.length?[el("div",{className:"lg",textContent:t}),...rs.map(item)]:[]}))}
+ function item(r){{const on=slots.has(r.serve);
   const lab=el("label",{},`<input type="checkbox" ${on?"checked":""} ${!on&&!free.length?"disabled":""}><span><span class="sw" style="background:${on?mcol(r.serve):"var(--hair)"}"></span> ${esc(r.serve)}</span>`);
   lab.onmouseenter=()=>focus(r.serve);lab.onmouseleave=()=>focus(null);
-  lab.querySelector("input").onchange=e=>{if(e.target.checked){slots.set(r.serve,free.shift())}else{free.push(slots.get(r.serve));free.sort((a,b)=>a-b);slots.delete(r.serve)}drawLegend();drawPlot()};return lab}))}
+  lab.dataset.serve=r.serve;
+  lab.querySelector("input").onchange=e=>{if(e.target.checked){slots.set(r.serve,free.shift())}else{free.push(slots.get(r.serve));free.sort((a,b)=>a-b);slots.delete(r.serve)}drawLegend();drawPlot()};return lab}}
  let preview=null;
  function drawPlot(){let s="";for(const v of [25,50,75,100])s+=`<polygon points="${axes.map((_,i)=>pt(i,v).join(",")).join(" ")}" fill="none" stroke="var(--hair)" stroke-width="1"/>`;
   axes.forEach((a,i)=>{const [x,y]=pt(i,100),[lx,ly]=pt(i,118);s+=`<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="var(--hair)"/>`+
@@ -493,7 +514,7 @@ function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relativ
   preview=r&&!slots.has(r.serve)?r:null;if(redraw)drawPlot();
   svg.querySelectorAll("g.s").forEach(g=>{const on=!serve||g.dataset.serve===serve;g.style.opacity=on?1:.15;
    g.querySelector("polygon").setAttribute("stroke-width",serve&&on?2.75:1.75)});
-  leg.querySelectorAll("label").forEach((l,i)=>l.style.color=serve&&rows[i].serve===serve?"var(--ink-1)":"")}
+  leg.querySelectorAll("label").forEach(l=>l.style.color=serve&&l.dataset.serve===serve?"var(--ink-1)":"")}
  drawLegend();drawPlot();return {card,focus}}
 
 // ── runs tab ──

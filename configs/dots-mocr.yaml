@@ -1,3 +1,4 @@
 kind: Serve
 extends: _vlmrun-gateway.yaml
 model: rednote-hilab/dots.mocr
+weights: open

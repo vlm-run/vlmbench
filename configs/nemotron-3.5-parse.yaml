@@ -1,6 +1,7 @@
 # Nemotron 3.5 Parse: vLLM 0.30.0 built from the model repo's Dockerfile, weights and chat template baked in.
 kind: Serve
 model: nvidia/Nemotron-3.5-Parse
+weights: open
 backend:
   type: vllm
   image: vlmft-nemotron-parse:v0.30.0

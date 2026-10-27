@@ -1,3 +1,4 @@
 kind: Serve
 extends: _vlmrun-gateway.yaml
 model: google/gemini-3.8-flash
+weights: closed

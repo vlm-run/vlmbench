@@ -1,3 +1,4 @@
 kind: Serve
 extends: _vlmrun-gateway.yaml
 model: lightonai/lightonocr-3-4b
+weights: open
