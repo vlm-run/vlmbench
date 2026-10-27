@@ -1,0 +1,3 @@
+model: deepseek-ai/deepseek-ocr-2
+weights: open
+provider: vlmrun

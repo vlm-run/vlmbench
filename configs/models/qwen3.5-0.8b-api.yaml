@@ -1,0 +1,3 @@
+model: qwen/qwen3.5-0.8b
+weights: open
+provider: vlmrun

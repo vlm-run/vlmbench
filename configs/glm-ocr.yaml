@@ -1,4 +1,0 @@
-kind: Serve
-extends: _vlmrun-gateway.yaml
-model: zai-org/glm-ocr
-weights: open

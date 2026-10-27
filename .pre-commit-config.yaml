@@ -25,9 +25,9 @@ repos:
   - repo: local
     hooks:
       - id: vlmbench-lint
-        name: vlmbench lint (configs/, benchmarks/)
+        name: vlmbench lint (configs/)
         entry: python -m vlmbench.evals.lint
         language: python
         additional_dependencies: ["pydantic>=2.10", "pydantic-settings>=2.6", "pyyaml>=6"]
-        files: ^(configs|benchmarks)/
+        files: ^configs/
         pass_filenames: false

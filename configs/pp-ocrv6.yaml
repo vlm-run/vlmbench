@@ -1,4 +1,0 @@
-kind: Serve
-extends: _vlmrun-gateway.yaml
-model: paddleocr/pp-ocrv6
-weights: open

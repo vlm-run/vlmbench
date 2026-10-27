@@ -1,0 +1,6 @@
+# The VLM Run gateway: every hosted model, one OpenAI-compatible endpoint.
+type: remote
+base_url: https://gateway.vlm.run/v1/openai
+api_key: toml:~/.vlmrun/config.toml
+user_agent: vlmrun-dev
+rpm: 200

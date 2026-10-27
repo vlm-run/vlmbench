@@ -1,4 +1,0 @@
-kind: Serve
-extends: ../../configs/vlm-run-ocr-auto.yaml
-request:
-  method: markdown

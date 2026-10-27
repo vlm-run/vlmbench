@@ -1,4 +1,0 @@
-kind: Serve
-extends: ../../configs/lightonocr-3-4b.yaml
-request:
-  method: markdown

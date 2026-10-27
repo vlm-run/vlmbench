@@ -1,4 +1,0 @@
-kind: Serve
-extends: _vlmrun-gateway.yaml
-model: qwen/qwen3.8-27b
-weights: open

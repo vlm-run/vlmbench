@@ -54,11 +54,13 @@ def _dist(xs: list[float]) -> dict | None:
     return {"mean": round(statistics.fmean(xs), 3), "p50": pick(0.5), "p95": pick(0.95), "p99": pick(0.99)}
 
 
-def performance(serve, dataset: str, recs: list[dict], wall_s: float) -> dict:
-    """One row per (config, dataset): timing from live calls only (a cache hit is counted, never timed)."""
+def performance(serve, dataset: str, recs: list[dict], wall_s: float, per_page: bool = False) -> dict:
+    """One row per (config, dataset): timing from live calls only (a cache hit is counted, never timed). A long
+    document read page by page (`per_page`) is priced and timed per page, as a page benchmark is."""
     live = [r for r in recs if not r.get("cached")]
+    units = sum(r.get("pages", 1) for r in live) if per_page else len(live)
     ok = [r for r in live if "error" not in r]
-    gpu_rate = getattr(serve.backend, "gpu_hour_usd", None)
+    gpu_rate = getattr(serve.provider, "gpu_hour_usd", None)
     cost = sum(r.get("cost_usd") or 0 for r in ok) or None
     if gpu_rate and live:
         cost = gpu_rate * wall_s / 3600
@@ -75,7 +77,7 @@ def performance(serve, dataset: str, recs: list[dict], wall_s: float) -> dict:
         "errors": sum("error" in r for r in recs),
         "truncated": sum(r.get("finish") == "length" for r in recs),
         "wall_s": round(wall_s, 2),
-        "items_per_s": round(len(live) / wall_s, 3) if live and wall_s else None,
+        "items_per_s": round(units / wall_s, 3) if live and wall_s else None,
         "output_tok_per_s": round(out_tok / wall_s, 1) if live and wall_s else None,
         "ttft_s": _dist([r.get("ttft_s") for r in ok]),
         "latency_s": _dist([r.get("latency_s") for r in ok]),
@@ -83,7 +85,7 @@ def performance(serve, dataset: str, recs: list[dict], wall_s: float) -> dict:
         "output_tokens": _dist([r.get("completion_tokens") for r in ok]),
         "reasoning_tokens": _dist([r.get("reasoning_tokens") for r in ok]),
         "cost_usd": round(cost, 5) if cost else None,
-        "usd_per_1k_items": round(1000 * cost / len(live), 3) if cost and live else None,
+        "usd_per_1k_items": round(1000 * cost / units, 3) if cost and live else None,
     }
 
 

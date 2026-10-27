@@ -1,4 +1,0 @@
-kind: Serve
-extends: _vlmrun-gateway.yaml
-model: google/diffusiongemma-26b-a4b-it
-weights: open

@@ -8,7 +8,7 @@ import json
 import zlib
 from pathlib import Path
 
-from vlmbench.evals.config import Settings, backend_name
+from vlmbench.evals.config import Settings, provider_name
 from vlmbench.evals.datasets import DATASETS
 from vlmbench.evals.results import draws, interval, latest
 
@@ -34,12 +34,17 @@ def _links(root: Path, kinds: dict[str, str]) -> dict[str, dict]:
     return out
 
 
+def _prov(cfg: dict) -> dict:
+    """A stored config's provider (results before the rename call it `backend`)."""
+    return cfg.get("provider") or cfg.get("backend") or {}
+
+
 def _weights(name: str) -> dict[str, str]:
     """Open or closed weights per serve, from today's configs when a result predates the field (run from the repo)."""
     from vlmbench.evals.config import bench_files
 
     try:
-        return {n: s.weights for n, s in bench_files(Path("benchmarks") / name)[1].items() if s.weights}
+        return {n: s.weights for n, s in bench_files(name)[1].items() if s.weights}
     except Exception:  # not run from the repo, or the benchmark has since gone
         return {}
 
@@ -70,7 +75,7 @@ def _eval(root: Path) -> dict:
                     "serve": cfg["serve"].removeprefix(f"{root.name}-"),
                     "model": cfg["model_id"],
                     "config_id": cid,
-                    "backend": backend_name(cfg["backend"]),
+                    "backend": provider_name(_prov(cfg)),
                     "weights": cfg.get("weights") or known.get(cfg["serve"]),
                     "prompt": Path(cfg["prompt_file"]).name if cfg.get("prompt_file") else cfg["request"].get("method"),
                     "mean": round(sum(a["score"] for a in bench.values()) / len(datasets), 1) if full else None,
@@ -98,7 +103,7 @@ def _eval(root: Path) -> dict:
                     "pages_s": _mean([p["items_per_s"] for p in ps]),
                     "usd_1k": _mean([p["usd_per_1k_items"] for p in ps]),
                     "cost": round(sum(p["cost_usd"] or 0 for p in ps), 4) if any(p["cost_usd"] for p in ps) else None,
-                    "gpu_rate": cfg["backend"].get("gpu_hour_usd"),
+                    "gpu_rate": _prov(cfg).get("gpu_hour_usd"),
                     "ttft_p50": _mean([(p.get("ttft_s") or {}).get("p50") for p in ps]),
                 }
             )
@@ -107,7 +112,7 @@ def _eval(root: Path) -> dict:
         p
         | {
             "serve": p["serve"].removeprefix(f"{root.name}-"),
-            "gpu_rate": configs.get(p["config_id"], {}).get("backend", {}).get("gpu_hour_usd"),
+            "gpu_rate": _prov(configs.get(p["config_id"], {})).get("gpu_hour_usd"),
         }
         for p in perf
     ]
@@ -344,7 +349,7 @@ function sortable(tbl,rows,cols,render){let key=null,dir=-1;
 
 // ── accuracy tab ──
 function accTab(){const root=$("#acc");root.replaceChildren();
- if(!D.evals.length){root.append(el("p",{className:"empty"},"","No eval results yet: <code>vlmbench eval benchmarks/&lt;bench&gt;</code>."));return}
+ if(!D.evals.length){root.append(el("p",{className:"empty"},"","No eval results yet: <code>vlmbench eval &lt;bench&gt;</code>."));return}
  const ctl=el("div",{className:"controls"});root.append(ctl);
  const pick=el("select");D.evals.forEach((e,i)=>pick.append(el("option",{value:i,textContent:e.name})));
  ctl.append(el("span",{className:"lab",textContent:"Eval"}),pick);
@@ -404,7 +409,7 @@ function accTab(){const root=$("#acc");root.replaceChildren();
     if(part==="metrics"&&all.every(r=>{const v=r.scores[ds]?.metrics?.[k];return v==null||Math.abs(v-r.scores[ds].score)<.05}))continue; // the score again
     mid.push({t:k,key:`scores.${ds}.${part}.${k}`,get:r=>r.scores[ds]?.[part]?.[k],cat:part==="cats"})}}
   const ratio=k=>/ratio/i.test(k);
-  const cols=[{t:"#"},{t:"model",key:"serve",l:1},{t:"backend",key:"backend",l:1},{t:ds?"score":"mean",key:"mean",ds:ds||null},...mid,
+  const cols=[{t:"#"},{t:"model",key:"serve",l:1},{t:"provider",key:"backend",l:1},{t:ds?"score":"mean",key:"mean",ds:ds||null},...mid,
    {t:"judge",key:"judge"},{t:`${ev.unit}/s`,key:"pages_s"},{t:`$/1k ${ev.unit}`,key:"usd_1k"}];
   const dense=mid.length>3, tbl=el("table",{className:dense?"dense":""});tbl.createTHead().append(el("tr",{},cols.map(c=>`<th class="${c.l?"l":""}${c.cat?" cat":""}"${c.cat?' title="category"':""}${c.ds?` data-ds="${esc(c.ds)}"`:""}>${esc(dense?c.t.replace(/_/g," "):c.t)}</th>`).join("")));tbl.createTBody();card.append(frame(tbl));
   tbl.tHead.querySelectorAll("th[data-ds]").forEach(th=>link(th,ev.links?.[th.dataset.ds]));

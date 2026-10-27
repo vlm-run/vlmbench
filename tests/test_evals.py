@@ -1,42 +1,56 @@
-"""Evals: config loading (extends, names, config ids), the disk cache, and the dev / test samples."""
+"""Evals: config resolution (providers, models, benchmarks; config ids), the disk cache, and the dev / test samples."""
 
 from pathlib import Path
 
 import pytest
 
 from vlmbench.evals.cache import DiskCache
-from vlmbench.evals.config import Eval, Serve, expand, load
+from vlmbench.evals.config import bench_files, expand, load
 from vlmbench.evals.data import Item, sample
 
 ROOT = Path(__file__).resolve().parents[1]
-BENCH = ROOT / "benchmarks" / "ocr-bench"
+CONFIGS = ROOT / "configs"
 
 
 def _write(tmp: Path, name: str, text: str) -> Path:
+    (tmp / name).parent.mkdir(parents=True, exist_ok=True)
     (tmp / name).write_text(text)
     return tmp / name
 
 
-def test_extends_merges_appends_args_and_removes_nulls(tmp_path):
+def _tree(tmp: Path, bench: str) -> Path:
+    """A `configs/` tree: providers `local` and `api`, a model `m` on `local`, and benchmark `mini`."""
+    c = tmp / "configs"
+    _write(c, "providers/local.yaml", "type: vllm\nargs: [--base]\n")
+    _write(c, "providers/api.yaml", "type: remote\nbase_url: http://api\n")
     _write(
-        tmp_path,
-        "base.yaml",
-        "kind: Serve\nmodel: m\nbackend: {type: vllm, args: [--a]}\nrequest: {temperature: 0.5}\n",
+        c,
+        "models/m.yaml",
+        "model: org/m\nweights: open\nprovider: {use: local, args: [--a]}\nrequest: {temperature: 0.5}\n",
     )
-    _write(tmp_path, "p.md", "Read the page.\n")
-    s = load(
-        _write(
-            tmp_path,
-            "bench-m.yaml",
-            "kind: Serve\nextends: base.yaml\nbackend: {args: [--b]}\nrequest: {prompt: p.md, temperature: null}\n",
-        )
-    )
-    assert isinstance(s, Serve)
-    assert s.name == "bench-m"
-    assert s.backend.args == ["--a", "--b"]
-    assert s.request.temperature is None
-    assert s.request.prompt == "Read the page."
-    assert s.prompt_file.endswith("p.md")
+    _write(c, "benchmarks/mini/p.md", "Read the page.\n")
+    _write(c, "benchmarks/mini/mini.yaml", bench)
+    return c / "benchmarks" / "mini"
+
+
+MINI = """kind: Eval
+request: {max_tokens: 100}
+serves:
+  m: {provider: {args: [--b]}, request: {prompt: p.md, temperature: null}}
+  m-api: {model: m, provider: api}
+datasets: {x: {kind: omniparse, revision: r}}
+"""
+
+
+def test_a_serve_resolves_provider_model_defaults_then_its_overrides(tmp_path):
+    ev, serves, _ = bench_files(_tree(tmp_path, MINI))
+    s, api = serves["mini-m"], serves["mini-m-api"]
+    assert s.provider.args == ["--base", "--a", "--b"]  # args append across every layer
+    assert s.request.temperature is None and s.request.max_tokens == 100  # null removes; defaults apply
+    assert s.request.prompt == "Read the page." and s.prompt_file.endswith("p.md")
+    assert s.weights == "open" and s.model == "org/m"
+    assert api.provider.base_url == "http://api" and api.request.temperature == 0.5  # a provider swapped by name
+    assert expand(["m-api"], tmp_path / "configs" / "benchmarks" / "mini", serves) == ["mini-m-api"]
 
 
 def test_config_id_ignores_name_key_and_concurrency(tmp_path):
@@ -44,44 +58,36 @@ def test_config_id_ignores_name_key_and_concurrency(tmp_path):
         _write(
             tmp_path,
             "a.yaml",
-            "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x, api_key: k1}\nrequest: {concurrency: 4}\n",
+            "model: m\nprovider: {type: remote, base_url: http://x, api_key: k1}\nrequest: {concurrency: 4}\n",
         )
     )
     b = load(
         _write(
             tmp_path,
             "b.yaml",
-            "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x, api_key: k2}\nrequest: {concurrency: 64}\n",
+            "model: m\nprovider: {type: remote, base_url: http://x, api_key: k2}\nrequest: {concurrency: 64}\n",
         )
     )
     c = load(
-        _write(
-            tmp_path,
-            "c.yaml",
-            "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\nrequest: {prompt: other}\n",
-        )
+        _write(tmp_path, "c.yaml", "model: m\nprovider: {type: remote, base_url: http://x}\nrequest: {prompt: other}\n")
     )
     assert a.config_id == b.config_id != c.config_id
 
 
 def test_unknown_keys_are_errors(tmp_path):
     with pytest.raises(Exception, match="extra"):
-        load(
-            _write(
-                tmp_path,
-                "x.yaml",
-                "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\ntemprature: 0\n",
-            )
-        )
+        load(_write(tmp_path, "x.yaml", "model: m\nprovider: {type: remote, base_url: http://x}\ntemprature: 0\n"))
+    with pytest.raises(Exception, match="extra"):
+        bench_files(_tree(tmp_path, MINI.replace("{model: m, provider: api}", "{model: m, prompt: x}")))
 
 
-def test_shipped_benchmark_loads_and_short_names_expand():
-    ev = load(BENCH / "ocr-bench.yaml")
-    assert isinstance(ev, Eval)
-    known = {f"ocr-bench-{s}": None for s in ev.serves}
-    assert expand(["gemini-3.8-flash"], BENCH, known) == ["ocr-bench-gemini-3.8-flash"]
-    for s in ev.serves:
-        assert isinstance(load(BENCH / f"ocr-bench-{s}.yaml"), Serve)
+def test_shipped_benchmarks_resolve_and_short_names_expand():
+    for b in ("ocr-bench", "extract-bench"):
+        ev, serves, metrics = bench_files(CONFIGS / "benchmarks" / b)
+        assert len(serves) == len(ev.serves) and all(s.name.startswith(f"{b}-") for s in serves.values())
+    ev, serves, metrics = bench_files(CONFIGS / "benchmarks" / "ocr-bench")
+    assert expand(["gemini-3.8-flash"], CONFIGS / "benchmarks" / "ocr-bench", serves) == ["ocr-bench-gemini-3.8-flash"]
+    assert metrics and metrics[0].judge.model == "google/gemini-3.8-flash" and metrics[0].prompt
 
 
 def test_disk_cache_survives_a_new_instance(tmp_path):
@@ -101,40 +107,28 @@ def test_dev_and_test_samples_are_disjoint_and_spread():
     assert sample(items, 9, "test") == test
 
 
-def _bench(tmp: Path, extra: dict[str, str]) -> Path:
-    b = tmp / "mini"
-    b.mkdir()
-    _write(b, "mini.yaml", "kind: Eval\nserves: [a]\ndatasets: {x: {kind: omniparse, revision: r}}\n")
-    _write(b, "mini-a.yaml", "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\n")
-    for name, text in extra.items():
-        _write(b, name, text)
-    return b
-
-
 def test_lint_passes_the_shipped_tree():
     from vlmbench.evals.lint import lint
 
-    assert lint([ROOT / "configs", ROOT / "benchmarks"], log=lambda m: None) == 0
+    assert lint([CONFIGS], log=lambda m: None) == 0
 
 
-def test_lint_flags_unlisted_serves_missing_prompts_and_duplicates(tmp_path):
+def test_lint_flags_missing_models_missing_prompts_and_duplicates(tmp_path):
     from vlmbench.evals.lint import lint
 
-    b = _bench(
+    b = _tree(
         tmp_path,
-        {
-            "mini-b.yaml": "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\n",
-            "other.yaml": "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\n",
-        },
+        MINI.replace(
+            "m-api: {model: m, provider: api}",
+            "m-copy: {model: m, provider: {args: [--b]}, request: {prompt: p.md, temperature: null}}",
+        ),
     )
     seen: list[str] = []
-    assert lint([b], log=seen.append) == 2
-    assert any("not listed" in m for m in seen) and any("named mini-<model>.yaml" in m for m in seen)
-    (b / "mini.yaml").write_text("kind: Eval\nserves: [a, b]\ndatasets: {x: {kind: omniparse, revision: r}}\n")
-    (b / "other.yaml").unlink()
-    (b / "mini-b.yaml").write_text(
-        "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\nrequest: {prompt: gone.md}\n"
-    )
+    assert lint([b], log=seen.append) == 1 and "same config" in seen[0]
+    (b / "mini.yaml").write_text(MINI.replace("model: m, provider: api", "model: nope"))
+    seen.clear()
+    assert lint([b], log=seen.append) == 1 and "no model 'nope'" in seen[0]
+    (b / "mini.yaml").write_text(MINI.replace("prompt: p.md", "prompt: gone.md"))
     seen.clear()
     assert lint([b], log=seen.append) == 1 and "not found" in seen[0]
 
@@ -150,7 +144,7 @@ def test_a_cached_request_is_a_bench_request_span_with_its_results(tmp_path, cap
 
     trace._LOGFIRE = logfire  # capfire has configured logfire to capture in memory
     try:
-        serve = load(_write(tmp_path, "s.yaml", "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\n"))
+        serve = load(_write(tmp_path, "s.yaml", "model: m\nprovider: {type: remote, base_url: http://x}\n"))
         png = tmp_path / "p.png"
         Image.new("RGB", (8, 8)).save(png)
         cache = DiskCache(tmp_path / "c.sqlite")
@@ -184,12 +178,12 @@ def test_a_document_is_read_in_page_windows(tmp_path):
         _write(
             tmp_path,
             "s.yaml",
-            "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\nrequest: {pages_per_call: 2}\n",
+            "model: m\nprovider: {type: remote, base_url: http://x}\nrequest: {pages_per_call: 2}\n",
         )
     )
     ws = windows(s, [tmp_path / f"p{i}.png" for i in range(5)], "schema")
     assert [len(w) for w, _ in ws] == [2, 2, 1] and ws[2][1].endswith("pages 5-5 of 5.")
-    whole = load(_write(tmp_path, "w.yaml", "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\n"))
+    whole = load(_write(tmp_path, "w.yaml", "model: m\nprovider: {type: remote, base_url: http://x}\n"))
     assert windows(whole, [tmp_path / "p.png"] * 3, "schema") == [([tmp_path / "p.png"] * 3, "schema")]
     pages = [tmp_path / f"q{i}.png" for i in range(3)]
     assert windows(s, pages, None) == [
@@ -208,10 +202,10 @@ def test_longarray_scores_rows_order_insensitively():
 
 
 def test_a_field_added_at_its_default_keeps_earlier_config_ids(tmp_path):
-    base = "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: https://gateway.vlm.run/v1/openai}\n"
+    base = "model: m\nprovider: {type: remote, base_url: https://gateway.vlm.run/v1/openai}\n"
     a = load(_write(tmp_path, "a.yaml", base))
     b = load(_write(tmp_path, "b.yaml", base + "request: {pages_per_call: 2}\n"))
-    assert a.config_id != b.config_id and a.backend_name == "vlmrun"
+    assert a.config_id != b.config_id and a.provider_name == "vlmrun"
     d = a.model_dump(mode="json")
     assert "pages_per_call" in d["request"]  # in the dump, but not in the id at its default
 
@@ -222,7 +216,7 @@ def test_a_budget_is_never_crossed_by_calls_in_flight(tmp_path):
     from vlmbench.evals.cache import DiskCache
     from vlmbench.evals.client import BUDGET, Budget, Client
 
-    s = load(_write(tmp_path, "s.yaml", "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\n"))
+    s = load(_write(tmp_path, "s.yaml", "model: m\nprovider: {type: remote, base_url: http://x}\n"))
     pngs = []
     for i in range(40):
         (p := tmp_path / f"p{i}.png").write_bytes(bytes([i]))

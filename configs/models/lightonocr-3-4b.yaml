@@ -1,0 +1,3 @@
+model: lightonai/lightonocr-3-4b
+weights: open
+provider: vlmrun

@@ -1,0 +1,3 @@
+model: paddlepaddle/paddleocr-vl-1.6
+weights: open
+provider: vlmrun

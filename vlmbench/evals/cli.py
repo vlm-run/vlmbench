@@ -6,7 +6,7 @@ from pathlib import Path
 
 def add_parsers(subparsers) -> None:
     ev = subparsers.add_parser("eval", help="Evaluate serves on a benchmark folder (accuracy + performance).")
-    ev.add_argument("bench", type=Path, help="A benchmark folder, e.g. benchmarks/ocr-bench")
+    ev.add_argument("bench", help="A benchmark: its name (configs/benchmarks/<name>) or folder, e.g. ocr-bench")
     ev.add_argument(
         "-s", "--serve", action="append", help="Only these serves (repeatable; the <bench>- prefix is optional)"
     )
@@ -17,7 +17,7 @@ def add_parsers(subparsers) -> None:
     ev.add_argument("--no-judges", action="store_true", help="Skip the eval's LLM judges (they cost a call per reply)")
     ev.add_argument("--budget", type=float, default=None, help="Most this run may spend in USD (overrides budget_usd)")
     li = subparsers.add_parser("lint", help="Check configs and benchmark folders load and follow the layout.")
-    li.add_argument("paths", type=Path, nargs="*", help="Files or folders (default: configs/ benchmarks/)")
+    li.add_argument("paths", type=Path, nargs="*", help="Files or folders under configs/ (default: configs/)")
     li.add_argument("-v", "--verbose", action="store_true", help="Show each serve's config id, model and prompt")
     da = subparsers.add_parser("dashboard", help="Write (and serve) an HTML page of every eval and run collected.")
     da.add_argument(
@@ -27,7 +27,7 @@ def add_parsers(subparsers) -> None:
     da.add_argument("--port", type=int, default=8795)
     da.add_argument("--no-serve", action="store_true", help="Only write the page")
     bo = subparsers.add_parser("board", help="Latest scores per serve on a benchmark, best first.")
-    bo.add_argument("bench", type=Path)
+    bo.add_argument("bench", help="A benchmark name or folder")
     bo.add_argument("--split", choices=["test", "dev"], default="test")
 
 
@@ -51,7 +51,7 @@ def dispatch(args: argparse.Namespace, console) -> None:
         case "lint":
             from vlmbench.evals.lint import lint
 
-            if lint(args.paths or [Path("configs"), Path("benchmarks")], args.verbose, log):
+            if lint(args.paths or [Path("configs")], args.verbose, log):
                 raise SystemExit(1)
         case "dashboard":
             from vlmbench.evals import dashboard

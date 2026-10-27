@@ -1,6 +1,0 @@
-kind: Serve
-extends: ../../configs/gemma4-26b.yaml
-request:
-  prompt: prompts/ocr-md-v1.md
-  temperature: 0.0
-  max_tokens: 12288

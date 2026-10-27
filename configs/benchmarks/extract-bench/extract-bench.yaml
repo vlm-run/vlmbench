@@ -1,0 +1,45 @@
+# Schema-guided JSON extraction from whole documents: ExtractBench (enterprise documents, 1 to 200+ pages),
+# LongArray-Extract (one array of up to 2,205 rows per document), ExtractBench Pro and RealDoc-Bench, each graded by
+# its own published scorer. A serve is a model with this benchmark's `request:` defaults and its own overrides on top.
+kind: Eval
+budget_usd: 10  # the most one run may spend, judges included; `--budget` overrides
+request:
+  prompt: prompts/extract-json-v1.md
+  pages_per_call: 2  # the gateway still cuts replies at 4,096 tokens: two dense pages fit
+  max_tokens: 16384
+  temperature: 0.0
+  extra_body: {response_format: {type: json_object}}
+serves:
+  qwen3.8-27b-api: {request: &nothink {extra_body: {chat_template_kwargs: {enable_thinking: false}}}}
+  qwen3.5-0.8b-api: {request: *nothink}
+  gemma4-26b-api: {}
+  diffusiongemma-26b-api:  # no json_object mode and no temperature for a diffusion model
+    request: {temperature: null, extra_body: {response_format: null}}
+  minimax-m3-api: {}
+  # local vLLM: vLLM keeps an arg's last value, so these widen the window (schemas run to 16K tokens at p90)
+  qwen3.5-9b:
+    provider: {args: [--max-model-len=131072]}
+    request: *nothink
+  gemma4-26b:  # and up to 8 page images per request
+    provider: {args: [--max-model-len=131072, '--limit-mm-per-prompt={"image": 8, "audio": 0}']}
+datasets:
+  extractbench:
+    kind: extractbench
+    revision: f9b910906cd7e73cc9eb5379a8d5d935c67b92c4
+    samples: 10
+    long_edge: 1600
+  longarray:
+    kind: longarray
+    revision: f2ae30264ecd942fa0a9b9e787bb42e1e2577184
+    samples: 10
+    long_edge: 1600
+  extractbench_pro:
+    kind: extractbench_pro
+    revision: 60b101709fe6e4c2925a494ef98e91f9ecbc300c
+    samples: 10
+    long_edge: 1600
+  realdoc:
+    kind: realdoc
+    revision: 08dde9d20d844943fc328b161f9d332c7e8bdee4
+    samples: 10
+    long_edge: 1600

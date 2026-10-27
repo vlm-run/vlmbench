@@ -49,7 +49,7 @@ class Pace:
 
     @classmethod
     def of(cls, serve: Serve) -> "Pace":
-        b = serve.backend
+        b = serve.provider
         url = b.base_url if isinstance(b, Remote) else f"local:{b.port}"
         return cls._all.setdefault(url, cls(getattr(b, "rpm", None)))
 
@@ -64,7 +64,7 @@ class Pace:
 def _client(serve: Serve):
     from openai import AsyncOpenAI
 
-    b = serve.backend
+    b = serve.provider
     if isinstance(b, Remote):
         headers = {"User-Agent": b.user_agent} if b.user_agent else None
         return AsyncOpenAI(base_url=b.base_url, api_key=api_key(b.api_key) or "none", default_headers=headers)

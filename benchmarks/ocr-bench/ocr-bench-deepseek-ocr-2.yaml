@@ -1,4 +1,0 @@
-kind: Serve
-extends: ../../configs/deepseek-ocr-2.yaml
-request:
-  method: markdown

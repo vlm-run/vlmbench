@@ -1,5 +1,0 @@
-kind: Serve
-extends: ../../configs/diffusiongemma-26b.yaml
-request:
-  prompt: prompts/ocr-md-v1.md  # no temperature: vLLM refuses any but 1.0 for a diffusion model
-  max_tokens: 12288

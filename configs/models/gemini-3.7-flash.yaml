@@ -1,0 +1,3 @@
+model: google/gemini-3.7-flash
+weights: closed
+provider: vlmrun

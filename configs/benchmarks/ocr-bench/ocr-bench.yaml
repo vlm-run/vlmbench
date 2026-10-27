@@ -1,0 +1,76 @@
+# Page image -> Markdown on nine public benchmarks, each graded by its own package, plus an LLM judge.
+# A serve is a model (configs/models/<key>.yaml, or `model:`) with this benchmark's overrides on top:
+# `request:` (prompt, sampling, method), `provider:` (a name swaps it, a mapping overrides fields), `postprocess:`.
+kind: Eval
+budget_usd: 10  # the most one run may spend, judges included; `--budget` overrides
+serves:
+  # gateway OCR models, each through its own method (the gateway's prompt; no text sent)
+  deepseek-ocr-2: {request: {method: markdown}}
+  dots-mocr: {request: {method: markdown}}
+  glm-ocr: {request: {method: markdown}}
+  lightonocr-3-4b: {request: {method: markdown}}
+  paddleocr-vl-1.6: {request: {method: markdown}}
+  pp-ocrv6: {request: {method: text}}  # plain text: pp-ocrv6 has no markdown method
+  vlm-run-ocr-auto: {request: {method: markdown}}
+  # frontier VLMs on the v1 prompt, then the v2 prompt
+  gemini-3.5-flash-lite: {request: &v1 {prompt: prompts/ocr-md-v1.md, max_tokens: 16384}}
+  gemini-3.7-flash: {request: *v1}
+  gemini-3.8-flash: {request: *v1}
+  gemini-4-argon: {request: *v1}
+  gemini-3.5-flash-lite-md-v2: {model: gemini-3.5-flash-lite, request: &v2 {prompt: prompts/ocr-md-v2.md, max_tokens: 16384}}
+  gemini-3.7-flash-md-v2: {model: gemini-3.7-flash, request: *v2}
+  gemini-3.8-flash-md-v2: {model: gemini-3.8-flash, request: *v2}
+  gemini-4-argon-md-v2: {model: gemini-4-argon, request: *v2}
+  # local vLLM on one RTX 5090
+  gemma4-26b: {request: {prompt: prompts/ocr-md-v1.md, temperature: 0.0, max_tokens: 12288}}
+  diffusiongemma-26b:  # no temperature: vLLM refuses any but 1.0 for a diffusion model
+    request: {prompt: prompts/ocr-md-v1.md, max_tokens: 12288}
+  nemotron-3.5-parse:  # its native mode: boxes + classes + text, rendered to markdown by NVIDIA's own postprocessor
+    request:
+      prompt: prompts/nemotron-native-v1.txt  # control tokens, not an instruction: a trailing newline breaks it
+      max_tokens: 8744
+      extra_body: {temperature: 0.0, top_k: 1, repetition_penalty: 1.1, skip_special_tokens: false}
+    postprocess: vlmbench.evals.postprocess:nemotron
+datasets:
+  omniparse:
+    kind: omniparse
+    revision: 56a3c4f7fa99b01ed411410ef84929d41ee60ebf
+    samples: 10
+  olmocr:
+    kind: olmocr_bench
+    revision: 54a96a6fb6a2bd3b297e59869491db4d3625b711
+    samples: 10
+  parsebench:
+    kind: parsebench
+    revision: 2805a1d940f95a203e0ae4b88be9934f7765b3fc
+    samples: 10
+  omnidocbench:
+    kind: omnidocbench
+    revision: aa1ee96d106dbe53d0ae59474d75c6e6d9b53fec
+    samples: 10
+  ccocr:
+    kind: ccocr
+    revision: c64517e92179991d509776064174776700cdd5a2
+    samples: 10
+  rdtablebench:  # CC-BY-NC-ND 4.0: internal evaluation only
+    kind: rdtablebench
+    revision: 7748503e2bd5f210d27aa2ef5fdf4b8aa13099bb
+    samples: 10
+  fintabnet:
+    kind: fintabnet
+    revision: 7c8e35d9f21abe95525e52e3c7fc0134a774d0ca
+    samples: 10
+  mpdocbench:  # MPDocBench-Parse (Alibaba Qwen-Doc): dozens of pages per document; revision is the Qwen-Doc commit
+    kind: mpdocbench
+    revision: 4e5aee32280febb7b0844237ba087f837e3c8905
+    samples: 3
+  marathondoc:  # Baidu MarathonDocBench: 100-300 pages per document, read page by page
+    kind: marathondoc
+    revision: fa05fccbe82ee6ec628006a1d58bb153954c3ee3
+    samples: 2
+metrics:
+  faithfulness:  # reference-free: the judge sees the page and the reply; shown beside the scores, never averaged in
+    judge: gemini-3.8-flash
+    prompt: prompts/faithfulness-v1.md
+    scale: [1, 5]
+    request: {temperature: 0.0, max_tokens: 4096, concurrency: 16}

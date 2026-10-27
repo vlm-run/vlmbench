@@ -22,7 +22,7 @@ def container(serve: Serve) -> str:
 
 
 def start(serve: Serve, timeout: float = 1800) -> None:
-    b = serve.backend
+    b = serve.provider
     assert isinstance(b, Vllm)
     if (used := gpu_used_mib()) > GPU_FREE_MIB:
         raise SystemExit(f"GPU 0 holds {used} MiB (> {GPU_FREE_MIB}); free it before serving {serve.name}")

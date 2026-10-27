@@ -1,0 +1,4 @@
+# A local vLLM container on GPU 0, started for the run and removed after. A model adds its own args and env.
+type: vllm
+image: vllm/vllm-openai:v0.30.0
+gpu_hour_usd: 0.70  # an RTX 5090 rental rate, for the cost axis only

@@ -1,4 +1,0 @@
-kind: Serve
-extends: ../../configs/pp-ocrv6.yaml
-request:
-  method: text  # plain text: pp-ocrv6 has no markdown method

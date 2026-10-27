@@ -7,8 +7,9 @@ Single-file, drop-in VLM benchmark CLI for your agents.
 ```
 vlmbench/cli.py             # `run`, `compare`, `profiles` (throughput), and the argparse entry point
 vlmbench/evals/             # `eval`, `lint`, `board`: accuracy + performance on benchmark folders
-configs/                    # kind: Serve — how to reach a model (local vLLM, gateway, any OpenAI-compatible API)
-benchmarks/<bench>/         # <bench>.yaml (kind: Eval), <bench>-<model>.yaml serves, prompts/, judges/
+configs/providers/          # where requests go: vlmrun, openrouter, vllm (local container)
+configs/models/             # one model on one provider (`provider:` a name or {use: <name>, ...overrides})
+configs/benchmarks/<bench>/ # <bench>.yaml (kind: Eval: datasets, request defaults, serves + overrides, judges), prompts/
 pyproject.toml              # Package config, version, dependencies
 .claude/skills/vlmbench/MODELS.md  # Tested models and their vLLM --serve-args
 ```

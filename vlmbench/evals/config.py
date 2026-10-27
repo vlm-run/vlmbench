@@ -1,11 +1,17 @@
-"""Benchmark configs, validated by pydantic.
+"""Benchmark configs, validated by pydantic. One root, `configs/`, three kinds of file, each referenced by name:
 
-Three YAML kinds: `Serve` (how to reach one model, with its prompt), `Eval` (serves x datasets x metrics) and
-`Metric` (an LLM judge). A file may `extends:` another file, deep-merged under it: `backend.args` appends, every
-other list replaces, and a `null` removes the inherited key. A serve's `name` is its file stem. Files whose stem
-starts with `_` are fragments: they are only ever extended, never loaded on their own.
+- `providers/<name>.yaml`: where requests go (the VLM Run gateway, OpenRouter, a local vLLM container).
+- `models/<name>.yaml`: one model on one provider: its id, `provider:` (a name, or `{use: <name>, ...}` with
+  overrides), its own `request:` defaults, `weights:`, `postprocess:`.
+- `benchmarks/<bench>/<bench>.yaml`: an `Eval`: datasets, `request:` defaults, `serves:` (each key a model, or
+  `model:` names one, with this benchmark's `request:` / `provider:` / `postprocess:` overrides) and LLM-judge
+  `metrics:`. Prompt files sit next to it.
+
+A serve resolves provider -> model -> the eval's `request:` defaults -> its own overrides, each deep-merged over the
+last: a provider's `args` append (vLLM keeps an arg's last value), every other list replaces, `null` removes a key.
 """
 
+import copy
 import hashlib
 import json
 import os
@@ -15,7 +21,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,7 +56,7 @@ class Remote(Strict):
 
 class Request(Strict):
     prompt: str | None = None
-    """A file (relative to the YAML that sets it) or inline text; the loader replaces it with the text."""
+    """A file (next to the YAML that sets it) or inline text; the loader replaces it with the text."""
     method: str | None = None
     """A gateway OCR method, sent as `extra_body.method` with no prompt text (text would override it)."""
     temperature: float | None = None
@@ -67,10 +73,10 @@ class Request(Strict):
 
 
 class Serve(Strict):
-    kind: Literal["Serve"]
+    kind: Literal["Serve"] = "Serve"
     name: str
     model: str
-    backend: Annotated[Vllm | Remote, Field(discriminator="type")]
+    provider: Annotated[Vllm | Remote, Field(discriminator="type")]
     request: Request = Request()
     postprocess: str | None = None
     """`module:function(text, image_path) -> text`, e.g. a model's own renderer."""
@@ -83,6 +89,7 @@ class Serve(Strict):
     def config_id(self) -> str:
         """Everything that changes a reply, nothing that doesn't (name, key, concurrency, pacing)."""
         d = self.model_dump(mode="json", exclude={"name", "prompt_file", "weights"})
+        d["backend"] = d.pop("provider")  # hashed under its earlier name, so ids (and caches) hold across the rename
         for k in ("api_key", "user_agent", "rpm", "port", "gpu_hour_usd"):
             d["backend"].pop(k, None)
         for k in ("concurrency", "timeout", "stream"):
@@ -94,11 +101,11 @@ class Serve(Strict):
 
     @property
     def local(self) -> bool:
-        return isinstance(self.backend, Vllm)
+        return isinstance(self.provider, Vllm)
 
     @property
-    def backend_name(self) -> str:
-        return backend_name(self.backend.model_dump())
+    def provider_name(self) -> str:
+        return provider_name(self.provider.model_dump())
 
 
 _HOSTS = {
@@ -110,13 +117,13 @@ _HOSTS = {
 }
 
 
-def backend_name(backend: dict) -> str:
+def provider_name(provider: dict) -> str:
     """What serves the model, for reports: `vllm` locally, else the endpoint (`vlmrun`, `openrouter`, its host)."""
-    if backend["type"] == "vllm":
+    if provider["type"] == "vllm":
         return "vllm"
     from urllib.parse import urlparse
 
-    host = urlparse(backend["base_url"]).hostname or backend["base_url"]
+    host = urlparse(provider["base_url"]).hostname or provider["base_url"]
     return _HOSTS.get(host, host)
 
 
@@ -149,31 +156,48 @@ class DatasetSpec(Strict):
     """Render size of each page, in px."""
 
 
+class Entry(Strict):
+    """A serve in an eval: a model and this benchmark's overrides on it."""
+
+    model: str | None = None
+    """`models/<name>.yaml`; default: the serve's key."""
+    provider: str | dict | None = None
+    """A name swaps the model's provider; a mapping overrides its fields (`use:` starts from another provider)."""
+    request: dict = {}
+    postprocess: str | None = None
+
+
+class Judge(Entry):
+    """An LLM judge: a model reads the page and a reply and answers `{"score": n, "reason": "..."}`."""
+
+    judge: str
+    """`models/<name>.yaml`."""
+    prompt: str
+    """A file next to the eval."""
+    scale: tuple[int, int] = (1, 5)
+
+
 class Eval(Strict):
     kind: Literal["Eval"]
     name: str
-    serves: list[str]
+    request: dict = {}
+    """Defaults for every serve, under each serve's own `request:`."""
+    serves: dict[str, Entry | None]
     datasets: dict[str, DatasetSpec]
-    metrics: list[str] = []
-    """`Metric` files (LLM judges), relative to the eval."""
+    metrics: dict[str, Judge] = {}
     seed: int = 0
     budget_usd: float | None = None
     """The most a run may spend (billed cost, judges included); `--budget` overrides it. None: no cap."""
 
 
 class Metric(Strict):
-    """An LLM judge: a serve reads the page and a reply and answers `{"score": n, "reason": "..."}`."""
+    """A resolved judge: its serve and its prompt text."""
 
-    kind: Literal["Metric"]
     name: str
-    judge: str
-    """A serve file, relative to the metric."""
+    judge: Serve
     prompt: str
     scale: tuple[int, int] = (1, 5)
     prompt_file: str | None = None
-
-
-Doc = TypeAdapter(Annotated[Serve | Eval | Metric, Field(discriminator="kind")])
 
 
 class Settings(BaseSettings):
@@ -189,62 +213,112 @@ def _merge(base: dict, top: dict, path: str = "") -> dict:
             out.pop(k, None)
         elif isinstance(v, dict) and isinstance(out.get(k), dict):
             out[k] = _merge(out[k], v, p)
-        elif p == "backend.args" and isinstance(out.get(k), list):
+        elif p == "provider.args" and isinstance(out.get(k), list):
             out[k] = out[k] + v
         else:
             out[k] = v
     return out
 
 
-def _raw(path: Path) -> dict:
-    """A file with its `extends` chain merged under it, and file-relative prompts made absolute."""
-    d = yaml.safe_load(path.read_text()) or {}
-    for sect in (d, d.get("request") or {}):
-        p = sect.get("prompt")
-        if isinstance(p, str) and "\n" not in p and (path.parent / p).is_file():
-            sect["prompt"] = str((path.parent / p).resolve())
-    if j := d.get("judge"):
-        d["judge"] = str((path.parent / j).resolve())
-    parent = d.pop("extends", None)
-    return _merge(_raw((path.parent / parent).resolve()), d) if parent else d
+def _yaml(path: Path) -> dict:
+    if not path.is_file():
+        raise SystemExit(f"no {path.parent.name.rstrip('s')} {path.stem!r}: {path} does not exist")
+    return yaml.safe_load(path.read_text()) or {}
 
 
-def load(path: str | Path) -> Serve | Eval | Metric:
+def root_of(path: Path) -> Path:
+    """The `configs/` folder a file or benchmark lives in (else `./configs`)."""
+    path = path.resolve()
+    for p in [path, *path.parents]:
+        if p.name == "configs":
+            return p
+    return Path("configs").resolve()
+
+
+def bench_dir(bench: str | Path) -> Path:
+    """A benchmark by folder, or by name under `configs/benchmarks/`."""
+    p = Path(bench)
+    if (p / f"{p.name}.yaml").is_file():
+        return p.resolve()
+    q = Path("configs") / "benchmarks" / str(bench)
+    if (q / f"{q.name}.yaml").is_file():
+        return q.resolve()
+    raise SystemExit(f"no benchmark {str(bench)!r}: not a folder, nor configs/benchmarks/{bench}/")
+
+
+def _provider(root: Path, ref: str | dict | None, base: dict | None = None) -> dict:
+    """A provider by name; or a mapping over `base` (or over `use:`, another provider)."""
+    if ref is None:
+        return copy.deepcopy(base or {})
+    if isinstance(ref, str):
+        return _yaml(root / "providers" / f"{ref}.yaml")
+    ref = copy.deepcopy(ref)
+    use = ref.pop("use", None)
+    start = _yaml(root / "providers" / f"{use}.yaml") if use else copy.deepcopy(base or {})
+    return _merge(start, ref, "provider")
+
+
+def _prompt(request: dict, here: Path) -> str | None:
+    """A prompt file (relative to `here`) replaced by its text; its path returned."""
+    p = request.get("prompt")
+    if isinstance(p, str) and "\n" not in p and (here / p).is_file():
+        request["prompt"] = (here / p).read_text().rstrip("\n")
+        return str((here / p).resolve())
+    return None
+
+
+def resolve(root: Path, here: Path, model: str, entry: Entry, defaults: dict, name: str) -> Serve:
+    """provider -> model -> eval defaults -> the entry's overrides."""
+    d = _yaml(root / "models" / f"{model}.yaml")
+    d["provider"] = _provider(root, entry.provider, _provider(root, d.get("provider")))
+    d["request"] = _merge(_merge(d.get("request") or {}, copy.deepcopy(defaults)), copy.deepcopy(entry.request))
+    if entry.postprocess:
+        d["postprocess"] = entry.postprocess
+    d.update(name=name, prompt_file=_prompt(d["request"], here))
+    return Serve.model_validate(d)
+
+
+def load(path: str | Path) -> Serve:
+    """One standalone model file, its stem the name (a file in `models/` reads as that model does)."""
     path = Path(path).resolve()
-    d = _raw(path)
+    if path.parent.name == "models":
+        return resolve(root_of(path), path.parent, path.stem, Entry(), {}, path.stem)
+    d = _yaml(path)
     d.setdefault("name", path.stem)
-    for sect in (d, d.get("request") or {}):
-        p = sect.get("prompt")
-        if isinstance(p, str) and Path(p).is_absolute() and Path(p).is_file():
-            sect["prompt"] = Path(p).read_text().rstrip("\n")
-            d["prompt_file"] = p
-    return Doc.validate_python(d)
+    d["provider"] = _provider(root_of(path), d.get("provider"))
+    d["prompt_file"] = _prompt(d.setdefault("request", {}), path.parent)
+    return Serve.model_validate(d)
 
 
-def bench_files(bench: Path) -> tuple[Eval, dict[str, Serve], list[Metric]]:
-    """A benchmark folder: its `<bench>.yaml` eval, the serves it lists (`<bench>-<serve>.yaml`), its metrics."""
-    bench = bench.resolve()
-    ev = load(bench / f"{bench.name}.yaml")
-    assert isinstance(ev, Eval), f"{bench.name}.yaml is not an Eval"
+def bench_files(bench: str | Path) -> tuple[Eval, dict[str, Serve], list[Metric]]:
+    """A benchmark: its eval, its serves (`<bench>-<key>`) resolved, its judges."""
+    b = bench_dir(bench)
+    root, raw = root_of(b), _yaml(b / f"{b.name}.yaml")
+    raw.setdefault("name", b.name)
+    ev = Eval.model_validate(raw)
     serves = {}
-    for s in ev.serves:
-        f = bench / f"{s}.yaml"
-        if not f.exists():
-            f = bench / f"{bench.name}-{s}.yaml"
-        serves[f.stem] = load(f)
-    return ev, serves, [load(bench / m) for m in ev.metrics]
+    for k, e in ev.serves.items():
+        e = e or Entry()
+        serves[f"{b.name}-{k}"] = resolve(root, b, e.model or k, e, ev.request, f"{b.name}-{k}")
+    metrics = []
+    for n, j in ev.metrics.items():
+        req = {"prompt": j.prompt}
+        pf = _prompt(req, b)
+        judge = resolve(root, b, j.judge, j, {}, f"{b.name}-judge-{n}")
+        metrics.append(Metric(name=n, judge=judge, prompt=req["prompt"], scale=j.scale, prompt_file=pf))
+    return ev, serves, metrics
 
 
-def expand(stems: list[str] | None, bench: Path, known: dict) -> list[str]:
-    """`-s gemma4-26b` names `<bench>-gemma4-26b`; a full stem works too."""
-    if not stems:
+def expand(keys: list[str] | None, bench: str | Path, known: dict) -> list[str]:
+    """`-s gemma4-26b` names `<bench>-gemma4-26b`; the full name works too."""
+    if not keys:
         return list(known)
-    out = []
-    for s in stems:
-        name = s if s in known else f"{bench.name}-{s}"
-        if name not in known:
-            raise SystemExit(f"no serve {s!r} in {bench}; have: {', '.join(known)}")
-        out.append(name)
+    name, out = bench_dir(bench).name, []
+    for s in keys:
+        full = s if s in known else f"{name}-{s}"
+        if full not in known:
+            raise SystemExit(f"no serve {s!r} in {name}; have: {', '.join(k.removeprefix(name + '-') for k in known)}")
+        out.append(full)
     return out
 
 

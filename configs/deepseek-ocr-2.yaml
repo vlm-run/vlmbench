@@ -1,4 +1,0 @@
-kind: Serve
-extends: _vlmrun-gateway.yaml
-model: deepseek-ai/deepseek-ocr-2
-weights: open

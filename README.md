@@ -29,7 +29,7 @@ each page costs, all in one place.
 
 ```bash
 uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct -i ./images/ --concurrency 4,8,16   # speed
-uv sync --extra evals && vlmbench eval benchmarks/ocr-bench                       # accuracy
+uv sync --extra evals && vlmbench eval ocr-bench                                  # accuracy
 vlmbench dashboard                                                                 # see it all
 ```
 
@@ -56,34 +56,36 @@ Results land in `~/.vlmbench/benchmarks/` as JSON. `vlmbench run --help` lists t
 
 ## Accuracy: `vlmbench eval`
 
-A benchmark is a folder of YAML, validated by pydantic:
+Everything lives under `configs/`, validated by pydantic and referenced by name:
 
 ```
-configs/gemini-3.8-flash.yaml                        kind: Serve   how to reach the model
-benchmarks/ocr-bench/ocr-bench.yaml                  kind: Eval    models × datasets × judges
-benchmarks/ocr-bench/ocr-bench-gemini-3.8-flash.yaml kind: Serve   extends the config, sets the prompt
-benchmarks/ocr-bench/prompts/ocr-md-v2.md                          versioned prompts
-benchmarks/ocr-bench/judges/faithfulness.yaml        kind: Metric  an LLM judge
+configs/providers/vlmrun.yaml               where requests go: vlmrun, openrouter, vllm (a local container)
+configs/models/gemini-3.8-flash.yaml        one model on one provider
+configs/benchmarks/ocr-bench/ocr-bench.yaml datasets, request defaults, serves (models + overrides), judges
+configs/benchmarks/ocr-bench/prompts/       versioned prompts
 ```
 
 ```yaml
-# benchmarks/ocr-bench/ocr-bench-gemini-3.8-flash.yaml
-kind: Serve
-extends: ../../configs/gemini-3.8-flash.yaml
-request:
-  prompt: prompts/ocr-md-v2.md
-  max_tokens: 16384
+# configs/benchmarks/ocr-bench/ocr-bench.yaml (excerpt)
+serves:
+  dots-mocr: {request: {method: markdown}}
+  gemini-3.8-flash: {request: {prompt: prompts/ocr-md-v1.md, max_tokens: 16384}}
+  gemini-3.8-flash-md-v2: {model: gemini-3.8-flash, request: {prompt: prompts/ocr-md-v2.md}}
+  # e.g. qwen3.8-27b-or: {model: qwen3.8-27b-api, provider: openrouter}  (same model, another provider)
 ```
+
+A serve resolves provider → model → the eval's `request:` defaults → its own overrides.
 
 ```bash
-vlmbench lint -v                                               # every config loads; ids, prompts
-vlmbench eval benchmarks/ocr-bench                             # every model × every dataset
-vlmbench eval benchmarks/ocr-bench -s gemini-3.8-flash --split dev   # tune prompts on dev pages
-vlmbench eval benchmarks/extract-bench --budget 5                # stop spending at $5 (budget_usd in the Eval)
-vlmbench board benchmarks/ocr-bench                            # latest scores in the terminal
+vlmbench lint -v                                      # every config resolves; ids, prompts
+vlmbench eval ocr-bench                               # every model × every dataset
+vlmbench eval ocr-bench -s gemini-3.8-flash --split dev   # tune prompts on dev pages
+vlmbench eval extract-bench --budget 5                # stop spending at $5 (budget_usd in the Eval)
+vlmbench board ocr-bench                              # latest scores in the terminal
 ```
 
-- **Datasets**: OmniParseBench, olmOCR-bench, ParseBench, each graded by its own package; a new benchmark is one
+- **Datasets**: OCR (OmniParseBench, olmOCR-bench, ParseBench, OmniDocBench, CC-OCR, RD-TableBench, FinTabNet,
+  MPDocBench, MarathonDocBench) and extraction (ExtractBench (+ Pro), LongArray, RealDoc), each graded its own way; a new benchmark is one
   module in `vlmbench/evals/datasets/`.
 - **Honest splits**: `dev` pages for tuning, disjoint `test` pages for reporting; scores carry 95% bootstrap
   intervals.
@@ -91,7 +93,7 @@ vlmbench board benchmarks/ocr-bench                            # latest scores i
 - **Local and remote**: local vLLM models run one at a time on a free GPU; API models run in parallel, rate-paced.
 - **One record**: `result.json` joins performance and accuracy on (`model_id`, `config_id`).
 - **Traced**: with `LOGFIRE_TOKEN` set, every eval, dataset, request, grade and judge is a `vlmbench.*` span.
-- **Checked on commit**: a pre-commit hook runs `vlmbench lint` on `configs/` and `benchmarks/`.
+- **Checked on commit**: a pre-commit hook runs `vlmbench lint` on `configs/`.
 
 ## Dashboard: `vlmbench dashboard`
 

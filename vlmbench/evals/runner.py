@@ -13,7 +13,7 @@ from pathlib import Path
 from vlmbench.evals import serving
 from vlmbench.evals.cache import DiskCache
 from vlmbench.evals.client import Budget, Client
-from vlmbench.evals.config import Eval, Metric, Serve, Settings, bench_files, expand, load
+from vlmbench.evals.config import Eval, Metric, Serve, Settings, bench_files, expand
 from vlmbench.evals.data import Item, render, render_doc, sample
 from vlmbench.evals.datasets import DATASETS, normalize
 from vlmbench.evals.jsonx import merge, parse
@@ -198,7 +198,7 @@ async def _run(
         short = {(n, d) for n in names for d in ds_names if any(r.get("budget") for r in replies[n][d][0])}
         for n, d in sorted(short):
             log(f"{n} · {d}: not graded, the {_usd(cap)} budget ran out (rerun with more; replies so far are cached)")
-        judges = {m.name: (m, load(m.judge)) for m in metrics} if judges else {}
+        judges = {m.name: (m, m.judge) for m in metrics} if judges else {}
         page_ds = [d for d in ds_names if not getattr(DATASETS[ev.datasets[d].kind], "DOCUMENT", False)]
         keys = [
             (n, d, m) for n in names for d in page_ds for m in judges if (n, d) not in short
@@ -221,7 +221,7 @@ async def _run(
                     continue
                 spec, its = ev.datasets[d], todo[d]
                 recs, wall = replies[n][d]
-                perf.append(performance(s, d, recs, wall))
+                perf.append(performance(s, d, recs, wall, getattr(DATASETS[spec.kind], "DOCUMENT", False) == "text"))
                 texts = {it.id: normalize(spec.kind, r.get("text")) for (it, _), r in zip(its, recs)}
                 with span("vlmbench.grade", dataset=d, serve=n, grader=spec.kind, config_id=s.config_id) as gs:
                     g = DATASETS[spec.kind].score(spec, [it for it, _ in its], texts)
@@ -321,7 +321,7 @@ def _mean(xs: list) -> float | None:
 
 def _config(s: Serve) -> dict:
     d = s.model_dump(mode="json")
-    d["backend"].pop("api_key", None)
+    d["provider"].pop("api_key", None)
     return {"config_id": s.config_id, "model_id": s.model, "serve": s.name} | d
 
 
@@ -345,7 +345,7 @@ def board(bench: Path, split: str, log=print) -> list[dict]:
         out.append(
             {
                 "serve": n.removeprefix(f"{ev.name}-"),
-                "backend": s.backend_name,
+                "provider": s.provider_name,
                 "mean": round(sum(v["score"] for v in bench_acc.values()) / len(kinds), 1) if full else None,
                 "ci95": "{:.0f}–{:.0f}".format(*ci) if ci else None,
                 **{d: v["score"] for d, v in bench_acc.items()},

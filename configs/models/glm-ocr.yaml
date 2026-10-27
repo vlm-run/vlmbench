@@ -1,0 +1,3 @@
+model: zai-org/glm-ocr
+weights: open
+provider: vlmrun

@@ -1,4 +1,0 @@
-kind: Serve
-extends: ocr-bench-gemini-4-argon.yaml
-request:
-  prompt: prompts/ocr-md-v2.md

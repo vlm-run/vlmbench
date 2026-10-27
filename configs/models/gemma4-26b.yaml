@@ -1,0 +1,16 @@
+# Gemma 4 26B-A4B on one RTX 5090: NVIDIA's NVFP4 checkpoint, the largest vision budget (1,120 tokens).
+model: nvidia/Gemma-4-26B-A4B-NVFP4
+weights: open
+provider:
+  use: vllm
+  env:
+    HF_HUB_OFFLINE: "1"
+  args:
+    - --max-model-len=16384
+    - --gpu-memory-utilization=0.85
+    - --max-num-seqs=64
+    - --kv-cache-dtype=fp8
+    - '--limit-mm-per-prompt={"image": 1, "audio": 0}'
+    - '--mm-processor-kwargs={"max_soft_tokens": 1120}'
+request:
+  concurrency: 64
