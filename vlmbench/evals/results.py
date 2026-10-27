@@ -36,6 +36,16 @@ def interval(datasets: list[tuple[float, dict]], draws: int = 2000, seed: int = 
     return (round(q[0], 1), round(q[-1], 1))
 
 
+def draws(score: float, units: dict, n: int = 1000, seed: int = 0) -> list[float]:
+    """One dataset's bootstrap draws (its items resampled, shifted to the reported score), as `interval` takes them:
+    datasets resample independently, so the mean over any set of datasets is their draws averaged index by index."""
+    ids = list(units)
+    if not ids:
+        return []
+    rng, full = random.Random(seed), _rate(units, ids)
+    return [round(score + _rate(units, rng.choices(ids, k=len(ids))) - full, 1) for _ in range(n)]
+
+
 def _dist(xs: list[float]) -> dict | None:
     xs = sorted(x for x in xs if x is not None)
     if not xs:

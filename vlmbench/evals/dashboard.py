@@ -5,10 +5,11 @@
 import functools
 import http.server
 import json
+import zlib
 from pathlib import Path
 
 from vlmbench.evals.config import Settings, backend_name
-from vlmbench.evals.results import interval, latest
+from vlmbench.evals.results import draws, interval, latest
 
 
 def collect(home: Path) -> dict:
@@ -48,6 +49,7 @@ def _eval(root: Path) -> dict:
                             "ci": a.get("ci95"),
                             "metrics": a.get("metrics") or {},
                             "cats": a.get("by_category") or {},
+                            "draws": draws(a["score"], a.get("units") or {}, seed=zlib.crc32(d.encode())),
                         }
                         for d, a in bench.items()
                     },
@@ -155,6 +157,11 @@ nav.tabs{display:flex;gap:22px}
 nav.tabs button,.seg button,select{font:500 13px "Space Grotesk",sans-serif;color:var(--ink-3);background:none;border:0;padding:4px 0;cursor:pointer}
 nav.tabs button[aria-selected=true]{color:var(--ink-1);box-shadow:inset 0 -1.5px 0 var(--ink-1)}
 .seg{display:inline-flex;gap:14px}.seg button[aria-pressed=true]{color:var(--ink-1)}
+.chips[hidden]{display:none}
+.chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px 18px;margin:-28px 0 40px}
+.chips button{font:500 12.5px "Geist Mono",monospace;color:var(--ink-3);background:none;border:0;padding:2px 0;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+.chips button::before{content:"";width:9px;height:9px;border:1px solid var(--ink-3);border-radius:2px}
+.chips button[aria-pressed=true]{color:var(--ink-1)}.chips button[aria-pressed=true]::before{background:var(--ink-1);border-color:var(--ink-1)}
 select{color:var(--ink-1);border-bottom:1px solid var(--hair);padding-right:4px}
 .controls{display:flex;gap:28px;align-items:center;margin:40px 0 28px}
 .lab{font:500 10.5px "Space Grotesk",sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
@@ -182,7 +189,7 @@ td.name .meta{display:block;font:400 11px "Geist Mono",monospace;color:var(--ink
 .cell{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .meter{position:relative;display:inline-block;width:84px;height:3px}.meter.sm{width:48px}
 table.dense th,table.dense td{padding-left:6px;padding-right:6px}table.dense th{letter-spacing:.04em;white-space:normal;line-height:1.3;vertical-align:bottom}
-table.dense .dot{margin-right:6px}
+table.dense .stack{display:inline-flex;flex-direction:column;align-items:flex-end;gap:5px}table.dense .stack .meter{width:44px}
 table.dense td.name,table.dense th:nth-child(2){position:sticky;left:0;z-index:1;background:var(--surface-1);box-shadow:8px 0 8px -8px var(--hair)}
 table.dense tr:hover td.name{background:var(--hover)}
 .meter>i{position:absolute;left:0;top:0;bottom:0;border-radius:2px}
@@ -248,15 +255,32 @@ function accTab(){const root=$("#acc");root.replaceChildren();
  ctl.append(el("span",{className:"lab",textContent:"Eval"}),pick);
  const seg=el("div",{className:"seg"});ctl.append(el("span",{className:"lab",textContent:"Split"}),seg);
  const dpick=el("select");ctl.append(el("span",{className:"lab",textContent:"Dataset"}),dpick);
+ const chips=el("div",{className:"chips"});root.append(chips);
  const body=el("div");root.append(body);let split;
+ // the datasets the "all" view averages: a checklist, kept per eval in this browser
+ const DEFAULT=["olmocr","omnidocbench","omniparse","parsebench"];
+ const chosen=ev=>{try{const v=JSON.parse(localStorage.getItem("vlmbench.sel."+ev.name));if(Array.isArray(v)){const k=v.filter(d=>ev.datasets.includes(d));if(k.length)return k}}catch(e){}
+  const d=DEFAULT.filter(x=>ev.datasets.includes(x));return d.length?d:[...ev.datasets]};
+ const keep=(ev,sel)=>localStorage.setItem("vlmbench.sel."+ev.name,JSON.stringify(sel));
+ function pooled(r,sel){ // mean over the chosen datasets, and its 95% interval from their bootstrap draws
+  const ss=sel.map(d=>r.scores[d]);if(ss.some(s=>s==null))return {mean:null,ci:null};
+  const mean=ss.reduce((a,s)=>a+s.score,0)/ss.length, n=Math.min(...ss.map(s=>s.draws?.length||0));
+  if(!n)return {mean,ci:null};
+  const m=Array.from({length:n},(_,k)=>ss.reduce((a,s)=>a+s.draws[k],0)/ss.length).sort((a,b)=>a-b);
+  return {mean,ci:[m[Math.floor(.025*n)],m[Math.min(n-1,Math.ceil(.975*n)-1)]]}}
  function draw(){const ev=D.evals[pick.value], splits=Object.keys(ev.splits);
   if(!splits.includes(split))split=splits.includes("test")?"test":splits[0];
   seg.replaceChildren(...splits.map(s=>{const b=el("button",{textContent:s});b.setAttribute("aria-pressed",s===split);b.onclick=()=>{split=s;draw()};return b}));
   const ds=ev.datasets.includes(dpick.value)?dpick.value:"";
   dpick.replaceChildren(el("option",{value:"",textContent:"all"}),...ev.datasets.map(d=>el("option",{value:d,textContent:d})));dpick.value=ds;
   const all=ev.splits[split]||[];body.replaceChildren();
+  const sel=chosen(ev);chips.hidden=!!ds;
+  chips.replaceChildren(el("span",{className:"lab",textContent:"Averaged"}),...ev.datasets.map(d=>{
+   const b=el("button",{textContent:d});b.setAttribute("aria-pressed",sel.includes(d));
+   b.onclick=()=>{const on=sel.includes(d);if(on&&sel.length===1)return;
+    keep(ev,on?sel.filter(x=>x!==d):ev.datasets.filter(x=>x===d||sel.includes(x)));draw()};return b}));
   // one dataset: its score is the mean, its metrics and categories the columns, its own judge, speed and cost
-  const rows=!ds?all:all.map(r=>{const s=r.scores[ds],p=r.perf_by?.[ds]||{};
+  const rows=!ds?all.map(r=>({...r,...pooled(r,sel)})).sort((a,b)=>(b.mean??-1)-(a.mean??-1)):all.map(r=>{const s=r.scores[ds],p=r.perf_by?.[ds]||{};
    return {...r,mean:s?s.score:null,ci:s?.ci,judge:r.judge_by?.[ds]??null,pages_s:p.pages_s??null,usd_1k:p.usd_1k??null,cost:p.cost??null}})
    .sort((a,b)=>(b.mean??-1)-(a.mean??-1));
   const ok=rows.filter(r=>r.mean!=null), best=ok[0];
@@ -266,13 +290,13 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   if(best)body.append(el("div",{className:"tiles"},tile("Most accurate",f(best.mean),best.serve)+
    (value?tile("Best value",`${f(value.mean)}<small>$${f(value.usd_1k,2)} / 1k</small>`,value.serve):"")+
    (fast?tile("Fastest",`${f(fast.pages_s,2)}<small>items/s</small>`,fast.serve):"")+
-   tile("Models",`${ok.length}<small>${ds?esc(ds):`× ${ev.datasets.length} benchmarks`}</small>`,`${split} split`)));
+   tile("Models",`${ok.length}<small>${ds?esc(ds):`× ${sel.length} benchmarks`}</small>`,`${split} split`)));
   const g=el("div",{className:"grid2"});body.append(g);
   const card=el("div",{className:"card"});g.append(card);
-  card.append(el("h2",{textContent:"Leaderboard"}),el("div",{className:"key"},`<span><span class="dot" style="background:var(--good)"></span>≥ 80</span><span><span class="dot" style="background:var(--warn)"></span>60–80</span><span><span class="dot" style="background:var(--bad)"></span>&lt; 60</span><span>hairline = 95% CI</span><span>${ds?`${esc(ds)} score, then its metrics and categories`:`mean of ${ev.datasets.length} benchmarks; judge not averaged in`}</span>`));
+  card.append(el("h2",{textContent:"Leaderboard"}),el("div",{className:"key"},`<span><span class="dot" style="background:var(--good)"></span>≥ 80</span><span><span class="dot" style="background:var(--warn)"></span>60–80</span><span><span class="dot" style="background:var(--bad)"></span>&lt; 60</span><span>hairline = 95% CI</span><span>${ds?`${esc(ds)} score, then its metrics and categories`:`mean of ${sel.length} benchmarks; judge not averaged in`}</span>`));
   // between score and judge: every dataset, or one dataset's metrics then its categories (each name once)
   const mid=[];
-  if(!ds)ev.datasets.forEach(d=>mid.push({t:d,key:`scores.${d}.score`,get:r=>r.scores[d]?.score,ci:r=>r.scores[d]?.ci}));
+  if(!ds)sel.forEach(d=>mid.push({t:d,key:`scores.${d}.score`,get:r=>r.scores[d]?.score,ci:r=>r.scores[d]?.ci}));
   else{const seen=new Set();
    for(const part of ["metrics","cats"])for(const r of all)for(const k of Object.keys(r.scores[ds]?.[part]||{})){
     if(seen.has(k))continue;seen.add(k);
@@ -288,12 +312,12 @@ function accTab(){const root=$("#acc");root.replaceChildren();
    `<td><span class="cell" data-tip="${r.ci?`95% CI ${f(r.ci[0])}–${f(r.ci[1])}`:ds?"":"not every dataset graded"}"><span class="big">${f(r.mean)}</span>${meter(r.mean,r.ci,dense)}</span></td>`+
    mid.map(c=>{const v=c.get(r),ci=c.ci?.(r);
     if(ratio(c.t))return `<td>${v==null?"—":f(v,2)+"×"}</td>`;
-    if(dense)return `<td><span class="cell" data-tip="${esc(c.t)} ${f(v)}">${v!=null?`<span class="dot" style="background:${tone(v)}"></span>`:""}${f(v)}</span></td>`;
+    if(dense)return `<td><span class="cell stack" data-tip="${esc(c.t)} ${f(v)}${ci?` · 95% CI ${f(ci[0])}–${f(ci[1])}`:""}">${f(v)}${v!=null?meter(v,ci,1):""}</span></td>`;
     return `<td><span class="cell" data-tip="${esc(c.t)} ${f(v)}${ci?` · 95% CI ${f(ci[0])}–${f(ci[1])}`:""}">${f(v)}${v!=null?meter(v,ci,1):""}</span></td>`}).join("")+
    `<td><span class="cell" data-tip="LLM judge, 0–100">${f(r.judge)}${r.judge!=null?meter(r.judge,null,1):""}</span></td>`+
    `<td>${f(r.pages_s,2)}</td>${ds||dense?"":`<td>${r.usd_1k==null?"—":f(r.usd_1k,2)}</td>`}<td>${usd(r.cost,r.gpu_rate)}</td>`),r));
   function hover(tr,r){tr.onmouseenter=()=>rad?.focus(r.serve);tr.onmouseleave=()=>rad?.focus(null);return tr}
-  rad=radar(ev,rows);g.append(rad.card)}
+  rad=radar(ds?ev:{...ev,datasets:sel},rows);g.append(rad.card)}
  pick.onchange=draw;dpick.onchange=draw;draw()}
 
 function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relative to the fastest serve

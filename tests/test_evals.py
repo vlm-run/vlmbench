@@ -238,3 +238,15 @@ def test_a_budget_is_never_crossed_by_calls_in_flight(tmp_path):
     assert client.budget.spent <= 1.0 and sum(r.get("error") == BUDGET for r in recs) == 34
     assert all(r.get("budget") for r in recs if "error" in r)
     assert not client.cached(s, pngs[-1])  # a skipped call is called again by a run with more budget
+
+
+def test_dataset_draws_rebuild_the_interval_for_any_set_of_datasets():
+    from vlmbench.evals.results import draws, interval
+
+    a = {f"a{i}": {"x": [i % 3 == 0, 1]} for i in range(30)}
+    b = {f"b{i}": {"y": [i % 2, 1], "z": [i % 5 == 0, 1]} for i in range(20)}
+    da, db = draws(40.0, a, 4000, seed=1), draws(70.0, b, 4000, seed=2)
+    m = sorted((x + y) / 2 for x, y in zip(da, db))
+    lo, hi = interval([(40.0, a), (70.0, b)], draws=4000)
+    assert abs(m[100] - lo) < 1.5 and abs(m[3899] - hi) < 1.5
+    assert draws(50.0, {}) == []
