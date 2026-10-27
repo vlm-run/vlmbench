@@ -426,8 +426,8 @@ function accTab(){const root=$("#acc");root.replaceChildren();
 // rank in a filtered view. The reference chart's palette, in its order.
 const PAL=["#3B5FD9","#E2C384","#86AFD9","#E0969C","#9C9C9C","#94C29C","#BBA6D8","#8ACBC8","#D3AA84","#7B9FD2"];
 const MCOL=new Map(), mcol=s=>MCOL.get(s)||"var(--ink-3)";
-// a dataset keeps one pattern: the default benchmarks first (solid, ///, \\\, crosshatch), then the rest
-const PATS=["solid","fwd","back","cross","dots","horiz","vert","tint"];
+// the mean is a solid bar; a dataset keeps one pattern: the default benchmarks first (///, \\\, crosshatch, dots), then the rest
+const PATS=["fwd","back","cross","dots","horiz","vert","tint"]; // solid is the mean's
 function patOrder(ev){const DEF=["olmocr","omnidocbench","omniparse","parsebench"];
  return [...DEF.filter(d=>ev.datasets.includes(d)),...ev.datasets.filter(d=>!DEF.includes(d))]}
 function patDef(id,kind,c){
@@ -440,12 +440,13 @@ const patFill=(id,kind,c)=>kind==="solid"?c:`url(#${id})`;
 // grouped bars: one group per model (ranked as the leaderboard), one bar per benchmark (or, for one dataset, per metric
 // and category); the leader banded, every group's mean a tick and its one label, each bar's value on hover
 function bars(ev,rows,mid,ds,rad){
- const card=el("div",{className:"card bars"}), ser=mid.filter(c=>!/ratio/i.test(c.t)), order=patOrder(ev);
- const pat=(c,i)=>PATS[(ds?i:Math.max(0,order.indexOf(c.t)))%PATS.length];
+ const card=el("div",{className:"card bars"}), order=patOrder(ev), MEAN={t:ds?"score":"mean",get:r=>r.mean,mean:1};
+ const ser=[MEAN,...mid.filter(c=>!/ratio/i.test(c.t))]; // the mean (of the checked benchmarks) first, solid
+ const pat=(c,i)=>c.mean?"solid":PATS[(ds?i-1:Math.max(0,order.indexOf(c.t)))%PATS.length];
  const sw=(kind,i)=>`<svg width="16" height="11" class="psw"><defs>${patDef("lg"+i,kind,"#8f8f8f")}</defs><rect width="16" height="11" rx="2" fill="${patFill("lg"+i,kind,"#8f8f8f")}"/></svg>`;
  card.append(el("h2",{textContent:ds?`${ds}, by metric and category`:"Scores by benchmark"}),
-  el("div",{className:"key"},ser.map((c,i)=>`<span${ds?"":` data-ds="${esc(c.t)}"`}>${sw(pat(c,i),i)}${esc(c.t)}</span>`).join("")+
-   `<span><span class="sw lead"></span>leader's mean</span><span>number = mean · colour = model</span>`));
+  el("div",{className:"key"},ser.map((c,i)=>`<span${ds||c.mean?"":` data-ds="${esc(c.t)}"`}>${sw(pat(c,i),i)}${esc(c.t)}${c.mean&&!ds?` of ${mid.length}`:""}</span>`).join("")+
+   `<span><span class="sw lead"></span>leader's mean</span><span>colour = model</span>`));
  card.querySelectorAll(".key [data-ds]").forEach(x=>link(x,ev.links?.[x.dataset.ds]));
  const wrap=el("div",{className:"barsvg"});card.append(wrap);
  function draw(){
@@ -464,7 +465,7 @@ function bars(ev,rows,mid,ds,rad){
    ser.forEach((c,i)=>{const v=c.get(r);if(v==null)return;hi=Math.max(hi,v);
     const x=bx+i*(bw+2),yt=y(v),yb=y(0),rr=Math.min(3,bw/2,yb-yt),id=`bp${gi}_${i}`,k=pat(c,i);
     if(k!=="solid")defs+=patDef(id,k,col);
-    o+=`<path d="M${x},${yb}V${yt+rr}Q${x},${yt} ${x+rr},${yt}H${x+bw-rr}Q${x+bw},${yt} ${x+bw},${yt+rr}V${yb}Z" fill="${patFill(id,k,col)}" stroke="${col}" stroke-width="${k==="solid"?0:1}" data-tip="${esc(r.serve)} · ${esc(c.t)} ${f(v)}"/>`});
+    o+=`<path d="M${x},${yb}V${yt+rr}Q${x},${yt} ${x+rr},${yt}H${x+bw-rr}Q${x+bw},${yt} ${x+bw},${yt+rr}V${yb}Z" fill="${patFill(id,k,col)}" stroke="${col}" stroke-width="${k==="solid"?0:1}" data-tip="${esc(r.serve)} · ${esc(c.t)}${c.mean&&!ds?` of ${mid.length} benchmarks`:""} ${f(v)}"/>`});
    if(r.mean!=null)o+=`<text x="${x0+gw/2}" y="${y(hi)-8}" text-anchor="middle" class="mv${top?" top":""}">${f(r.mean)}</text>`;
    o+=`<text transform="translate(${x0+gw/2+3},${H-B+14}) rotate(-45)" text-anchor="end" class="xl${top?" top":""}">${esc(r.serve)}</text></g>`});
   if(lead)o+=`<line x1="${L}" x2="${W-6}" y1="${y(lead.mean)}" y2="${y(lead.mean)}" class="ld" stroke-width="1" stroke-dasharray="4 4" opacity=".6"/>`;
