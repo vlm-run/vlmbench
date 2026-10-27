@@ -182,8 +182,8 @@ nav.tabs button[aria-selected=true]{color:var(--ink-1);box-shadow:inset 0 -1.5px
 .seg{display:inline-flex;gap:14px}.seg button[aria-pressed=true]{color:var(--ink-1)}
 .chips[hidden]{display:none}
 .frame.box{max-height:calc(100vh - 96px);overflow:auto}
-#q{font:500 13px "Geist Mono",monospace;color:var(--ink-1);background:none;border:0;border-bottom:1px solid var(--hair);padding:4px 0;width:220px;outline:none}
-#q:focus{border-bottom-color:var(--ink-1)}#q::placeholder{color:var(--ink-3)}
+input.q{font:500 13px "Geist Mono",monospace;color:var(--ink-1);background:none;border:0;border-bottom:1px solid var(--hair);padding:4px 0;width:220px;outline:none}
+input.q:focus{border-bottom-color:var(--ink-1)}input.q::placeholder{color:var(--ink-3)}.qrow{margin:18px 0 6px}
 td.none{text-align:left;color:var(--ink-3);padding:28px 10px}
 .frame thead th{position:sticky;top:0;z-index:2;background:var(--surface-1);border-bottom:0;box-shadow:inset 0 -1px 0 var(--ink-1);padding-top:8px}
 .frame table.dense th:nth-child(2){z-index:3;box-shadow:inset 0 -1px 0 var(--ink-1),8px 0 8px -8px var(--hair)}
@@ -239,12 +239,12 @@ table.dense tr:hover td.name{background:var(--hover)}
 .legend .sw{width:14px;height:2px;border-radius:1px;display:inline-block}
 .legend input:disabled+span{opacity:.35}
 .colm{min-width:0}
-.bars .key .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.bars .key .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}.bars .key .psw{margin-right:6px;vertical-align:-1px}
 .bars .key .sw.mean{height:2px;background:var(--ink-1);border-radius:0;vertical-align:3px}
 .bars .key .sw.lead{height:0;border-top:1px dashed #1E5ACA;border-radius:0;vertical-align:3px}
 .barsvg svg{display:block;overflow:visible}.barsvg .ax{font:500 10.5px "Geist Mono",monospace;fill:var(--ink-3)}
 .barsvg text{text-transform:none;letter-spacing:0}.barsvg .xl{font:500 11px "Geist Mono",monospace;fill:var(--ink-2)}.barsvg .mv{font:700 11px "Geist Mono",monospace;fill:var(--ink-1)}
-.barsvg .top{fill:#1E5ACA}.barsvg .ld{stroke:#1E5ACA}
+.barsvg .top{fill:#3B5FD9}.barsvg .ld{stroke:#3B5FD9}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .barsvg .top{fill:#7aa5f5}:root:where(:not([data-theme="light"])) .barsvg .ld{stroke:#7aa5f5}}
 :root[data-theme="dark"] .barsvg .top{fill:#7aa5f5}:root[data-theme="dark"] .barsvg .ld{stroke:#7aa5f5}.barsvg g.grp{transition:opacity .12s}.barsvg.hov g.grp:not(.on){opacity:.3}
 /* the profile sits above the leaderboard; on a wide screen, beside it and pinned, so a hovered row's profile stays in view */
@@ -265,7 +265,7 @@ svg polygon.s{transition:opacity .15s}
 <header><a class="brand" href="https://vlm.run" target="_blank" rel="noopener"><svg class="logo" role="img" aria-label="VLM Run" viewBox="0 0 171 130" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10.4983 16.086C10.4983 7.20196 17.7003 0 26.5843 0H47.581V10.724H26.5843C23.623 10.724 21.2223 13.1247 21.2223 16.086V58.1921C21.2223 61.1535 18.8217 63.5541 15.8603 63.5541L15.8603 66.1222C18.8217 66.1222 21.2223 68.5229 21.2223 71.4842V113.59C21.2223 116.552 23.623 118.952 26.5843 118.952H47.581V129.676H26.5843C17.7003 129.676 10.4983 122.474 10.4983 113.59V70.2002H0V59.4762H10.4983V16.086Z" fill="#1E5ACA"/><path d="M44.3593 60.8161L32.4557 27.7432H42.1716L50.1503 51.5506L58.0003 27.7432H67.5232L55.6195 60.8161H44.3593Z" fill="#1E5ACA"/><path d="M69.26 60.8161V15.7752H78.3325V60.8161H69.26Z" fill="#1E5ACA"/><path d="M122.94 27.3572C129.76 27.3572 135.165 31.2178 135.165 41.8346V60.8161H126.092V42.3493C126.092 37.3949 124.291 34.8211 120.366 34.8211C116.441 34.8211 113.803 37.7166 113.803 42.7354V60.8161H104.73V42.3493C104.73 37.3949 102.929 34.8211 98.9392 34.8211C95.0142 34.8211 92.4404 37.8453 92.4404 42.7998V60.8161H83.3679V27.7432H91.2822L92.1187 31.8613C94.1134 29.2875 97.0089 27.4215 101.835 27.3572C105.888 27.2928 109.685 28.7727 111.744 32.9551C114.06 29.4162 117.921 27.3572 122.94 27.3572Z" fill="#1E5ACA"/><path d="M58.3526 73.3203H59.8969V81.5564H56.2936C50.8887 81.5564 48.8297 85.1596 48.8297 90.1785V106.393H39.7572V73.3203H47.9932L48.8297 78.2748C50.6313 75.315 53.2051 73.3203 58.3526 73.3203Z" fill="#1E5ACA"/><path d="M84.7322 89.8567V73.3203H93.8047V106.393H85.7617L84.9252 102.404C82.8019 104.978 79.9064 106.779 75.2093 106.779C68.3888 106.779 62.0831 103.369 62.0831 91.6584V73.3203H71.1556V90.4358C71.1556 96.3555 73.0859 99.251 77.59 99.251C82.0941 99.251 84.7322 95.9694 84.7322 89.8567Z" fill="#1E5ACA"/><path d="M117.807 72.9342C124.949 72.9342 131.062 76.7305 131.062 88.0551V106.393H121.989V88.9559C121.989 83.358 119.866 80.3982 115.298 80.3982C110.601 80.3982 107.898 83.744 107.898 89.4707V106.393H98.8256V73.3203H106.74L107.576 77.4383C109.7 74.8646 112.724 72.9342 117.807 72.9342Z" fill="#1E5ACA"/><path d="M159.732 16.086C159.732 7.20196 152.53 0 143.646 0H122.649V10.724H143.646C146.607 10.724 149.008 13.1247 149.008 16.086V58.1921C149.008 61.1535 151.408 63.5541 154.37 63.5541V66.1222C151.408 66.1222 149.008 68.5229 149.008 71.4842V113.59C149.008 116.552 146.607 118.952 143.646 118.952H122.649V129.676H143.646C152.53 129.676 159.732 122.474 159.732 113.59V70.2002H170.23V59.4762H159.732V16.086Z" fill="#1E5ACA"/></svg><h1>vlmbench</h1></a>
 <nav class="tabs" role="tablist"><button role="tab" data-tab="acc" aria-selected="true">Accuracy</button>
 <button role="tab" data-tab="runs" aria-selected="false">Runs</button></nav>
-<span style="flex:1"></span><input id="q" type="search" placeholder="search models   /" autocomplete="off" spellcheck="false" aria-label="Search models, backends, prompts, datasets"><span class="sub mono" id="sub"></span><div class="seg" id="theme"><button data-t="light">Light</button><button data-t="dark">Dark</button></div></header>
+<span style="flex:1"></span><span class="sub mono" id="sub"></span><div class="seg" id="theme"><button data-t="light">Light</button><button data-t="dark">Dark</button></div></header>
 <section id="acc"></section><section id="runs" hidden></section>
 <footer><a href="https://github.com/vlm-run/vlmbench" target="_blank" rel="noopener">github.com/vlm-run/vlmbench</a><span>·</span><span>open-source, by <a href="https://vlm.run" target="_blank" rel="noopener">VLM Run</a></span></footer>
 </main><div class="tip" id="tip"></div></div>
@@ -280,12 +280,17 @@ const tip=$("#tip");
 const frame=t=>{const w=el("div",{className:"frame"});w.append(t);
  new ResizeObserver(()=>w.classList.toggle("box",t.scrollWidth>w.clientWidth+1)).observe(w);return w};
 // search: every word must appear in a row's model, backend, prompt, eval, dataset or split; ranks are kept
-const Q={terms:[]}, hay=r=>[r.serve,r.model,r.backend,r.prompt,r.eval,r.dataset,r.split,r.gpu].filter(Boolean).join(" ").toLowerCase();
+const Q={terms:[],text:""}, hay=r=>[r.serve,r.model,r.backend,r.prompt,r.eval,r.dataset,r.split,r.gpu].filter(Boolean).join(" ").toLowerCase();
 const match=r=>Q.terms.every(t=>hay(r).includes(t));
-$("#q").oninput=e=>{Q.terms=e.target.value.toLowerCase().split(/\s+/).filter(Boolean);document.querySelectorAll("table,.bars").forEach(t=>t.redraw?.())};
-document.addEventListener("keydown",e=>{const q=$("#q");
+function searchBox(){ // one query, shown above the leaderboard and above the runs tables
+ const q=el("input",{type:"search",className:"q",placeholder:"search models   /",autocomplete:"off",spellcheck:false,value:Q.text});
+ q.setAttribute("aria-label","Search models, backends, prompts, datasets");
+ q.oninput=()=>{Q.text=q.value;Q.terms=q.value.toLowerCase().split(/\s+/).filter(Boolean);
+  document.querySelectorAll("input.q").forEach(o=>{if(o!==q)o.value=q.value});document.querySelectorAll("table,.bars").forEach(t=>t.redraw?.())};
+ return el("div",{className:"qrow"}).appendChild(q).parentNode}
+document.addEventListener("keydown",e=>{const q=[...document.querySelectorAll("input.q")].find(x=>x.offsetParent);if(!q)return;
  if(e.key==="/"&&document.activeElement!==q&&!/input|select|textarea/i.test(document.activeElement?.tagName)){e.preventDefault();q.focus()}
- else if(e.key==="Escape"&&document.activeElement===q){q.value="";q.oninput({target:q});q.blur()}});
+ else if(e.key==="Escape"&&document.activeElement===q){q.value="";q.oninput();q.blur()}});
 // a dataset header opens a card with its Hugging Face repo and pinned revision (hover; it stays while the pointer is on it)
 const pop=el("div",{className:"pop"});(document.querySelector(".viz-root")||document.body).append(pop);let popT=0;
 pop.onmouseenter=()=>clearTimeout(popT);pop.onmouseleave=()=>{popT=setTimeout(()=>pop.classList.remove("on"),150)};
@@ -350,6 +355,7 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   const ds=ev.datasets.includes(dpick.value)?dpick.value:"";
   dpick.replaceChildren(el("option",{value:"",textContent:"all"}),...ev.datasets.map(d=>el("option",{value:d,textContent:d})));dpick.value=ds;
   const all=ev.splits[split]||[];body.replaceChildren();
+  MCOL.clear();all.forEach((r,i)=>MCOL.set(r.serve,PAL[i%PAL.length]));
   const sel=chosen(ev);chips.hidden=!!ds;
   chips.replaceChildren(el("span",{className:"lab",textContent:"Averaged"}),...ev.datasets.map(d=>{
    const b=el("button",{textContent:d});b.setAttribute("aria-pressed",sel.includes(d));
@@ -371,6 +377,7 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   const colm=el("div",{className:"colm"});g.append(colm);
   const card=el("div",{className:"card"});colm.append(card);
   card.append(el("h2",{textContent:"Leaderboard"}),el("div",{className:"key"},`<span><span class="dot" style="background:var(--good)"></span>≥ 80</span><span><span class="dot" style="background:var(--warn)"></span>60–80</span><span><span class="dot" style="background:var(--bad)"></span>&lt; 60</span><span>hairline = 95% CI</span><span>${ds?`${esc(ds)} score, then its metrics and categories`:`mean of ${sel.length} benchmarks; judge not averaged in`}</span>`));
+  card.append(searchBox());
   // between score and judge: every dataset, or one dataset's metrics then its categories (each name once)
   const mid=[];
   if(!ds)sel.forEach(d=>mid.push({t:d,ds:d,key:`scores.${d}.score`,get:r=>r.scores[d]?.score,ci:r=>r.scores[d]?.ci}));
@@ -398,37 +405,53 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   colm.append(bars(ev,rows,mid,ds,rad))}
  pick.onchange=draw;dpick.onchange=draw;draw()}
 
+// a model keeps one colour everywhere (bars, radar): its place in the full ranking when the page is built, never its
+// rank in a filtered view. The reference chart's palette, in its order.
+const PAL=["#3B5FD9","#E2C384","#86AFD9","#E0969C","#9C9C9C","#94C29C","#BBA6D8","#8ACBC8","#D3AA84","#7B9FD2"];
+const MCOL=new Map(), mcol=s=>MCOL.get(s)||"var(--ink-3)";
+// a dataset keeps one pattern: the default benchmarks first (solid, ///, \\\, crosshatch), then the rest
+const PATS=["solid","fwd","back","cross","dots","horiz","vert","tint"];
+function patOrder(ev){const DEF=["olmocr","omnidocbench","omniparse","parsebench"];
+ return [...DEF.filter(d=>ev.datasets.includes(d)),...ev.datasets.filter(d=>!DEF.includes(d))]}
+function patDef(id,kind,c){
+ const L=(d)=>`<path d="${d}" stroke="${c}" stroke-width="1.6"/>`, bg=`<rect width="8" height="8" fill="${c}" fill-opacity=".32"/>`;
+ const body={fwd:L("M-2,2l4,-4M0,8l8,-8M6,10l4,-4"),back:L("M-2,6l4,4M0,0l8,8M6,-2l4,4"),cross:L("M0,8l8,-8M0,0l8,8"),
+  dots:`<circle cx="2" cy="2" r="1.3" fill="${c}"/><circle cx="6" cy="6" r="1.3" fill="${c}"/>`,horiz:L("M0,4h8"),vert:L("M4,0v8"),tint:""}[kind]??"";
+ return `<pattern id="${id}" width="8" height="8" patternUnits="userSpaceOnUse">${bg}${body}</pattern>`}
+const patFill=(id,kind,c)=>kind==="solid"?c:`url(#${id})`;
+
 // grouped bars: one group per model (ranked as the leaderboard), one bar per benchmark (or, for one dataset, per metric
 // and category); the leader banded, every group's mean a tick and its one label, each bar's value on hover
 function bars(ev,rows,mid,ds,rad){
- const card=el("div",{className:"card bars"}), ser=mid.filter(c=>!/ratio/i.test(c.t));
- const ORDER=[1,2,4,7,5,3,8,6]; // palette order by dataset position: any default subset stays far apart in hue
- const hue=(c,i)=>`var(--s${ORDER[(ds?i:Math.max(0,ev.datasets.indexOf(c.t)))%8]})`;
+ const card=el("div",{className:"card bars"}), ser=mid.filter(c=>!/ratio/i.test(c.t)), order=patOrder(ev);
+ const pat=(c,i)=>PATS[(ds?i:Math.max(0,order.indexOf(c.t)))%PATS.length];
+ const sw=(kind,i)=>`<svg width="16" height="11" class="psw"><defs>${patDef("lg"+i,kind,"#8f8f8f")}</defs><rect width="16" height="11" rx="2" fill="${patFill("lg"+i,kind,"#8f8f8f")}"/></svg>`;
  card.append(el("h2",{textContent:ds?`${ds}, by metric and category`:"Scores by benchmark"}),
-  el("div",{className:"key"},ser.map((c,i)=>`<span><span class="sw" style="background:${hue(c,i)}"></span>${esc(c.t)}</span>`).join("")+
-   `<span><span class="sw mean"></span>mean</span><span><span class="sw lead"></span>leader's mean</span>`));
+  el("div",{className:"key"},ser.map((c,i)=>`<span>${sw(pat(c,i),i)}${esc(c.t)}</span>`).join("")+
+   `<span><span class="sw mean"></span>mean</span><span><span class="sw lead"></span>leader's mean</span><span>colour = model</span>`));
  const wrap=el("div",{className:"barsvg"});card.append(wrap);
  function draw(){
   const rs=rows.filter(match).filter(r=>r.mean!=null||ser.some(c=>c.get(r)!=null));
   if(!rs.length){wrap.innerHTML=`<p class="empty">Nothing to chart.</p>`;return}
   const reach=Math.max(...rs.map(r=>r.serve.length))*6.6*Math.SQRT1_2; // a 45° label's horizontal and vertical extent
   const W=1200,T=30,gw0=(W-40)/rs.length,L=Math.max(34,Math.round(reach-gw0/2+8)),B=Math.round(reach+28),H=300+B,pw=W-L-6,ph=H-T-B,y=v=>T+ph*(1-Math.max(0,Math.min(100,v))/100);
-  const gw=pw/rs.length,bw=Math.max(3,Math.min(16,(gw*.8-2*(ser.length-1))/ser.length)),cw=ser.length*bw+2*(ser.length-1);
+  const gw=pw/rs.length,bw=Math.max(3,Math.min(18,(gw*.8-2*(ser.length-1))/ser.length)),cw=ser.length*bw+2*(ser.length-1);
   const lead=rs.filter(r=>r.mean!=null).sort((a,b)=>b.mean-a.mean)[0];
-  let o=`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Scores per model and benchmark">`;
+  let defs="", o="";
   for(const v of [0,20,40,60,80,100])o+=`<line x1="${L}" x2="${W-6}" y1="${y(v)}" y2="${y(v)}" stroke="var(--hair)" stroke-width="1"/>`+
    `<text x="${L-8}" y="${y(v)+4}" text-anchor="end" class="ax">${v}</text>`;
-  rs.forEach((r,gi)=>{const x0=L+gi*gw, bx=x0+(gw-cw)/2, top=r===lead;
-   o+=`<g class="grp" data-serve="${esc(r.serve)}"><rect x="${x0}" y="${T}" width="${gw}" height="${ph}" fill="${top?"rgba(30,90,202,.07)":"transparent"}"/>`;
+  rs.forEach((r,gi)=>{const x0=L+gi*gw, bx=x0+(gw-cw)/2, top=r===lead, col=mcol(r.serve);
+   o+=`<g class="grp" data-serve="${esc(r.serve)}"><rect x="${x0}" y="${T}" width="${gw}" height="${ph}" fill="${top?"rgba(59,95,217,.08)":"transparent"}"/>`;
    let hi=r.mean??0;
    ser.forEach((c,i)=>{const v=c.get(r);if(v==null)return;hi=Math.max(hi,v);
-    const x=bx+i*(bw+2),yt=y(v),yb=y(0),rr=Math.min(3,bw/2,yb-yt);
-    o+=`<path d="M${x},${yb}V${yt+rr}Q${x},${yt} ${x+rr},${yt}H${x+bw-rr}Q${x+bw},${yt} ${x+bw},${yt+rr}V${yb}Z" fill="${hue(c,i)}" data-tip="${esc(r.serve)} · ${esc(c.t)} ${f(v)}"/>`});
+    const x=bx+i*(bw+2),yt=y(v),yb=y(0),rr=Math.min(3,bw/2,yb-yt),id=`bp${gi}_${i}`,k=pat(c,i);
+    if(k!=="solid")defs+=patDef(id,k,col);
+    o+=`<path d="M${x},${yb}V${yt+rr}Q${x},${yt} ${x+rr},${yt}H${x+bw-rr}Q${x+bw},${yt} ${x+bw},${yt+rr}V${yb}Z" fill="${patFill(id,k,col)}" stroke="${col}" stroke-width="${k==="solid"?0:1}" data-tip="${esc(r.serve)} · ${esc(c.t)} ${f(v)}"/>`});
    if(r.mean!=null)o+=`<line x1="${bx-3}" x2="${bx+cw+3}" y1="${y(r.mean)}" y2="${y(r.mean)}" stroke="var(--ink-1)" stroke-width="1.5" data-tip="${esc(r.serve)} · mean ${f(r.mean)}"/>`+
     `<text x="${x0+gw/2}" y="${y(hi)-8}" text-anchor="middle" class="mv${top?" top":""}">${f(r.mean)}</text>`;
    o+=`<text transform="translate(${x0+gw/2+3},${H-B+14}) rotate(-45)" text-anchor="end" class="xl${top?" top":""}">${esc(r.serve)}</text></g>`});
   if(lead)o+=`<line x1="${L}" x2="${W-6}" y1="${y(lead.mean)}" y2="${y(lead.mean)}" class="ld" stroke-width="1" stroke-dasharray="4 4" opacity=".6"/>`;
-  wrap.innerHTML=o+"</svg>";
+  wrap.innerHTML=`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Scores per model and benchmark"><defs>${defs}</defs>${o}</svg>`;
   wrap.querySelectorAll("g.grp").forEach(g=>{g.onmouseenter=()=>{wrap.classList.add("hov");g.classList.add("on");rad?.focus(g.dataset.serve)};
    g.onmouseleave=()=>{wrap.classList.remove("hov");g.classList.remove("on");rad?.focus(null)}})}
  card.redraw=draw;draw();return card}
@@ -450,7 +473,7 @@ function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relativ
  pickd.slice(0,4).forEach(r=>slots.set(r.serve,free.shift()));
  const leg=el("div",{className:"legend"});wrap.append(leg);
  function drawLegend(){leg.replaceChildren(...rows.map(r=>{const on=slots.has(r.serve);
-  const lab=el("label",{},`<input type="checkbox" ${on?"checked":""} ${!on&&!free.length?"disabled":""}><span><span class="sw" style="background:${on?`var(--s${slots.get(r.serve)})`:"var(--hair)"}"></span> ${esc(r.serve)}</span>`);
+  const lab=el("label",{},`<input type="checkbox" ${on?"checked":""} ${!on&&!free.length?"disabled":""}><span><span class="sw" style="background:${on?mcol(r.serve):"var(--hair)"}"></span> ${esc(r.serve)}</span>`);
   lab.onmouseenter=()=>focus(r.serve);lab.onmouseleave=()=>focus(null);
   lab.querySelector("input").onchange=e=>{if(e.target.checked){slots.set(r.serve,free.shift())}else{free.push(slots.get(r.serve));free.sort((a,b)=>a-b);slots.delete(r.serve)}drawLegend();drawPlot()};return lab}))}
  let preview=null;
@@ -462,7 +485,7 @@ function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relativ
    let g=`<g class="s" data-serve="${esc(r.serve)}"><polygon points="${ps.map(p=>p.join(",")).join(" ")}" fill="none" stroke="${c}" stroke-width="1.75" stroke-linejoin="round"${dash?' stroke-dasharray="4 3"':""}/>`;
    ps.forEach((p,i)=>{const v=axes[i].get(r);g+=`<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="${c}" stroke="var(--surface-1)" stroke-width="1.5"/><circle cx="${p[0]}" cy="${p[1]}" r="10" fill="transparent" data-tip="${esc(r.serve)} · ${esc(axes[i].k)}: ${v==null?"—":f(v)}"/>`});
    return g+"</g>"};
-  for(const r of rows)if(slots.has(r.serve))s+=series(r,`var(--s${slots.get(r.serve)})`);
+  for(const r of rows)if(slots.has(r.serve))s+=series(r,mcol(r.serve));
   if(preview&&!slots.has(preview.serve))s+=series(preview,"var(--ink-1)",1);  // a hovered row not on the radar
   svg.innerHTML=s}
  function focus(serve){ // one serve at full strength, every other at 15%; an unselected one drawn dashed
@@ -474,7 +497,7 @@ function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relativ
  drawLegend();drawPlot();return {card,focus}}
 
 // ── runs tab ──
-function runsTab(){const root=$("#runs");
+function runsTab(){const root=$("#runs");root.append(searchBox());
  const ev=D.evals.flatMap(e=>e.perf.map(p=>({...p,eval:e.name})));
  if(ev.length){const c=el("div",{className:"card"});root.append(c);
   c.append(el("h2",{textContent:"Eval throughput"}),el("div",{className:"key",textContent:"per serve × dataset · live calls only"}));
