@@ -163,3 +163,40 @@ def test_a_cached_request_is_a_bench_request_span_with_its_results(tmp_path, cap
         assert attrs["cached"] is True and attrs["completion_tokens"] == 3 and attrs["chars"] == 5
     finally:
         trace._LOGFIRE = None
+
+
+def test_json_replies_parse_leniently_and_windows_merge():
+    from vlmbench.evals.jsonx import merge, parse
+
+    assert parse('```json\n{"a": 1}\n```') == {"a": 1}
+    assert parse('Here you go: {"a": [1, 2]} hope it helps') == {"a": [1, 2]}
+    assert parse("no json") is None
+    a = {"name": "ACME", "rows": [{"x": 1}], "meta": {"date": None}}
+    b = {"name": "other", "rows": [{"x": 2}], "meta": {"date": "2026-01-01"}}
+    assert merge(a, b) == {"name": "ACME", "rows": [{"x": 1}, {"x": 2}], "meta": {"date": "2026-01-01"}}
+
+
+def test_a_document_is_read_in_page_windows(tmp_path):
+    from vlmbench.evals.runner import windows
+
+    s = load(
+        _write(
+            tmp_path,
+            "s.yaml",
+            "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\nrequest: {pages_per_call: 2}\n",
+        )
+    )
+    ws = windows(s, [tmp_path / f"p{i}.png" for i in range(5)], "schema")
+    assert [len(w) for w, _ in ws] == [2, 2, 1] and ws[2][1].endswith("pages 5-5 of 5.")
+    whole = load(_write(tmp_path, "w.yaml", "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\n"))
+    assert windows(whole, [tmp_path / "p.png"] * 3, "schema") == [([tmp_path / "p.png"] * 3, "schema")]
+
+
+def test_longarray_scores_rows_order_insensitively():
+    from vlmbench.evals.datasets.longarray import score_document
+
+    schema = {"properties": {"t": {"type": "array", "items": {"properties": {"a": {}, "b": {}}}}}}
+    gold = {"t": [{"a": 1, "b": "x"}, {"a": 2, "b": "y"}]}
+    assert score_document({"t": [{"a": 2, "b": "y"}, {"a": 1, "b": "x"}]}, gold, schema, {}) == (4, 4)
+    assert score_document({"t": [{"a": 1, "b": "x"}]}, gold, schema, {}) == (2, 4)  # a dropped row scores 0
+    assert score_document({"value": {"t": []}}, gold, schema, {}) == (0, 4)

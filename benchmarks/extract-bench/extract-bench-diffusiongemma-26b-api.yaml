@@ -1,0 +1,6 @@
+kind: Serve
+extends: ../../configs/diffusiongemma-26b-api.yaml
+request:
+  prompt: prompts/extract-json-v1.md  # no json_object mode and no temperature for a diffusion model
+  pages_per_call: 2  # the gateway still cuts replies at 4,096 tokens: two dense pages fit
+  max_tokens: 16384

@@ -14,34 +14,88 @@ from vlmbench.evals import serving
 from vlmbench.evals.cache import DiskCache
 from vlmbench.evals.client import Client
 from vlmbench.evals.config import Eval, Metric, Serve, Settings, bench_files, expand, load
-from vlmbench.evals.data import Item, render, sample
+from vlmbench.evals.data import Item, render, render_doc, sample
 from vlmbench.evals.datasets import DATASETS, normalize
+from vlmbench.evals.jsonx import merge, parse
 from vlmbench.evals.results import SCHEMA, interval, performance, write
 from vlmbench.evals.trace import configure, record, span
 from vlmbench.version import __version__
 
 
-def pages(ev: Eval, names: list[str], split: str, home: Path) -> dict[str, list[tuple[Item, Path]]]:
-    out = {}
+def pages(ev: Eval, names: list[str], split: str, home: Path, samples: int | None = None):
+    """(todo, instructions): per dataset, its sampled items with their page (or a document's pages), and a
+    document benchmark's per-item instruction."""
+    todo, instr = {}, {}
     for d in names:
-        spec = ev.datasets[d]
-        its = sample(DATASETS[spec.kind].items(spec), spec.samples, split)
-        out[d] = [(it, render(it, home / "pages" / d)) for it in its]
-    return out
+        spec, mod = ev.datasets[d], DATASETS[ev.datasets[d].kind]
+        its = sample(mod.items(spec), spec.samples if samples is None else samples, split)
+        if getattr(mod, "DOCUMENT", False):
+            from concurrent.futures import ProcessPoolExecutor
+
+            with ProcessPoolExecutor(16) as pool:  # pdfium is not thread-safe; pages are rendered once, then cached
+                docs = list(pool.map(render_doc, its, [home / "pages" / d] * len(its), [spec.long_edge] * len(its)))
+            todo[d] = list(zip(its, docs))
+            instr[d] = {it.id: mod.instruction(spec, it) for it in its}
+        else:
+            todo[d] = [(it, render(it, home / "pages" / d)) for it in its]
+    return todo, instr
 
 
-async def _predict(client: Client, serve: Serve, todo: dict[str, list[tuple[Item, Path]]], log) -> dict:
-    """Each dataset in turn at the serve's concurrency, so its wall time is its own."""
-    sem, out = asyncio.Semaphore(serve.request.concurrency), {}
+def windows(serve: Serve, pngs: list[Path], text: str) -> list[tuple[list[Path], str]]:
+    """A document's requests: `pages_per_call` pages each, every one told which pages it holds."""
+    n, k = len(pngs), serve.request.pages_per_call or len(pngs)
+    if n <= k:
+        return [(pngs, text)]
+    return [(pngs[i : i + k], f"{text}\n\nThese are pages {i + 1}-{min(i + k, n)} of {n}.") for i in range(0, n, k)]
 
-    async def one(d: str, it: Item, png: Path) -> dict:
+
+async def _document(client: Client, serve: Serve, sem, item: str, pngs: list[Path], text: str) -> dict:
+    """One reply per document: each window's JSON merged in page order; tokens, cost and errors summed."""
+
+    async def call(w: list[Path], t: str, i: int) -> dict:
         async with sem:
-            return await client.complete(serve, png, item=f"{d}/{it.id}")
+            return await client.complete(serve, w, t, item=f"{item}#w{i}")
+
+    t0 = time.perf_counter()
+    parts = await asyncio.gather(*(call(w, t, i) for i, (w, t) in enumerate(windows(serve, pngs, text))))
+    merged, parsed = {}, 0
+    for r in parts:
+        if (v := parse(r.get("text"))) is not None:
+            merged, parsed = merge(merged, v), parsed + 1
+    total = lambda k: sum(r.get(k) or 0 for r in parts)  # noqa: E731
+    rec = {
+        "text": json.dumps(merged, ensure_ascii=False) if parsed else "",
+        "finish": "length" if any(r.get("finish") == "length" for r in parts) else "stop",
+        "latency_s": round(time.perf_counter() - t0, 3),
+        "ttft_s": min((r["ttft_s"] for r in parts if r.get("ttft_s") is not None), default=None),
+        "prompt_tokens": total("prompt_tokens"),
+        "completion_tokens": total("completion_tokens"),
+        "reasoning_tokens": total("reasoning_tokens"),
+        "cost_usd": total("cost_usd") or None,
+        "cached": all(r.get("cached") for r in parts),
+        "pages": len(pngs),
+        "windows": len(parts),
+        "windows_unparsed": len(parts) - parsed,
+    }
+    if all("error" in r for r in parts):
+        rec["error"] = parts[0]["error"]
+    return rec
+
+
+async def _predict(client: Client, serve: Serve, todo: dict, log, instr: dict | None = None) -> dict:
+    """Each dataset in turn at the serve's concurrency, so its wall time is its own."""
+    sem, out, instr = asyncio.Semaphore(serve.request.concurrency), {}, instr or {}
+
+    async def one(d: str, it: Item, image) -> dict:
+        if isinstance(image, list):
+            return await _document(client, serve, sem, f"{d}/{it.id}", image, instr[d][it.id])
+        async with sem:
+            return await client.complete(serve, image, item=f"{d}/{it.id}")
 
     for d, its in todo.items():
         with span("vlmbench.dataset", dataset=d, serve=serve.name, model=serve.model, config_id=serve.config_id) as s:
             t0 = time.perf_counter()
-            recs = await asyncio.gather(*(one(d, it, png) for it, png in its))
+            recs = await asyncio.gather(*(one(d, it, image) for it, image in its))
             out[d] = (recs, time.perf_counter() - t0)
             record(
                 s,
@@ -52,7 +106,7 @@ async def _predict(client: Client, serve: Serve, todo: dict[str, list[tuple[Item
                 wall_s=round(out[d][1], 2),
             )
         bad = sum("error" in r for r in recs)
-        log(f"{serve.name} · {d}: {len(recs)} pages, {sum(r['cached'] for r in recs)} cached, {bad} errors")
+        log(f"{serve.name} · {d}: {len(recs)} items, {sum(r['cached'] for r in recs)} cached, {bad} errors")
     return out
 
 
@@ -81,34 +135,44 @@ async def _judge(client: Client, metric: Metric, judge: Serve, sem: asyncio.Sema
         return scored
 
 
-def run(bench: Path, only: list[str] | None, datasets: list[str] | None, split: str, refresh: bool, log=print) -> Path:
+def run(
+    bench: Path, only: list[str] | None, datasets: list[str] | None, split: str, refresh: bool, log=print, samples=None
+) -> Path:
     """One event loop for the whole run: the pacing locks and HTTP clients are bound to it."""
-    return asyncio.run(_run(bench, only, datasets, split, refresh, log))
+    return asyncio.run(_run(bench, only, datasets, split, refresh, log, samples))
 
 
-async def _run(bench: Path, only, datasets, split: str, refresh: bool, log) -> Path:
+async def _run(bench: Path, only, datasets, split: str, refresh: bool, log, samples=None) -> Path:
     configure()
     home = Settings().home
     ev, serves, metrics = bench_files(bench)
     names = expand(only, bench, serves)
     ds_names = datasets or list(ev.datasets)
-    todo = pages(ev, ds_names, split, home)
+    todo, instr = pages(ev, ds_names, split, home, samples)
     client = Client(DiskCache(home / "cache.sqlite"), refresh)
     started = datetime.now(UTC)
     replies: dict[str, dict] = {}
 
     async def remote():
-        got = await asyncio.gather(*(_predict(client, serves[n], todo, log) for n in names if not serves[n].local))
+        got = await asyncio.gather(
+            *(_predict(client, serves[n], todo, log, instr) for n in names if not serves[n].local)
+        )
         return dict(zip([n for n in names if not serves[n].local], got))
 
     with span("vlmbench.eval", eval=ev.name, split=split, serves=names, datasets=ds_names) as root:
         replies |= await remote()
         for n in [n for n in names if serves[n].local]:
-            every = all(client.cached(serves[n], png) for its in todo.values() for _, png in its)
+            every = all(
+                client.cached(serves[n], w, t)
+                for d, its in todo.items()
+                for it, image in its
+                for w, t in (windows(serves[n], image, instr[d][it.id]) if isinstance(image, list) else [(image, None)])
+            )
             with serving.served(serves[n]) if not every else contextlib.nullcontext():  # no GPU when all is cached
-                replies[n] = await _predict(client, serves[n], todo, log)
+                replies[n] = await _predict(client, serves[n], todo, log, instr)
         judges = {m.name: (m, load(m.judge)) for m in metrics}
-        keys = [(n, d, m) for n in names for d in ds_names for m in judges]
+        page_ds = [d for d in ds_names if not getattr(DATASETS[ev.datasets[d].kind], "DOCUMENT", False)]
+        keys = [(n, d, m) for n in names for d in page_ds for m in judges]  # a judge reads one page image
         sems = {m: asyncio.Semaphore(j.request.concurrency) for m, (_, j) in judges.items()}  # one per judge
         judged = dict(
             zip(
@@ -149,6 +213,8 @@ async def _run(bench: Path, only, datasets, split: str, refresh: bool, log) -> P
                 )
                 unit_rows += [base | {"item": i, "metric": spec.kind, "units": u} for i, u in g["units"].items()]
                 for m, judge in judges.values():
+                    if (n, d, m.name) not in judged:
+                        continue
                     ju = judged[n, d, m.name]
                     js = 100 * sum(v for v, _ in ju.values()) / len(ju) if ju else 0.0
                     jlo, jhi = interval([(js, {i: {"judge": u} for i, u in ju.items()})])

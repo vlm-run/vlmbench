@@ -4,12 +4,20 @@ A module has `REPO`, `items(spec) -> list[Item]` (ids are the benchmark's own),
 `score(spec, items, replies) -> {"score", "metrics", "by_category", "units"}` (`replies` maps an item id to the
 reply text; `units[item][group] = [passed, tests]` rebuilds the score for bootstrap intervals), and optionally
 `normalize(text) -> text`: the benchmark's own conventions, applied to every model's reply before grading.
+A document-level benchmark (`DOCUMENT = True`) sends every page of an item, with `instruction(spec, item)` (its
+JSON schema) after the serve's prompt.
 A model's own output format is the serve's `postprocess`, applied once when the reply arrives.
 """
 
-from vlmbench.evals.datasets import olmocr_bench, omniparse, parsebench
+from vlmbench.evals.datasets import extractbench, longarray, olmocr_bench, omniparse, parsebench
 
-DATASETS = {"omniparse": omniparse, "olmocr_bench": olmocr_bench, "parsebench": parsebench}
+DATASETS = {
+    "omniparse": omniparse,
+    "olmocr_bench": olmocr_bench,
+    "parsebench": parsebench,
+    "extractbench": extractbench,
+    "longarray": longarray,
+}
 
 
 def normalize(kind: str, text: str) -> str:

@@ -76,11 +76,16 @@ def _post(ref: str):
     return getattr(importlib.import_module(mod), fn)
 
 
-def reply_key(serve: Serve, image: Path, text: str | None = None) -> str:
-    """Everything that changes the reply: the serve's config id, the page bytes, any extra text (a judge's)."""
+def _images(image: Path | list[Path]) -> list[Path]:
+    return image if isinstance(image, list) else [image]
+
+
+def reply_key(serve: Serve, image: Path | list[Path], text: str | None = None) -> str:
+    """Everything that changes the reply: the serve's config id, the pages' bytes, any extra text."""
     import hashlib
 
-    return key(serve.config_id, hashlib.sha256(image.read_bytes()).hexdigest(), text)
+    digests = [hashlib.sha256(p.read_bytes()).hexdigest() for p in _images(image)]
+    return key(serve.config_id, digests[0] if len(digests) == 1 else digests, text)
 
 
 class Client:
@@ -89,7 +94,7 @@ class Client:
         self.calls: dict[str, list[dict]] = defaultdict(list)
         """Live (uncached) calls per serve, for the performance table."""
 
-    def cached(self, serve: Serve, image: Path, text: str | None = None) -> bool:
+    def cached(self, serve: Serve, image: Path | list[Path], text: str | None = None) -> bool:
         if self.refresh:
             return False
         try:
@@ -98,7 +103,9 @@ class Client:
         except KeyError:
             return False
 
-    async def complete(self, serve: Serve, image: Path, text: str | None = None, item: str | None = None) -> dict:
+    async def complete(
+        self, serve: Serve, image: Path | list[Path], text: str | None = None, item: str | None = None
+    ) -> dict:
         """The serve's reply to one page (and `text`, appended after the serve's own prompt when given)."""
         k = reply_key(serve, image, text)
         with span("vlmbench.request", serve=serve.name, model=serve.model, config_id=serve.config_id, item=item) as s:
@@ -116,12 +123,12 @@ class Client:
             record(s, **{x: v for x, v in rec.items() if x != "text"}, chars=len(rec.get("text") or ""))
             return rec
 
-    async def _call(self, serve: Serve, image: Path, text: str | None, attempts: int = 3) -> dict:
+    async def _call(self, serve: Serve, image: Path | list[Path], text: str | None, attempts: int = 3) -> dict:
         from openai import RateLimitError
 
         r = serve.request
         client = self.clients.setdefault(serve.name, _client(serve))
-        parts = [{"type": "image_url", "image_url": {"url": data_url(image, r.long_edge)}}]
+        parts = [{"type": "image_url", "image_url": {"url": data_url(p, r.long_edge)}} for p in _images(image)]
         prompt = "\n\n".join(x for x in (r.prompt, text) if x)
         if prompt and not (r.method and not text):
             parts.append({"type": "text", "text": prompt})
@@ -146,7 +153,7 @@ class Client:
                     return {"error": f"{type(e).__name__}: {e}"[:400], "latency_s": time.perf_counter() - t0}
                 await asyncio.sleep(2 * tries)
         if serve.postprocess and rec["text"]:
-            rec["text"] = _post(serve.postprocess)(rec["text"], str(image))
+            rec["text"] = _post(serve.postprocess)(rec["text"], str(_images(image)[0]))
         rec["text"] = clean(rec["text"])
         return rec
 

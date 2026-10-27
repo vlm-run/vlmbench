@@ -61,6 +61,9 @@ class Request(Strict):
     timeout: float = 600
     long_edge: int = 2048
     """Pages are rendered once at 2,048 px; a smaller value downsizes before sending."""
+    pages_per_call: int | None = None
+    """A document is read this many pages per request, the windows' JSON merged (arrays concatenated, scalars
+    the first value found); default: the whole document in one request."""
 
 
 class Serve(Strict):
@@ -89,14 +92,18 @@ class Serve(Strict):
         return isinstance(self.backend, Vllm)
 
 
-Kind = Literal["omniparse", "olmocr_bench", "parsebench"]
+Kind = Literal["omniparse", "olmocr_bench", "parsebench", "extractbench", "longarray"]
 
 
 class DatasetSpec(Strict):
     kind: Kind
     revision: str
     samples: int = 10
-    """Pages per split: `test` reports, `dev` (the next, disjoint pages) is for tuning prompts."""
+    """Items per split: `test` reports, `dev` (the next, disjoint items) is for tuning prompts; 0 is every item."""
+    subsets: list[str] | None = None
+    """The benchmark's own sub-splits to draw from (e.g. ExtractBench `short`); default all."""
+    long_edge: int = 2048
+    """Render size of each page, in px."""
 
 
 class Eval(Strict):

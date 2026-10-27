@@ -1,0 +1,12 @@
+kind: Serve
+extends: ../../configs/qwen3.8-27b-api.yaml
+request:
+  prompt: prompts/extract-json-v1.md
+  pages_per_call: 2  # the gateway still cuts replies at 4,096 tokens: two dense pages fit
+  max_tokens: 16384
+  temperature: 0.0
+  extra_body:
+    chat_template_kwargs:
+      enable_thinking: false
+    response_format:
+      type: json_object

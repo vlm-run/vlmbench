@@ -45,7 +45,8 @@ evals = [
     "httpx>=0.27",
     "logfire>=4.0",
     "omni-parse-bench[harness]==0.2.0",
-    "parse-bench==1.0.4; python_version >= '3.12'",  # ParseBench grading needs Python 3.12+
+    "parse-bench==1.0.4; python_version >= '3.12'",  # ParseBench and ExtractBench grading need Python 3.12+
+    "llama-extract-bench==1.0.0; python_version >= '3.12'",
     "olmocr==0.4.27",
     "playwright==1.62.0",
 ]

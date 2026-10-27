@@ -1,0 +1,23 @@
+# Schema-guided JSON extraction from whole documents: ExtractBench (enterprise documents, 1 to 200+ pages) and
+# LongArray-Extract (one array of up to 2,205 rows per document), each graded by its own published scorer.
+kind: Eval
+serves:
+  - qwen3.8-27b-api
+  - qwen3.5-0.8b-api
+  - gemma4-26b-api
+  - diffusiongemma-26b-api
+  - kimi-k3-api
+  - minimax-m3-api
+  - qwen3.5-9b
+  - gemma4-26b
+datasets:
+  extractbench:
+    kind: extractbench
+    revision: f9b910906cd7e73cc9eb5379a8d5d935c67b92c4
+    samples: 10
+    long_edge: 1600
+  longarray:
+    kind: longarray
+    revision: f2ae30264ecd942fa0a9b9e787bb42e1e2577184
+    samples: 10
+    long_edge: 1600

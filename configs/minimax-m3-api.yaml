@@ -1,0 +1,3 @@
+kind: Serve
+extends: _vlmrun-gateway.yaml
+model: minimax/minimax-m3
