@@ -181,7 +181,7 @@ td.name{font-family:"Space Grotesk",sans-serif;font-size:14px;font-weight:500}
 td.name .meta{display:block;font:400 11px "Geist Mono",monospace;color:var(--ink-3);margin-top:1px}
 .cell{display:flex;align-items:center;gap:10px;justify-content:flex-end}
 .meter{position:relative;display:inline-block;width:84px;height:3px}.meter.sm{width:48px}
-table.dense th,table.dense td{padding-left:7px;padding-right:7px}table.dense th{letter-spacing:.06em;white-space:normal;max-width:72px;line-height:1.3;vertical-align:bottom}
+table.dense th,table.dense td{padding-left:6px;padding-right:6px}table.dense th{letter-spacing:.04em;white-space:normal;line-height:1.3;vertical-align:bottom}
 table.dense .dot{margin-right:6px}
 table.dense td.name,table.dense th:nth-child(2){position:sticky;left:0;z-index:1;background:var(--surface-1);box-shadow:8px 0 8px -8px var(--hair)}
 table.dense tr:hover td.name{background:var(--hover)}
@@ -280,8 +280,8 @@ function accTab(){const root=$("#acc");root.replaceChildren();
     mid.push({t:k,key:`scores.${ds}.${part}.${k}`,get:r=>r.scores[ds]?.[part]?.[k],cat:part==="cats"})}}
   const ratio=k=>/ratio/i.test(k);
   const cols=[{t:"#"},{t:"model",key:"serve",l:1},{t:"backend",key:"backend",l:1},{t:ds?"score":"mean",key:"mean"},...mid,
-   {t:"judge",key:"judge"},{t:"items/s",key:"pages_s"},...(ds?[]:[{t:"$ / 1k",key:"usd_1k"}]),{t:"cost",key:"cost"}];
-  const dense=mid.length>5, tbl=el("table",{className:dense?"dense":""});tbl.createTHead().append(el("tr",{},cols.map(c=>`<th class="${c.l?"l":""}${c.cat?" cat":""}"${c.cat?' title="category"':""}>${esc(dense?c.t.replace(/_/g," "):c.t)}</th>`).join("")));tbl.createTBody();card.append(tbl);
+   {t:"judge",key:"judge"},{t:"items/s",key:"pages_s"},...(ds||mid.length>3?[]:[{t:"$ / 1k",key:"usd_1k"}]),{t:"cost",key:"cost"}];
+  const dense=mid.length>3, tbl=el("table",{className:dense?"dense":""});tbl.createTHead().append(el("tr",{},cols.map(c=>`<th class="${c.l?"l":""}${c.cat?" cat":""}"${c.cat?' title="category"':""}>${esc(dense?c.t.replace(/_/g," "):c.t)}</th>`).join("")));tbl.createTBody();card.append(tbl);
   let rad=null;
   sortable(tbl,rows,cols,(r,i)=>hover(el("tr",{},`<td class="rank">${String(i+1).padStart(2,"0")}</td>`+
    `<td class="l name">${esc(r.serve)}<span class="meta">${esc(r.prompt||"")}</span></td><td class="l note">${esc(r.backend)}</td>`+
@@ -291,7 +291,7 @@ function accTab(){const root=$("#acc");root.replaceChildren();
     if(dense)return `<td><span class="cell" data-tip="${esc(c.t)} ${f(v)}">${v!=null?`<span class="dot" style="background:${tone(v)}"></span>`:""}${f(v)}</span></td>`;
     return `<td><span class="cell" data-tip="${esc(c.t)} ${f(v)}${ci?` · 95% CI ${f(ci[0])}–${f(ci[1])}`:""}">${f(v)}${v!=null?meter(v,ci,1):""}</span></td>`}).join("")+
    `<td><span class="cell" data-tip="LLM judge, 0–100">${f(r.judge)}${r.judge!=null?meter(r.judge,null,1):""}</span></td>`+
-   `<td>${f(r.pages_s,2)}</td>${ds?"":`<td>${r.usd_1k==null?"—":f(r.usd_1k,2)}</td>`}<td>${usd(r.cost,r.gpu_rate)}</td>`),r));
+   `<td>${f(r.pages_s,2)}</td>${ds||dense?"":`<td>${r.usd_1k==null?"—":f(r.usd_1k,2)}</td>`}<td>${usd(r.cost,r.gpu_rate)}</td>`),r));
   function hover(tr,r){tr.onmouseenter=()=>rad?.focus(r.serve);tr.onmouseleave=()=>rad?.focus(null);return tr}
   rad=radar(ev,rows);g.append(rad.card)}
  pick.onchange=draw;dpick.onchange=draw;draw()}
