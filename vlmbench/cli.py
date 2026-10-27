@@ -3673,7 +3673,7 @@ def main() -> None:
 
     # If no subcommand given (first arg starts with -- or -), insert "run"
     argv = sys.argv[1:]
-    subcommands = {"compare", "profiles", "eval", "validate", "board"}
+    subcommands = {"compare", "profiles", "eval", "lint", "board"}
     if argv and argv[0] not in subcommands and not argv[0].startswith("--help"):
         if argv[0].startswith("--") or argv[0].startswith("-"):
             argv = ["run"] + argv
@@ -3694,7 +3694,7 @@ def main() -> None:
             cmd_compare(parsed)
         case "profiles":
             cmd_profiles()
-        case "eval" | "validate" | "board":
+        case "eval" | "lint" | "board":
             from vlmbench.evals.cli import dispatch
 
             dispatch(parsed, console)

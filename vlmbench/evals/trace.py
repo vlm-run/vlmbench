@@ -1,18 +1,37 @@
-"""Logfire tracing when `vlmbench[logfire]` is installed and a token is set; a no-op otherwise."""
+"""Logfire spans, in vlm-playground's shape: `with span("bench.x", **attrs) as s:` then `record(s, **results)`.
+Enabled when `vlmbench[logfire]` is installed and `LOGFIRE_TOKEN` is set; a no-op otherwise."""
 
+import os
 from contextlib import nullcontext
+from typing import Any
 
-try:
-    import logfire
-except ImportError:
-    logfire = None
+_LOGFIRE: Any = None
 
 
-def configure() -> None:
-    if logfire:
-        logfire.configure(service_name="vlmbench", send_to_logfire="if-token-present", console=False)
-        logfire.instrument_openai()
+def configure() -> bool:
+    global _LOGFIRE
+    if _LOGFIRE is not None:
+        return True
+    if not os.environ.get("LOGFIRE_TOKEN"):
+        return False
+    try:
+        import logfire
+    except ImportError:
+        return False
+    logfire.configure(service_name="vlmbench", send_to_logfire=True, console=False)
+    logfire.instrument_openai()
+    _LOGFIRE = logfire
+    return True
 
 
-def span(msg: str, **attrs):
-    return logfire.span(msg, **attrs) if logfire else nullcontext()
+def span(name: str, **attributes: Any):
+    """A Logfire span, or a no-op context manager (yielding None) when tracing is off."""
+    return nullcontext() if _LOGFIRE is None else _LOGFIRE.span(name, **attributes)
+
+
+def record(s: Any, **attributes: Any) -> None:
+    """Back-fill results onto an open span; None values and a disabled span are skipped."""
+    if s is not None and hasattr(s, "set_attribute"):
+        for k, v in attributes.items():
+            if v is not None:
+                s.set_attribute(k, v)

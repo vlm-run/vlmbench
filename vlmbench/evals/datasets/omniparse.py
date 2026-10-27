@@ -1,6 +1,12 @@
 """OmniParseBench (datalab-to/omni_parse_bench), graded by `omni-parse-bench`: the mean of its text and tables
-families, on the HTML its harness derives from a markdown reply (layout needs boxes, so it is unsupported)."""
+families, on the HTML its harness derives from a markdown reply (layout needs boxes, so it is unsupported).
 
+OmniParseBench wants running headers and footers present, as text. A reply's `<page_header>` / `<page_footer>` tags
+are unwrapped first: the harness's `as_html` takes any reply that starts with a tag as finished HTML, so a tagged
+header would leave the whole markdown body unconverted (`**`, `#` kept) and fail its exact-text tests.
+"""
+
+import re
 from functools import cache
 from pathlib import Path
 
@@ -8,6 +14,7 @@ from vlmbench.evals.config import DatasetSpec
 from vlmbench.evals.data import Item
 
 REPO = "datalab-to/omni_parse_bench"
+_FURNITURE = re.compile(r"<page_(header|footer)>\s*(.*?)\s*</page_\1>", re.S | re.I)
 
 
 @cache
@@ -31,7 +38,7 @@ def score(spec: DatasetSpec, its: list[Item], replies: dict[str, str]) -> dict:
     _, pages, by_page = benchmark.load(str(_root(spec.revision)))
     verdicts, tests, units = [], [], {}
     for it in its:
-        ts, text = by_page[it.id], replies.get(it.id)
+        ts, text = by_page[it.id], _FURNITURE.sub(r"\2", replies.get(it.id) or "")
         vs = metric.score({"html": as_html(text) if text else None}, ts, unsupported={"blocks"})
         for t, v in zip(ts, vs):  # a family scores flat over its scored (pass / fail) tests
             if v.result in ("pass", "fail") and (f := vocab.FAMILIES[t.test_type]) in ("text", "tables"):

@@ -99,3 +99,67 @@ def test_dev_and_test_samples_are_disjoint_and_spread():
     assert not {i.id for i in test} & {i.id for i in dev}
     assert {i.category for i in test} == {"a", "b", "c"}
     assert sample(items, 9, "test") == test
+
+
+def _bench(tmp: Path, extra: dict[str, str]) -> Path:
+    b = tmp / "mini"
+    b.mkdir()
+    _write(b, "mini.yaml", "kind: Eval\nserves: [a]\ndatasets: {x: {kind: omniparse, revision: r}}\n")
+    _write(b, "mini-a.yaml", "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\n")
+    for name, text in extra.items():
+        _write(b, name, text)
+    return b
+
+
+def test_lint_passes_the_shipped_tree():
+    from vlmbench.evals.lint import lint
+
+    assert lint([ROOT / "configs", ROOT / "benchmarks"], log=lambda m: None) == 0
+
+
+def test_lint_flags_unlisted_serves_missing_prompts_and_duplicates(tmp_path):
+    from vlmbench.evals.lint import lint
+
+    b = _bench(
+        tmp_path,
+        {
+            "mini-b.yaml": "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\n",
+            "other.yaml": "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\n",
+        },
+    )
+    seen: list[str] = []
+    assert lint([b], log=seen.append) == 2
+    assert any("not listed" in m for m in seen) and any("named mini-<model>.yaml" in m for m in seen)
+    (b / "mini.yaml").write_text("kind: Eval\nserves: [a, b]\ndatasets: {x: {kind: omniparse, revision: r}}\n")
+    (b / "other.yaml").unlink()
+    (b / "mini-b.yaml").write_text(
+        "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\nrequest: {prompt: gone.md}\n"
+    )
+    seen.clear()
+    assert lint([b], log=seen.append) == 1 and "not found" in seen[0]
+
+
+def test_a_cached_request_is_a_bench_request_span_with_its_results(tmp_path, capfire):
+    import asyncio
+
+    import logfire
+    from PIL import Image
+
+    from vlmbench.evals import trace
+    from vlmbench.evals.client import Client, reply_key
+
+    trace._LOGFIRE = logfire  # capfire has configured logfire to capture in memory
+    try:
+        serve = load(_write(tmp_path, "s.yaml", "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\n"))
+        png = tmp_path / "p.png"
+        Image.new("RGB", (8, 8)).save(png)
+        cache = DiskCache(tmp_path / "c.sqlite")
+        cache[reply_key(serve, png)] = {"text": "hello", "finish": "stop", "completion_tokens": 3, "latency_s": 0.1}
+        rec = asyncio.run(Client(cache).complete(serve, png, item="omniparse/p1"))
+        assert rec["cached"] and rec["text"] == "hello"
+        spans = {s["name"]: s["attributes"] for s in capfire.exporter.exported_spans_as_dict()}
+        attrs = spans["bench.request"]
+        assert attrs["item"] == "omniparse/p1" and attrs["config_id"] == serve.config_id
+        assert attrs["cached"] is True and attrs["completion_tokens"] == 3 and attrs["chars"] == 5
+    finally:
+        trace._LOGFIRE = None

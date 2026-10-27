@@ -2,6 +2,7 @@
 judges score them, and one result document holds performance and accuracy rows joined on (model_id, config_id)."""
 
 import asyncio
+import contextlib
 import json
 import platform
 import re
@@ -16,7 +17,7 @@ from vlmbench.evals.config import Eval, Metric, Serve, Settings, bench_files, ex
 from vlmbench.evals.data import Item, render, sample
 from vlmbench.evals.datasets import DATASETS
 from vlmbench.evals.results import SCHEMA, interval, performance, write
-from vlmbench.evals.trace import configure, span
+from vlmbench.evals.trace import configure, record, span
 from vlmbench.version import __version__
 
 
@@ -33,15 +34,23 @@ async def _predict(client: Client, serve: Serve, todo: dict[str, list[tuple[Item
     """Each dataset in turn at the serve's concurrency, so its wall time is its own."""
     sem, out = asyncio.Semaphore(serve.request.concurrency), {}
 
-    async def one(it: Item, png: Path) -> dict:
+    async def one(d: str, it: Item, png: Path) -> dict:
         async with sem:
-            return await client.complete(serve, png)
+            return await client.complete(serve, png, item=f"{d}/{it.id}")
 
     for d, its in todo.items():
-        with span("vlmbench.dataset {dataset}", dataset=d, serve=serve.name):
+        with span("bench.dataset", dataset=d, serve=serve.name, model=serve.model, config_id=serve.config_id) as s:
             t0 = time.perf_counter()
-            recs = await asyncio.gather(*(one(it, png) for it, png in its))
+            recs = await asyncio.gather(*(one(d, it, png) for it, png in its))
             out[d] = (recs, time.perf_counter() - t0)
+            record(
+                s,
+                items=len(recs),
+                cached=sum(r["cached"] for r in recs),
+                errors=sum("error" in r for r in recs),
+                truncated=sum(r.get("finish") == "length" for r in recs),
+                wall_s=round(out[d][1], 2),
+            )
         bad = sum("error" in r for r in recs)
         log(f"{serve.name} · {d}: {len(recs)} pages, {sum(r['cached'] for r in recs)} cached, {bad} errors")
     return out
@@ -57,11 +66,19 @@ def _judge_score(text: str, lo: int, hi: int) -> float | None:
 async def _judge(client: Client, metric: Metric, judge: Serve, sem: asyncio.Semaphore, its, recs) -> dict[str, list]:
     async def one(it: Item, png: Path, rec: dict):
         async with sem:
-            r = await client.complete(judge, png, metric.prompt.replace("{reply}", rec.get("text") or "(empty reply)"))
+            text = metric.prompt.replace("{reply}", rec.get("text") or "(empty reply)")
+            r = await client.complete(judge, png, text, item=f"judge:{metric.name}:{it.id}")
             return it.id, _judge_score(r.get("text"), *metric.scale)
 
-    pairs = await asyncio.gather(*(one(it, png, rec) for (it, png), rec in zip(its, recs)))
-    return {i: [s, 1] for i, s in pairs if s is not None}
+    with span("bench.judge", metric=metric.name, judge=judge.model, items=len(recs)) as js:
+        pairs = await asyncio.gather(*(one(it, png, rec) for (it, png), rec in zip(its, recs)))
+        scored = {i: [s, 1] for i, s in pairs if s is not None}
+        record(
+            js,
+            scored=len(scored),
+            score=round(100 * sum(v for v, _ in scored.values()) / len(scored), 2) if scored else None,
+        )
+        return scored
 
 
 def run(bench: Path, only: list[str] | None, datasets: list[str] | None, split: str, refresh: bool, log=print) -> Path:
@@ -84,10 +101,11 @@ async def _run(bench: Path, only, datasets, split: str, refresh: bool, log) -> P
         got = await asyncio.gather(*(_predict(client, serves[n], todo, log) for n in names if not serves[n].local))
         return dict(zip([n for n in names if not serves[n].local], got))
 
-    with span("vlmbench.eval {eval}", eval=ev.name, split=split):
+    with span("bench.eval", eval=ev.name, split=split, serves=names, datasets=ds_names) as root:
         replies |= await remote()
         for n in [n for n in names if serves[n].local]:
-            with serving.served(serves[n]):
+            every = all(client.cached(serves[n], png) for its in todo.values() for _, png in its)
+            with serving.served(serves[n]) if not every else contextlib.nullcontext():  # no GPU when all is cached
                 replies[n] = await _predict(client, serves[n], todo, log)
         judges = {m.name: (m, load(m.judge)) for m in metrics}
         keys = [(n, d, m) for n in names for d in ds_names for m in judges]
@@ -109,8 +127,11 @@ async def _run(bench: Path, only, datasets, split: str, refresh: bool, log) -> P
                 recs, wall = replies[n][d]
                 perf.append(performance(s, d, recs, wall))
                 texts = {it.id: r.get("text") or "" for (it, _), r in zip(its, recs)}
-                with span("vlmbench.grade {dataset}", dataset=d, serve=n):
+                with span("bench.grade", dataset=d, serve=n, grader=spec.kind, config_id=s.config_id) as gs:
                     g = DATASETS[spec.kind].score(spec, [it for it, _ in its], texts)
+                    record(
+                        gs, score=round(g["score"], 2), **{f"metric.{k}": round(v, 2) for k, v in g["metrics"].items()}
+                    )
                 graded.append((g["score"], g["units"]))
                 lo, hi = interval([(g["score"], g["units"])])
                 base = {"model_id": s.model, "config_id": s.config_id, "serve": n, "dataset": d}
@@ -162,6 +183,7 @@ async def _run(bench: Path, only, datasets, split: str, refresh: bool, log) -> P
                     "datasets": len(graded),
                 }
             )
+        record(root, **{f"mean.{x['serve']}": x["mean_score"] for x in summary})
     doc = {
         "schema": SCHEMA,
         "run": {
@@ -191,18 +213,6 @@ def _config(s: Serve) -> dict:
     d = s.model_dump(mode="json")
     d["backend"].pop("api_key", None)
     return {"config_id": s.config_id, "model_id": s.model, "serve": s.name} | d
-
-
-def validate(bench: Path, log=print) -> None:
-    ev, serves, metrics = bench_files(bench)
-    log(f"{ev.name}: {len(serves)} serves × {len(ev.datasets)} datasets, {len(metrics)} judges")
-    for n, s in serves.items():
-        where = (
-            s.prompt_file and Path(s.prompt_file).name or (f"method={s.request.method}" if s.request.method else "-")
-        )
-        log(f"  {n:40s} {s.config_id}  {s.backend.type:6s} {s.model:40s} prompt: {where}")
-    for m in metrics:
-        log(f"  judge {m.name}: {load(m.judge).model}, scale {m.scale}")
 
 
 def board(bench: Path, split: str, log=print) -> list[dict]:

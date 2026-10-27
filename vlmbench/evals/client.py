@@ -12,7 +12,7 @@ from pathlib import Path
 
 from vlmbench.evals.cache import DiskCache, key
 from vlmbench.evals.config import Remote, Serve, api_key
-from vlmbench.evals.trace import span
+from vlmbench.evals.trace import record, span
 
 _THINK = re.compile(r"<think>.*?</think>", re.S)
 _FENCE = re.compile(r"^```(?:markdown|md|html)?\s*\n(.*?)\n```\s*$", re.S)
@@ -89,19 +89,32 @@ class Client:
         self.calls: dict[str, list[dict]] = defaultdict(list)
         """Live (uncached) calls per serve, for the performance table."""
 
-    async def complete(self, serve: Serve, image: Path, text: str | None = None) -> dict:
+    def cached(self, serve: Serve, image: Path, text: str | None = None) -> bool:
+        if self.refresh:
+            return False
+        try:
+            self.cache[reply_key(serve, image, text)]
+            return True
+        except KeyError:
+            return False
+
+    async def complete(self, serve: Serve, image: Path, text: str | None = None, item: str | None = None) -> dict:
         """The serve's reply to one page (and `text`, appended after the serve's own prompt when given)."""
         k = reply_key(serve, image, text)
-        if not self.refresh:
-            try:
-                return {**self.cache[k], "cached": True}
-            except KeyError:
-                pass
-        rec = await self._call(serve, image, text)
-        if "error" not in rec and rec["finish"] != "length":
-            self.cache[k] = rec
-        self.calls[serve.name].append(rec)
-        return {**rec, "cached": False}
+        with span("bench.request", serve=serve.name, model=serve.model, config_id=serve.config_id, item=item) as s:
+            rec = None
+            if not self.refresh:
+                try:
+                    rec = {**self.cache[k], "cached": True}
+                except KeyError:
+                    pass
+            if rec is None:
+                rec = {**await self._call(serve, image, text), "cached": False}
+                if "error" not in rec:  # a length-cut reply is kept (it would only be cut again); errors retry
+                    self.cache[k] = {x: v for x, v in rec.items() if x != "cached"}
+                self.calls[serve.name].append(rec)
+            record(s, **{x: v for x, v in rec.items() if x != "text"}, chars=len(rec.get("text") or ""))
+            return rec
 
     async def _call(self, serve: Serve, image: Path, text: str | None, attempts: int = 3) -> dict:
         from openai import RateLimitError
@@ -120,8 +133,7 @@ class Client:
             await Pace.of(serve).wait()
             t0 = time.perf_counter()
             try:
-                with span("vlmbench.request {serve}", serve=serve.name, config_id=serve.config_id):
-                    rec = await (self._stream if r.stream else self._once)(client, body, extra, r.timeout, t0)
+                rec = await (self._stream if r.stream else self._once)(client, body, extra, r.timeout, t0)
                 break
             except RateLimitError:
                 limited += 1

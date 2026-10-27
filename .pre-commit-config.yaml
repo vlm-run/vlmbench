@@ -21,3 +21,13 @@ repos:
       - id: trailing-whitespace
       - id: check-added-large-files
         args: ['--maxkb=100']
+
+  - repo: local
+    hooks:
+      - id: vlmbench-lint
+        name: vlmbench lint (configs/, benchmarks/)
+        entry: python -m vlmbench.evals.lint
+        language: python
+        additional_dependencies: ["pydantic>=2.10", "pydantic-settings>=2.6", "pyyaml>=6"]
+        files: ^(configs|benchmarks)/
+        pass_filenames: false

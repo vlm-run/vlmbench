@@ -1,4 +1,4 @@
-"""`vlmbench eval | validate | board`: argparse wiring for the evals package (imports stay lazy, so `run` is fast)."""
+"""`vlmbench eval | lint | board`: argparse wiring for the evals package (imports stay lazy, so `run` is fast)."""
 
 import argparse
 from pathlib import Path
@@ -13,8 +13,9 @@ def add_parsers(subparsers) -> None:
     ev.add_argument("-d", "--dataset", action="append", help="Only these datasets (repeatable)")
     ev.add_argument("--split", choices=["test", "dev"], default="test", help="`dev` to tune prompts, `test` to report")
     ev.add_argument("--refresh", action="store_true", help="Ignore cached replies and call again")
-    va = subparsers.add_parser("validate", help="Validate a benchmark folder and show each serve's resolved config.")
-    va.add_argument("bench", type=Path)
+    li = subparsers.add_parser("lint", help="Check configs and benchmark folders load and follow the layout.")
+    li.add_argument("paths", type=Path, nargs="*", help="Files or folders (default: configs/ benchmarks/)")
+    li.add_argument("-v", "--verbose", action="store_true", help="Show each serve's config id, model and prompt")
     bo = subparsers.add_parser("board", help="Latest scores per serve on a benchmark, best first.")
     bo.add_argument("bench", type=Path)
     bo.add_argument("--split", choices=["test", "dev"], default="test")
@@ -32,8 +33,11 @@ def dispatch(args: argparse.Namespace, console) -> None:
             out = runner.run(args.bench, args.serve, args.dataset, args.split, args.refresh, log)
             console.print(f"[dim]{out}[/dim]")
             _board(runner.board(args.bench, args.split), console)
-        case "validate":
-            runner.validate(args.bench, log)
+        case "lint":
+            from vlmbench.evals.lint import lint
+
+            if lint(args.paths or [Path("configs"), Path("benchmarks")], args.verbose, log):
+                raise SystemExit(1)
         case "board":
             _board(runner.board(args.bench, args.split), console)
 

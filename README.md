@@ -125,7 +125,7 @@ benchmarks/ocr-bench/judges/faithfulness.yaml          # kind: Metric: an LLM ju
 
 ```bash
 uv sync --extra evals                                  # the benchmarks' own graders (Python 3.12)
-vlmbench validate benchmarks/ocr-bench                 # resolved serves, config ids, prompts
+vlmbench lint -v                                       # configs + benchmarks load; config ids, prompts
 vlmbench eval benchmarks/ocr-bench                     # every serve x every dataset (test split)
 vlmbench eval benchmarks/ocr-bench -s gemini-3.8-flash -d parsebench --split dev   # tune on dev pages
 vlmbench board benchmarks/ocr-bench                    # latest scores, throughput, $ per 1k pages
