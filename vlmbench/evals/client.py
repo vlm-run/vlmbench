@@ -88,9 +88,51 @@ def reply_key(serve: Serve, image: Path | list[Path], text: str | None = None) -
     return key(serve.config_id, digests[0] if len(digests) == 1 else digests, text)
 
 
+BUDGET = "budget exhausted"
+
+
+class Budget:
+    """A cap on what a run spends (billed `usage.cost`, judges included). Each live call first holds its serve's
+    dearest call so far, so calls in flight cannot overshoot together; a serve's first call goes alone, to learn it.
+    Local serves bill nothing and are never held back."""
+
+    def __init__(self, usd: float):
+        self.usd, self.spent, self.held, self.skipped = usd, 0.0, 0.0, 0
+        self.peak: dict[str, float] = {}
+        self.probe: dict[str, asyncio.Lock] = {}
+
+    async def take(self, serve: Serve) -> tuple[float, bool] | None:
+        """(the amount held, whether this call is the serve's probe), or None when the cap would be crossed."""
+        probe = serve.name not in self.peak
+        if probe:
+            lock = self.probe.setdefault(serve.name, asyncio.Lock())
+            await lock.acquire()
+            if serve.name in self.peak:  # another call measured the serve while this one waited
+                lock.release()
+                probe = False
+        est = self.peak.get(serve.name, 0.0)
+        if self.spent + self.held + est > self.usd:
+            if probe:
+                self.probe[serve.name].release()
+            self.skipped += 1
+            return None
+        self.held += est
+        return est, probe
+
+    def settle(self, serve: Serve, hold: tuple[float, bool], rec: dict) -> None:
+        est, probe = hold
+        cost = rec.get("cost_usd") or 0.0
+        self.held -= est
+        self.spent += cost
+        if "error" not in rec:  # a failed call teaches nothing about the price
+            self.peak[serve.name] = max(self.peak.get(serve.name, 0.0), cost)
+        if probe:
+            self.probe[serve.name].release()
+
+
 class Client:
-    def __init__(self, cache: DiskCache, refresh: bool = False):
-        self.cache, self.refresh, self.clients = cache, refresh, {}
+    def __init__(self, cache: DiskCache, refresh: bool = False, budget: Budget | None = None):
+        self.cache, self.refresh, self.clients, self.budget = cache, refresh, {}, budget
         self.calls: dict[str, list[dict]] = defaultdict(list)
         """Live (uncached) calls per serve, for the performance table."""
 
@@ -116,7 +158,14 @@ class Client:
                 except KeyError:
                     pass
             if rec is None:
+                hold = await self.budget.take(serve) if self.budget else (0.0, False)
+                if hold is None:  # never cached: a run with more budget calls it
+                    rec = {"error": BUDGET, "budget": True, "latency_s": 0.0, "cached": False}
+                    record(s, error=BUDGET)
+                    return rec
                 rec = {**await self._call(serve, image, text), "cached": False}
+                if self.budget:
+                    self.budget.settle(serve, hold, rec)
                 if "error" not in rec:  # a length-cut reply is kept (it would only be cut again); errors retry
                     self.cache[k] = {x: v for x, v in rec.items() if x != "cached"}
                 self.calls[serve.name].append(rec)

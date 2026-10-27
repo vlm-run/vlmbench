@@ -12,7 +12,7 @@ from pathlib import Path
 
 from vlmbench.evals import serving
 from vlmbench.evals.cache import DiskCache
-from vlmbench.evals.client import Client
+from vlmbench.evals.client import Budget, Client
 from vlmbench.evals.config import Eval, Metric, Serve, Settings, bench_files, expand, load
 from vlmbench.evals.data import Item, render, render_doc, sample
 from vlmbench.evals.datasets import DATASETS, normalize
@@ -79,6 +79,8 @@ async def _document(client: Client, serve: Serve, sem, item: str, pngs: list[Pat
     }
     if all("error" in r for r in parts):
         rec["error"] = parts[0]["error"]
+    if any(r.get("budget") for r in parts):
+        rec["budget"] = True
     return rec
 
 
@@ -136,20 +138,28 @@ async def _judge(client: Client, metric: Metric, judge: Serve, sem: asyncio.Sema
 
 
 def run(
-    bench: Path, only: list[str] | None, datasets: list[str] | None, split: str, refresh: bool, log=print, samples=None
+    bench: Path,
+    only: list[str] | None,
+    datasets: list[str] | None,
+    split: str,
+    refresh: bool,
+    log=print,
+    samples=None,
+    budget: float | None = None,
 ) -> Path:
     """One event loop for the whole run: the pacing locks and HTTP clients are bound to it."""
-    return asyncio.run(_run(bench, only, datasets, split, refresh, log, samples))
+    return asyncio.run(_run(bench, only, datasets, split, refresh, log, samples, budget))
 
 
-async def _run(bench: Path, only, datasets, split: str, refresh: bool, log, samples=None) -> Path:
+async def _run(bench: Path, only, datasets, split: str, refresh: bool, log, samples=None, budget=None) -> Path:
     configure()
     home = Settings().home
     ev, serves, metrics = bench_files(bench)
     names = expand(only, bench, serves)
     ds_names = datasets or list(ev.datasets)
     todo, instr = pages(ev, ds_names, split, home, samples)
-    client = Client(DiskCache(home / "cache.sqlite"), refresh)
+    cap = budget if budget is not None else ev.budget_usd
+    client = Client(DiskCache(home / "cache.sqlite"), refresh, Budget(cap) if cap is not None else None)
     started = datetime.now(UTC)
     replies: dict[str, dict] = {}
 
@@ -170,9 +180,15 @@ async def _run(bench: Path, only, datasets, split: str, refresh: bool, log, samp
             )
             with serving.served(serves[n]) if not every else contextlib.nullcontext():  # no GPU when all is cached
                 replies[n] = await _predict(client, serves[n], todo, log, instr)
+        # a (serve, dataset) the budget cut short is not graded: a partial pass would read as a low score
+        short = {(n, d) for n in names for d in ds_names if any(r.get("budget") for r in replies[n][d][0])}
+        for n, d in sorted(short):
+            log(f"{n} · {d}: not graded, the {_usd(cap)} budget ran out (rerun with more; replies so far are cached)")
         judges = {m.name: (m, load(m.judge)) for m in metrics}
         page_ds = [d for d in ds_names if not getattr(DATASETS[ev.datasets[d].kind], "DOCUMENT", False)]
-        keys = [(n, d, m) for n in names for d in page_ds for m in judges]  # a judge reads one page image
+        keys = [
+            (n, d, m) for n in names for d in page_ds for m in judges if (n, d) not in short
+        ]  # a judge reads one page image
         sems = {m: asyncio.Semaphore(j.request.concurrency) for m, (_, j) in judges.items()}  # one per judge
         judged = dict(
             zip(
@@ -187,6 +203,8 @@ async def _run(bench: Path, only, datasets, split: str, refresh: bool, log, samp
             s = serves[n]
             graded = []
             for d in ds_names:
+                if (n, d) in short:
+                    continue
                 spec, its = ev.datasets[d], todo[d]
                 recs, wall = replies[n][d]
                 perf.append(performance(s, d, recs, wall))
@@ -235,6 +253,8 @@ async def _run(bench: Path, only, datasets, split: str, refresh: bool, log, samp
                     base | {"item": it.id, **{k: v for k, v in r.items() if k != "text"}, "text": r.get("text")}
                     for (it, _), r in zip(its, recs)
                 ]
+            if not graded:
+                continue
             lo, hi = interval(graded)
             rows = [p for p in perf if p["config_id"] == s.config_id]
             summary.append(
@@ -250,6 +270,9 @@ async def _run(bench: Path, only, datasets, split: str, refresh: bool, log, samp
                 }
             )
         record(root, **{f"mean.{x['serve']}": x["mean_score"] for x in summary})
+        if client.budget:
+            b = client.budget
+            log(f"spent {_usd(b.spent)} of {_usd(b.usd)}" + (f"; {b.skipped} calls skipped" if b.skipped else ""))
     doc = {
         "schema": SCHEMA,
         "run": {
@@ -263,11 +286,18 @@ async def _run(bench: Path, only, datasets, split: str, refresh: bool, log, samp
             "datasets": {d: ev.datasets[d].model_dump() for d in ds_names},
         },
         "configs": [_config(serves[n]) for n in names],
+        "budget": {"usd": cap, "spent_usd": round(client.budget.spent, 4), "skipped_calls": client.budget.skipped}
+        if client.budget
+        else None,
         "performance": perf,
         "accuracy": acc,
         "summary": summary,
     }
     return write(home / "evals" / ev.name / doc["run"]["id"], doc, reply_rows, unit_rows)
+
+
+def _usd(x: float) -> str:
+    return f"${x:,.2f}" if x >= 1 else f"${x:.4f}"
 
 
 def _mean(xs: list) -> float | None:

@@ -140,6 +140,8 @@ class Eval(Strict):
     metrics: list[str] = []
     """`Metric` files (LLM judges), relative to the eval."""
     seed: int = 0
+    budget_usd: float | None = None
+    """The most a run may spend (billed cost, judges included); `--budget` overrides it. None: no cap."""
 
 
 class Metric(Strict):

@@ -1,5 +1,6 @@
 # Page image -> Markdown on three public benchmarks, each graded by its own package, plus an LLM judge.
 kind: Eval
+budget_usd: 10  # the most one run may spend, judges included; `--budget` overrides
 serves:
   - deepseek-ocr-2
   - dots-mocr

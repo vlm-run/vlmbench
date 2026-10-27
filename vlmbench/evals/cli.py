@@ -14,6 +14,7 @@ def add_parsers(subparsers) -> None:
     ev.add_argument("--split", choices=["test", "dev"], default="test", help="`dev` to tune prompts, `test` to report")
     ev.add_argument("--refresh", action="store_true", help="Ignore cached replies and call again")
     ev.add_argument("--samples", type=int, default=None, help="Items per dataset for this run (0: every item)")
+    ev.add_argument("--budget", type=float, default=None, help="Most this run may spend in USD (overrides budget_usd)")
     li = subparsers.add_parser("lint", help="Check configs and benchmark folders load and follow the layout.")
     li.add_argument("paths", type=Path, nargs="*", help="Files or folders (default: configs/ benchmarks/)")
     li.add_argument("-v", "--verbose", action="store_true", help="Show each serve's config id, model and prompt")
@@ -41,7 +42,9 @@ def dispatch(args: argparse.Namespace, console) -> None:
     log = lambda m: console.print(m, highlight=False)  # noqa: E731
     match args.command:
         case "eval":
-            out = runner.run(args.bench, args.serve, args.dataset, args.split, args.refresh, log, args.samples)
+            out = runner.run(
+                args.bench, args.serve, args.dataset, args.split, args.refresh, log, args.samples, args.budget
+            )
             console.print(f"[dim]{out}[/dim]")
             _board(runner.board(args.bench, args.split), console)
         case "lint":

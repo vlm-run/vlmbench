@@ -209,3 +209,31 @@ def test_a_field_added_at_its_default_keeps_earlier_config_ids(tmp_path):
     assert a.config_id != b.config_id and a.backend_name == "vlmrun"
     d = a.model_dump(mode="json")
     assert "pages_per_call" in d["request"]  # in the dump, but not in the id at its default
+
+
+def test_a_budget_is_never_crossed_by_calls_in_flight(tmp_path):
+    import asyncio
+
+    from vlmbench.evals.cache import DiskCache
+    from vlmbench.evals.client import BUDGET, Budget, Client
+
+    s = load(_write(tmp_path, "s.yaml", "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\n"))
+    pngs = []
+    for i in range(40):
+        (p := tmp_path / f"p{i}.png").write_bytes(bytes([i]))
+        pngs.append(p)
+    client = Client(DiskCache(tmp_path / "c.sqlite"), budget=Budget(1.0))
+
+    async def fake(serve, image, text, attempts=3):
+        await asyncio.sleep(0.01)
+        return {"text": "ok", "cost_usd": 0.15}
+
+    client._call = fake
+
+    async def go():
+        return await asyncio.gather(*(client.complete(s, p) for p in pngs))
+
+    recs = asyncio.run(go())
+    assert client.budget.spent <= 1.0 and sum(r.get("error") == BUDGET for r in recs) == 34
+    assert all(r.get("budget") for r in recs if "error" in r)
+    assert not client.cached(s, pngs[-1])  # a skipped call is called again by a run with more budget

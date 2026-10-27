@@ -79,6 +79,7 @@ request:
 vlmbench lint -v                                               # every config loads; ids, prompts
 vlmbench eval benchmarks/ocr-bench                             # every model × every dataset
 vlmbench eval benchmarks/ocr-bench -s gemini-3.8-flash --split dev   # tune prompts on dev pages
+vlmbench eval benchmarks/extract-bench --budget 5                # stop spending at $5 (budget_usd in the Eval)
 vlmbench board benchmarks/ocr-bench                            # latest scores in the terminal
 ```
 
