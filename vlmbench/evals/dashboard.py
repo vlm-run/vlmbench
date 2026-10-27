@@ -105,70 +105,78 @@ def serve(path: Path, host: str, port: int) -> None:
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>vlmbench dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-.viz-root{color-scheme:light;--surface-1:#fcfcfb;--surface-2:#f4f3f0;--grid:#e4e2dc;--text-primary:#0b0b0b;
- --text-secondary:#52514e;--text-muted:#8a8984;--bar:#2a78d6;--bar-track:#e9edf3;
+.viz-root{color-scheme:light;--surface-1:#fbfbfa;--hair:#e7e6e1;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-3:#9a9993;--hover:#f3f2ee;
+ --good:#0ca30c;--warn:#fab219;--bad:#d03b3b;--accent:#0b0b0b;
  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--s7:#6250d6;--s8:#e34948}
-@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .viz-root{color-scheme:dark;
- --surface-1:#1a1a19;--surface-2:#222220;--grid:#33332f;--text-primary:#f0efec;--text-secondary:#c3c2b7;
- --text-muted:#8f8e86;--bar:#3987e5;--bar-track:#2a2f37;
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .viz-root{color-scheme:dark;--surface-1:#121211;
+ --hair:#2a2a27;--ink-1:#f0efec;--ink-2:#c3c2b7;--ink-3:#77766f;--hover:#1b1b19;--accent:#f0efec;
  --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#008300;--s7:#9085e9;--s8:#e66767}}
-:root[data-theme="dark"] .viz-root{color-scheme:dark;--surface-1:#1a1a19;--surface-2:#222220;--grid:#33332f;
- --text-primary:#f0efec;--text-secondary:#c3c2b7;--text-muted:#8f8e86;--bar:#3987e5;--bar-track:#2a2f37;
+:root[data-theme="dark"] .viz-root{color-scheme:dark;--surface-1:#121211;--hair:#2a2a27;--ink-1:#f0efec;--ink-2:#c3c2b7;
+ --ink-3:#77766f;--hover:#1b1b19;--accent:#f0efec;
  --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#008300;--s7:#9085e9;--s8:#e66767}
 *{box-sizing:border-box}
-body{margin:0;font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
-.viz-root{background:var(--surface-1);color:var(--text-primary);min-height:100vh}
-main{max-width:1320px;margin:0 auto;padding:24px 24px 64px}
-header{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
-h1{font-size:20px;margin:0}.sub{color:var(--text-secondary)}
-nav.tabs{display:flex;gap:4px;margin:20px 0 16px;border-bottom:1px solid var(--grid)}
-nav.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:8px 14px;font:inherit;
- color:var(--text-secondary);cursor:pointer}
-nav.tabs button[aria-selected=true]{color:var(--text-primary);border-bottom-color:var(--bar);font-weight:600}
-.controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 12px}
-select,.seg button{font:inherit;color:var(--text-primary);background:var(--surface-2);border:1px solid var(--grid);
- border-radius:6px;padding:4px 10px}
-.seg{display:inline-flex}.seg button{border-radius:0;cursor:pointer}.seg button:first-child{border-radius:6px 0 0 6px}
-.seg button:last-child{border-radius:0 6px 6px 0}.seg button[aria-pressed=true]{background:var(--bar);color:#fff;border-color:var(--bar)}
-.card{background:var(--surface-2);border:1px solid var(--grid);border-radius:10px;padding:14px 16px;margin:0 0 16px;overflow-x:auto}
-.card h2{font-size:15px;margin:0 0 4px}.note{color:var(--text-muted);font-size:12px}
-table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
-th,td{padding:6px 8px;border-bottom:1px solid var(--grid);text-align:right;white-space:nowrap}
-th{color:var(--text-secondary);font-weight:600;font-size:12px;cursor:pointer;user-select:none}
+body{margin:0;font:14px/1.5 "Space Grotesk",ui-sans-serif,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mono,td,.v,.tick{font-family:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+.viz-root{background:var(--surface-1);color:var(--ink-1);min-height:100vh}
+main{max-width:1280px;margin:0 auto;padding:40px 40px 96px}
+header{display:flex;align-items:center;gap:28px}
+h1{font-size:18px;font-weight:700;letter-spacing:-.01em;margin:0}
+.sub{color:var(--ink-3);font-size:12px}
+nav.tabs{display:flex;gap:22px}
+nav.tabs button,.seg button,select{font:500 13px "Space Grotesk",sans-serif;color:var(--ink-3);background:none;border:0;padding:4px 0;cursor:pointer}
+nav.tabs button[aria-selected=true]{color:var(--ink-1);box-shadow:inset 0 -1.5px 0 var(--ink-1)}
+.seg{display:inline-flex;gap:14px}.seg button[aria-pressed=true]{color:var(--ink-1)}
+select{color:var(--ink-1);border-bottom:1px solid var(--hair);padding-right:4px}
+.controls{display:flex;gap:28px;align-items:center;margin:40px 0 28px}
+.lab{font:500 10.5px "Space Grotesk",sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.card{margin:0 0 64px;overflow-x:auto}
+.card h2{font:600 13px "Space Grotesk",sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);margin:0 0 4px}
+.key{font-size:12px;color:var(--ink-3);display:flex;gap:18px;align-items:center;margin:0 0 18px}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);margin:0 0 64px;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair)}
+.tile{padding:20px 0 22px 24px;border-left:1px solid var(--hair)}.tile:first-child{border-left:0;padding-left:0}
+.tile .v{font-size:40px;font-weight:500;letter-spacing:-.03em;line-height:1.1;margin:8px 0 6px}
+.tile .v small{font-size:13px;color:var(--ink-3);letter-spacing:0;margin-left:6px}
+.tile .w{font-size:13px;color:var(--ink-2)}
+table{border-collapse:collapse;width:100%}
+th{font:500 10.5px "Space Grotesk",sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);
+ text-align:right;padding:0 10px 10px;border-bottom:1px solid var(--ink-1);cursor:pointer;user-select:none;white-space:nowrap}
+td{padding:11px 10px;border-bottom:1px solid var(--hair);text-align:right;white-space:nowrap;font-size:13px}
 th:first-child,td:first-child,th.l,td.l{text-align:left}
 th[aria-sort=descending]::after{content:" ↓"}th[aria-sort=ascending]::after{content:" ↑"}
-tr:hover td{background:color-mix(in srgb,var(--bar) 6%,transparent)}
-.cell{display:flex;align-items:center;gap:8px;justify-content:flex-end}
-.meter{position:relative;display:inline-block;vertical-align:middle;width:96px;height:8px;background:var(--bar-track);border-radius:4px}
-.meter.sm{width:56px;height:6px}
-.meter>i{position:absolute;left:0;top:0;bottom:0;background:var(--bar);border-radius:4px}
-.meter>b{position:absolute;top:-3px;bottom:-3px;border-left:2px solid var(--text-secondary);border-right:2px solid var(--text-secondary);opacity:.55}
-.num{min-width:38px;display:inline-block}
-.tag{font-size:11px;color:var(--text-muted);margin-left:6px}
-.grid2{display:block}
-.radar{display:grid;grid-template-columns:440px minmax(0,1fr);gap:16px;align-items:center}
-@media (max-width:900px){.radar{grid-template-columns:1fr}}
-.legend{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:2px 16px;align-content:start}
-.legend label{display:flex;gap:8px;align-items:center;cursor:pointer;color:var(--text-secondary)}
-.legend .sw{width:12px;height:3px;border-radius:2px;display:inline-block}
-.legend input:disabled+span{opacity:.4}
-svg text{fill:var(--text-secondary);font-size:11px}
-.tip{position:fixed;pointer-events:none;background:var(--text-primary);color:var(--surface-1);font-size:12px;
- padding:4px 8px;border-radius:6px;opacity:0;transition:opacity .08s;white-space:nowrap;z-index:9}
-.empty{color:var(--text-muted);padding:24px 0}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:0 0 16px}
-.tile{background:var(--surface-2);border:1px solid var(--grid);border-radius:10px;padding:12px 16px}
-.tile .k{font-size:12px;color:var(--text-muted)}.tile .v{font-size:26px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.2}
-.tile .w{font-size:13px;color:var(--text-secondary)}
-.key{font-size:12px;color:var(--text-muted);display:flex;gap:14px;align-items:center;margin:2px 0 8px}
-.key .meter{width:40px}
+tbody tr:hover td{background:var(--hover)}
+td.rank{color:var(--ink-3);width:28px;padding-right:0}
+td.name{font-family:"Space Grotesk",sans-serif;font-size:14px;font-weight:500}
+td.name .meta{display:block;font:400 11px "Geist Mono",monospace;color:var(--ink-3);margin-top:1px}
+.cell{display:flex;align-items:center;gap:10px;justify-content:flex-end}
+.meter{position:relative;display:inline-block;width:84px;height:3px}.meter.sm{width:48px}
+.meter>i{position:absolute;left:0;top:0;bottom:0;border-radius:2px}
+.meter>b{position:absolute;top:1px;height:1px;background:var(--ink-3);opacity:.6}
+.meter>u{position:absolute;top:-3px;bottom:-3px;width:1px;background:var(--ink-3);opacity:.6}
+.big{font-size:15px;font-weight:600}
+.muted,.note{color:var(--ink-3)}.note{font-size:12px}
+.radar{display:grid;grid-template-columns:420px minmax(0,1fr);gap:40px;align-items:center}
+@media (max-width:900px){.radar{grid-template-columns:1fr}.tiles{grid-template-columns:1fr 1fr}}
+.legend{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:4px 24px;align-content:start}
+.legend label{display:flex;gap:10px;align-items:center;cursor:pointer;color:var(--ink-2);font-size:13px}
+.legend input{accent-color:var(--ink-1)}
+.legend .sw{width:14px;height:2px;border-radius:1px;display:inline-block}
+.legend input:disabled+span{opacity:.35}
+svg text{fill:var(--ink-3);font:500 10.5px "Space Grotesk",sans-serif;letter-spacing:.1em;text-transform:uppercase}
+svg .tick{font:400 9.5px "Geist Mono",monospace;letter-spacing:0;text-transform:none}
+svg polygon.s{transition:opacity .15s}
+.tip{position:fixed;pointer-events:none;background:var(--ink-1);color:var(--surface-1);font:500 12px "Geist Mono",monospace;
+ padding:5px 9px;border-radius:4px;opacity:0;transition:opacity .08s;white-space:nowrap;z-index:9}
+.empty{color:var(--ink-3);padding:24px 0}
 </style></head>
 <body><div class="viz-root"><main>
-<header><h1>vlmbench</h1><span class="sub" id="sub"></span>
-<span style="flex:1"></span><div class="seg" id="theme"><button data-t="light">Light</button><button data-t="dark">Dark</button></div></header>
-<nav class="tabs" role="tablist"><button role="tab" data-tab="acc" aria-selected="true">Accuracy evals</button>
+<header><h1>vlmbench</h1>
+<nav class="tabs" role="tablist"><button role="tab" data-tab="acc" aria-selected="true">Accuracy</button>
 <button role="tab" data-tab="runs" aria-selected="false">Runs</button></nav>
+<span style="flex:1"></span><span class="sub mono" id="sub"></span><div class="seg" id="theme"><button data-t="light">Light</button><button data-t="dark">Dark</button></div></header>
 <section id="acc"></section><section id="runs" hidden></section>
 </main><div class="tip" id="tip"></div></div>
 <script>
@@ -183,17 +191,19 @@ document.querySelectorAll("#theme button").forEach(b=>b.onclick=()=>{document.do
  document.querySelectorAll("#theme button").forEach(x=>x.setAttribute("aria-pressed",x===b))});
 document.querySelectorAll("nav.tabs button").forEach(b=>b.onclick=()=>{document.querySelectorAll("nav.tabs button").forEach(x=>x.setAttribute("aria-selected",x===b));
  $("#acc").hidden=b.dataset.tab!=="acc";$("#runs").hidden=b.dataset.tab!=="runs"});
-$("#sub").textContent=`${D.evals.length} eval${D.evals.length==1?"":"s"} · ${D.runs.length} throughput runs`;
+$("#sub").textContent=`${D.evals.length} eval${D.evals.length==1?"":"s"} · ${D.runs.length} runs`;
 
-function meter(v,ci,sm){ // a 0-100 score: fill, with the 95% interval as a bracket
- const w=Math.max(0,Math.min(100,v??0)), b=ci?`<b style="left:${Math.max(0,ci[0])}%;width:${Math.max(0,Math.min(100,ci[1])-Math.max(0,ci[0]))}%"></b>`:"";
- return `<span class="meter${sm?" sm":""}"><i style="width:${w}%"></i>${b}</span>`}
+const tone=v=>v==null?"var(--ink-3)":v>=80?"var(--good)":v>=60?"var(--warn)":"var(--bad)";
+function meter(v,ci,sm,color){ // a 0-100 score: status colour by default; the 95% interval as a hairline
+ const w=Math.max(0,Math.min(100,v??0)), c=color||tone(v);
+ const b=ci?`<b style="left:${Math.max(0,ci[0])}%;width:${Math.max(0,Math.min(100,ci[1])-Math.max(0,ci[0]))}%"></b><u style="left:${Math.max(0,ci[0])}%"></u><u style="left:${Math.min(100,ci[1])}%"></u>`:"";
+ return `<span class="meter${sm?" sm":""}"><i style="width:${w}%;background:${c}"></i>${b}</span>`}
 function sortable(tbl,rows,cols,render){let key=null,dir=-1;
  const head=tbl.tHead.rows[0];[...head.cells].forEach((th,i)=>{if(!cols[i].key)return;th.onclick=()=>{dir=key===cols[i].key?-dir:-1;key=cols[i].key;
   [...head.cells].forEach(c=>c.removeAttribute("aria-sort"));th.setAttribute("aria-sort",dir<0?"descending":"ascending");draw()}});
  function val(r,k){const v=k.split(".").reduce((o,p)=>o?.[p],r);return v==null?-Infinity:v}
  function draw(){const rs=key?[...rows].sort((a,b)=>{const x=val(a,key),y=val(b,key);return (typeof x==="string"?x.localeCompare(y):x-y)*dir}):rows;
-  tbl.tBodies[0].replaceChildren(...rs.map(render))}
+  tbl.tBodies[0].replaceChildren(...rs.map((r,i)=>render(r,i)))}
  draw()}
 
 // ── accuracy tab ──
@@ -201,8 +211,8 @@ function accTab(){const root=$("#acc");root.replaceChildren();
  if(!D.evals.length){root.append(el("p",{className:"empty"},"","No eval results yet: <code>vlmbench eval benchmarks/&lt;bench&gt;</code>."));return}
  const ctl=el("div",{className:"controls"});root.append(ctl);
  const pick=el("select");D.evals.forEach((e,i)=>pick.append(el("option",{value:i,textContent:e.name})));
- ctl.append(el("span",{className:"note",textContent:"Eval"}),pick);
- const seg=el("div",{className:"seg"});ctl.append(el("span",{className:"note",textContent:"Split"}),seg);
+ ctl.append(el("span",{className:"lab",textContent:"Eval"}),pick);
+ const seg=el("div",{className:"seg"});ctl.append(el("span",{className:"lab",textContent:"Split"}),seg);
  const body=el("div");root.append(body);let split;
  function draw(){const ev=D.evals[pick.value], splits=Object.keys(ev.splits);
   if(!splits.includes(split))split=splits.includes("test")?"test":splits[0];
@@ -211,28 +221,29 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   const ok=rows.filter(r=>r.mean!=null), best=ok[0];
   const value=ok.filter(r=>r.usd_1k).sort((a,b)=>b.mean/b.usd_1k-a.mean/a.usd_1k)[0];
   const fast=ok.filter(r=>r.pages_s).sort((a,b)=>b.pages_s-a.pages_s)[0];
-  const tile=(k,v,w)=>`<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="w">${esc(w)}</div></div>`;
+  const tile=(k,v,w)=>`<div class="tile"><div class="lab">${k}</div><div class="v">${v}</div><div class="w">${esc(w)}</div></div>`;
   if(best)body.append(el("div",{className:"tiles"},tile("Most accurate",f(best.mean),best.serve)+
-   (value?tile("Best value",`${f(value.mean)} <span class="w">@ $${f(value.usd_1k,2)}/1k</span>`,value.serve):"")+
-   (fast?tile("Fastest",`${f(fast.pages_s,2)} <span class="w">pages/s</span>`,fast.serve):"")+
-   tile("Models",`${ok.length} <span class="w">× ${ev.datasets.length} benchmarks</span>`,`${split} split`)));
+   (value?tile("Best value",`${f(value.mean)}<small>$${f(value.usd_1k,2)} / 1k</small>`,value.serve):"")+
+   (fast?tile("Fastest",`${f(fast.pages_s,2)}<small>pages/s</small>`,fast.serve):"")+
+   tile("Models",`${ok.length}<small>× ${ev.datasets.length} benchmarks</small>`,`${split} split`)));
   const g=el("div",{className:"grid2"});body.append(g);
   const card=el("div",{className:"card"});g.append(card);
-  card.append(el("h2",{textContent:"Leaderboard"}),el("div",{className:"key"},`<span>${meter(70,[60,80])} score · 95% CI</span><span>mean of ${ev.datasets.length} benchmarks · judge shown, not averaged</span>`));
-  const cols=[{t:"serve",key:"serve",l:1},{t:"mean",key:"mean"},...ev.datasets.map(d=>({t:d,key:`scores.${d}.score`})),
-   {t:"judge",key:"judge"},{t:"pages/s",key:"pages_s"},{t:"$/1k pages",key:"usd_1k"},{t:"prompt",key:"prompt",l:1}];
+  card.append(el("h2",{textContent:"Leaderboard"}),el("div",{className:"key"},`<span><span class="dot" style="background:var(--good)"></span>≥ 80</span><span><span class="dot" style="background:var(--warn)"></span>60–80</span><span><span class="dot" style="background:var(--bad)"></span>&lt; 60</span><span>hairline = 95% CI</span><span>mean of ${ev.datasets.length} benchmarks; judge not averaged in</span>`));
+  const cols=[{t:"#"},{t:"model",key:"serve",l:1},{t:"mean",key:"mean"},...ev.datasets.map(d=>({t:d,key:`scores.${d}.score`})),
+   {t:"judge",key:"judge"},{t:"pages/s",key:"pages_s"},{t:"$ / 1k",key:"usd_1k"}];
   const tbl=el("table");tbl.createTHead().append(el("tr",{},cols.map(c=>`<th class="${c.l?"l":""}">${esc(c.t)}</th>`).join("")));tbl.createTBody();card.append(tbl);
-  sortable(tbl,rows,cols,r=>el("tr",{},`<td class="l">${esc(r.serve)}<span class="tag">${esc(r.backend)}</span></td>`+
-   `<td><span class="cell" data-tip="${r.ci?`95% CI ${f(r.ci[0])}–${f(r.ci[1])}`:"not every dataset graded"}"><span class="num"><b>${f(r.mean)}</b></span>${meter(r.mean,r.ci)}</span></td>`+
-   ev.datasets.map(d=>{const s=r.scores[d];return `<td><span class="cell" data-tip="${esc(d)}: ${s?f(s.score):"—"}${s&&s.ci?` (95% CI ${f(s.ci[0])}–${f(s.ci[1])})`:""}"><span class="num">${s?f(s.score):"—"}</span>${s?meter(s.score,s.ci,1):""}</span></td>`}).join("")+
-   `<td><span class="cell" data-tip="LLM judge, 0-100"><span class="num">${f(r.judge)}</span>${r.judge!=null?meter(r.judge,null,1):""}</span></td>`+
-   `<td>${f(r.pages_s,2)}</td><td>${r.usd_1k==null?"—":"$"+f(r.usd_1k,2)}</td><td class="l note">${esc(r.prompt)}</td>`));
+  sortable(tbl,rows,cols,(r,i)=>el("tr",{},`<td class="rank">${String(i+1).padStart(2,"0")}</td>`+
+   `<td class="l name">${esc(r.serve)}<span class="meta">${esc(r.prompt||"")} · ${r.backend==="vllm"?"local vLLM":"API"}</span></td>`+
+   `<td><span class="cell" data-tip="${r.ci?`95% CI ${f(r.ci[0])}–${f(r.ci[1])}`:"not every dataset graded"}"><span class="big">${f(r.mean)}</span>${meter(r.mean,r.ci)}</span></td>`+
+   ev.datasets.map(d=>{const s=r.scores[d];return `<td><span class="cell" data-tip="${esc(d)} ${s?f(s.score):"—"}${s&&s.ci?` · 95% CI ${f(s.ci[0])}–${f(s.ci[1])}`:""}">${s?f(s.score):"—"}${s?meter(s.score,s.ci,1):""}</span></td>`}).join("")+
+   `<td><span class="cell" data-tip="LLM judge, 0–100">${f(r.judge)}${r.judge!=null?meter(r.judge,null,1):""}</span></td>`+
+   `<td>${f(r.pages_s,2)}</td><td>${r.usd_1k==null?"—":f(r.usd_1k,2)}</td>`));
   g.append(radar(ev,rows))}
  pick.onchange=draw;draw()}
 
 function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relative to the fastest serve
  const card=el("div",{className:"card"});card.append(el("h2",{textContent:"Profile"}),
-  el("div",{className:"key",textContent:"0–100 per axis · speed relative to the fastest · pick up to 8"}));
+  el("div",{className:"key",textContent:"0–100 per axis · speed relative to the fastest · up to 8 · hover a name to isolate it"}));
  const wrap=el("div",{className:"radar"});card.append(wrap);
  const axes=[...ev.datasets.map(d=>({k:d,get:r=>r.scores[d]?.score})),{k:"judge",get:r=>r.judge}];
  const fast=Math.max(...rows.map(r=>r.pages_s||0));if(fast>0)axes.push({k:"speed",get:r=>r.pages_s!=null?100*r.pages_s/fast:null});
@@ -247,15 +258,17 @@ function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relativ
  pickd.slice(0,4).forEach(r=>slots.set(r.serve,free.shift()));
  const leg=el("div",{className:"legend"});wrap.append(leg);
  function drawLegend(){leg.replaceChildren(...rows.map(r=>{const on=slots.has(r.serve);
-  const lab=el("label",{},`<input type="checkbox" ${on?"checked":""} ${!on&&!free.length?"disabled":""}><span><span class="sw" style="background:${on?`var(--s${slots.get(r.serve)})`:"var(--grid)"}"></span> ${esc(r.serve)}</span>`);
+  const lab=el("label",{},`<input type="checkbox" ${on?"checked":""} ${!on&&!free.length?"disabled":""}><span><span class="sw" style="background:${on?`var(--s${slots.get(r.serve)})`:"var(--hair)"}"></span> ${esc(r.serve)}</span>`);
+  lab.onmouseenter=()=>svg.querySelectorAll("polygon.s").forEach(p=>p.style.opacity=p.dataset.serve===r.serve?1:.15);
+  lab.onmouseleave=()=>svg.querySelectorAll("polygon.s").forEach(p=>p.style.opacity=1);
   lab.querySelector("input").onchange=e=>{if(e.target.checked){slots.set(r.serve,free.shift())}else{free.push(slots.get(r.serve));free.sort((a,b)=>a-b);slots.delete(r.serve)}drawLegend();drawPlot()};return lab}))}
- function drawPlot(){let s="";for(const v of [25,50,75,100])s+=`<polygon points="${axes.map((_,i)=>pt(i,v).join(",")).join(" ")}" fill="none" stroke="var(--grid)" stroke-width="1"/>`;
-  axes.forEach((a,i)=>{const [x,y]=pt(i,100),[lx,ly]=pt(i,118);s+=`<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="var(--grid)"/>`+
+ function drawPlot(){let s="";for(const v of [25,50,75,100])s+=`<polygon points="${axes.map((_,i)=>pt(i,v).join(",")).join(" ")}" fill="none" stroke="var(--hair)" stroke-width="1"/>`;
+  axes.forEach((a,i)=>{const [x,y]=pt(i,100),[lx,ly]=pt(i,118);s+=`<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="var(--hair)"/>`+
    `<text x="${lx}" y="${ly}" text-anchor="${Math.abs(lx-cx)<8?"middle":lx>cx?"start":"end"}" dominant-baseline="middle">${esc(a.k)}</text>`});
-  s+=`<text x="${cx+3}" y="${cy-R/2}" font-size="10">50</text><text x="${cx+3}" y="${cy-R}" font-size="10">100</text>`;
+  s+=`<text class="tick" x="${cx+4}" y="${cy-R/2}">50</text><text class="tick" x="${cx+4}" y="${cy-R}">100</text>`;
   for(const r of rows){if(!slots.has(r.serve))continue;const c=`var(--s${slots.get(r.serve)})`;
-   const ps=axes.map((a,i)=>pt(i,a.get(r)??0));s+=`<polygon points="${ps.map(p=>p.join(",")).join(" ")}" fill="${c}" fill-opacity=".04" stroke="${c}" stroke-width="2" stroke-linejoin="round"/>`;
-   ps.forEach((p,i)=>{const v=axes[i].get(r);s+=`<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="${c}" stroke="var(--surface-2)" stroke-width="2"/><circle cx="${p[0]}" cy="${p[1]}" r="10" fill="transparent" data-tip="${esc(r.serve)} · ${esc(axes[i].k)}: ${v==null?"—":f(v)}"/>`})}
+   const ps=axes.map((a,i)=>pt(i,a.get(r)??0));s+=`<polygon class="s" data-serve="${esc(r.serve)}" points="${ps.map(p=>p.join(",")).join(" ")}" fill="none" stroke="${c}" stroke-width="1.75" stroke-linejoin="round"/>`;
+   ps.forEach((p,i)=>{const v=axes[i].get(r);s+=`<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="${c}" stroke="var(--surface-1)" stroke-width="1.5"/><circle cx="${p[0]}" cy="${p[1]}" r="10" fill="transparent" data-tip="${esc(r.serve)} · ${esc(axes[i].k)}: ${v==null?"—":f(v)}"/>`})}
   svg.innerHTML=s}
  drawLegend();drawPlot();return card}
 
@@ -270,7 +283,7 @@ function runsTab(){const root=$("#runs");
    {t:"latency p95 s",key:"latency_s.p95"},{t:"errors",key:"errors"},{t:"cut",key:"truncated"},{t:"$/1k pages",key:"usd_per_1k_items"}];
   const t=el("table");t.createTHead().append(el("tr",{},cols.map(x=>`<th class="${x.l?"l":""}">${x.t}</th>`).join("")));t.createTBody();c.append(t);
   sortable(t,ev,cols,p=>el("tr",{},`<td class="l">${esc(p.eval)}</td><td class="l">${esc(p.serve)}</td><td class="l">${esc(p.dataset)}</td><td class="l">${esc(p.split)}</td><td>${p.concurrency}</td>`+
-   `<td><span class="cell"><span class="num">${f(p.items_per_s,2)}</span>${meter(top?100*(p.items_per_s||0)/top:0,null,1)}</span></td><td>${f(p.output_tok_per_s,0)}</td>`+
+   `<td><span class="cell"><span class="num">${f(p.items_per_s,2)}</span>${meter(top?100*(p.items_per_s||0)/top:0,null,1,"var(--ink-2)")}</span></td><td>${f(p.output_tok_per_s,0)}</td>`+
    `<td>${f(p.ttft_s?.p50,2)}</td><td>${f(p.latency_s?.p50,1)}</td><td>${f(p.latency_s?.p95,1)}</td><td>${p.errors}</td><td>${p.truncated}</td><td>${p.usd_per_1k_items==null?"—":"$"+f(p.usd_per_1k_items,2)}</td>`))}
  const c=el("div",{className:"card"});root.append(c);
  c.append(el("h2",{textContent:"Throughput runs"}),el("div",{className:"key",textContent:"vlmbench run · one row per concurrency"}));
@@ -280,7 +293,7 @@ function runsTab(){const root=$("#runs");
   {t:"items/s",key:"items_s"},{t:"tok/s",key:"tok_s"},{t:"TTFT p50 ms",key:"ttft_p50"},{t:"TTFT p95 ms",key:"ttft_p95"},{t:"e2e p50 ms",key:"e2e_p50"},{t:"VRAM MiB",key:"vram_mib"},{t:"when",key:"when",l:1}];
  const t=el("table");t.createTHead().append(el("tr",{},cols.map(x=>`<th class="${x.l?"l":""}">${x.t}</th>`).join("")));t.createTBody();c.append(t);
  sortable(t,D.runs,cols,r=>el("tr",{},`<td class="l">${esc(r.model)}</td><td class="l">${esc(r.backend)}</td><td class="l note">${esc(r.gpu)}</td><td>${r.concurrency??"—"}</td><td>${r.inputs??"—"}</td>`+
-  `<td>${f(r.items_s,2)}</td><td><span class="cell"><span class="num">${f(r.tok_s,0)}</span>${meter(top?100*(r.tok_s||0)/top:0,null,1)}</span></td>`+
+  `<td>${f(r.items_s,2)}</td><td><span class="cell"><span class="num">${f(r.tok_s,0)}</span>${meter(top?100*(r.tok_s||0)/top:0,null,1,"var(--ink-2)")}</span></td>`+
   `<td>${f(r.ttft_p50,0)}</td><td>${f(r.ttft_p95,0)}</td><td>${f(r.e2e_p50,0)}</td><td>${r.vram_mib??"—"}</td><td class="l note">${esc(r.when)}</td>`))}
 accTab();runsTab();
 </script></body></html>
