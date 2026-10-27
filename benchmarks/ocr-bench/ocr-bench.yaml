@@ -1,4 +1,4 @@
-# Page image -> Markdown on three public benchmarks, each graded by its own package, plus an LLM judge.
+# Page image -> Markdown on seven public benchmarks, each graded by its own package, plus an LLM judge.
 kind: Eval
 budget_usd: 10  # the most one run may spend, judges included; `--budget` overrides
 serves:
@@ -32,6 +32,22 @@ datasets:
   parsebench:
     kind: parsebench
     revision: 2805a1d940f95a203e0ae4b88be9934f7765b3fc
+    samples: 10
+  omnidocbench:
+    kind: omnidocbench
+    revision: aa1ee96d106dbe53d0ae59474d75c6e6d9b53fec
+    samples: 10
+  ccocr:
+    kind: ccocr
+    revision: c64517e92179991d509776064174776700cdd5a2
+    samples: 10
+  rdtablebench:  # CC-BY-NC-ND 4.0: internal evaluation only
+    kind: rdtablebench
+    revision: 7748503e2bd5f210d27aa2ef5fdf4b8aa13099bb
+    samples: 10
+  fintabnet:
+    kind: fintabnet
+    revision: 7c8e35d9f21abe95525e52e3c7fc0134a774d0ca
     samples: 10
 metrics:
   - judges/faithfulness.yaml

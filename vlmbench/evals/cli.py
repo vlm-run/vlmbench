@@ -14,6 +14,7 @@ def add_parsers(subparsers) -> None:
     ev.add_argument("--split", choices=["test", "dev"], default="test", help="`dev` to tune prompts, `test` to report")
     ev.add_argument("--refresh", action="store_true", help="Ignore cached replies and call again")
     ev.add_argument("--samples", type=int, default=None, help="Items per dataset for this run (0: every item)")
+    ev.add_argument("--no-judges", action="store_true", help="Skip the eval's LLM judges (they cost a call per reply)")
     ev.add_argument("--budget", type=float, default=None, help="Most this run may spend in USD (overrides budget_usd)")
     li = subparsers.add_parser("lint", help="Check configs and benchmark folders load and follow the layout.")
     li.add_argument("paths", type=Path, nargs="*", help="Files or folders (default: configs/ benchmarks/)")

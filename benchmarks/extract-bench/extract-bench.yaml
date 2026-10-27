@@ -21,3 +21,13 @@ datasets:
     revision: f2ae30264ecd942fa0a9b9e787bb42e1e2577184
     samples: 10
     long_edge: 1600
+  extractbench_pro:
+    kind: extractbench_pro
+    revision: 60b101709fe6e4c2925a494ef98e91f9ecbc300c
+    samples: 10
+    long_edge: 1600
+  realdoc:
+    kind: realdoc
+    revision: 08dde9d20d844943fc328b161f9d332c7e8bdee4
+    samples: 10
+    long_edge: 1600

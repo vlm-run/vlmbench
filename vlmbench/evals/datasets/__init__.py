@@ -9,14 +9,32 @@ JSON schema) after the serve's prompt.
 A model's own output format is the serve's `postprocess`, applied once when the reply arrives.
 """
 
-from vlmbench.evals.datasets import extractbench, longarray, olmocr_bench, omniparse, parsebench
+from vlmbench.evals.datasets import (
+    ccocr,
+    extractbench,
+    extractbench_pro,
+    fintabnet,
+    longarray,
+    olmocr_bench,
+    omnidocbench,
+    omniparse,
+    parsebench,
+    rdtablebench,
+    realdoc,
+)
 
 DATASETS = {
     "omniparse": omniparse,
     "olmocr_bench": olmocr_bench,
     "parsebench": parsebench,
+    "omnidocbench": omnidocbench,
+    "ccocr": ccocr,
+    "rdtablebench": rdtablebench,
+    "fintabnet": fintabnet,
     "extractbench": extractbench,
+    "extractbench_pro": extractbench_pro,
     "longarray": longarray,
+    "realdoc": realdoc,
 }
 
 

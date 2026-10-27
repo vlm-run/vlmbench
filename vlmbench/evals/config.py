@@ -118,7 +118,20 @@ def backend_name(backend: dict) -> str:
     return _HOSTS.get(host, host)
 
 
-Kind = Literal["omniparse", "olmocr_bench", "parsebench", "extractbench", "longarray"]
+Kind = Literal[
+    "omniparse",
+    "olmocr_bench",
+    "parsebench",
+    "omnidocbench",
+    "ccocr",
+    "rdtablebench",
+    "fintabnet",
+    "extractbench",
+    "extractbench_pro",
+    "longarray",
+    "realdoc",
+    "omniextract",
+]
 
 
 class DatasetSpec(Strict):

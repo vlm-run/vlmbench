@@ -146,12 +146,15 @@ def run(
     log=print,
     samples=None,
     budget: float | None = None,
+    judges: bool = True,
 ) -> Path:
     """One event loop for the whole run: the pacing locks and HTTP clients are bound to it."""
-    return asyncio.run(_run(bench, only, datasets, split, refresh, log, samples, budget))
+    return asyncio.run(_run(bench, only, datasets, split, refresh, log, samples, budget, judges))
 
 
-async def _run(bench: Path, only, datasets, split: str, refresh: bool, log, samples=None, budget=None) -> Path:
+async def _run(
+    bench: Path, only, datasets, split: str, refresh: bool, log, samples=None, budget=None, judges: bool = True
+) -> Path:
     configure()
     home = Settings().home
     ev, serves, metrics = bench_files(bench)
@@ -184,7 +187,7 @@ async def _run(bench: Path, only, datasets, split: str, refresh: bool, log, samp
         short = {(n, d) for n in names for d in ds_names if any(r.get("budget") for r in replies[n][d][0])}
         for n, d in sorted(short):
             log(f"{n} · {d}: not graded, the {_usd(cap)} budget ran out (rerun with more; replies so far are cached)")
-        judges = {m.name: (m, load(m.judge)) for m in metrics}
+        judges = {m.name: (m, load(m.judge)) for m in metrics} if judges else {}
         page_ds = [d for d in ds_names if not getattr(DATASETS[ev.datasets[d].kind], "DOCUMENT", False)]
         keys = [
             (n, d, m) for n in names for d in page_ds for m in judges if (n, d) not in short
