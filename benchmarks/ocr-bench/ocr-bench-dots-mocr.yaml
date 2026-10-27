@@ -1,0 +1,4 @@
+kind: Serve
+extends: ../../configs/dots-mocr.yaml
+request:
+  method: markdown

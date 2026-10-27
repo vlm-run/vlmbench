@@ -3203,6 +3203,9 @@ def build_parser() -> argparse.ArgumentParser:
     # ── profiles subcommand ──
     subparsers.add_parser("profiles", help="List available model profiles.")
 
+    from vlmbench.evals.cli import add_parsers
+
+    add_parsers(subparsers)
     return parser
 
 
@@ -3670,7 +3673,7 @@ def main() -> None:
 
     # If no subcommand given (first arg starts with -- or -), insert "run"
     argv = sys.argv[1:]
-    subcommands = {"compare", "profiles"}
+    subcommands = {"compare", "profiles", "eval", "validate", "board"}
     if argv and argv[0] not in subcommands and not argv[0].startswith("--help"):
         if argv[0].startswith("--") or argv[0].startswith("-"):
             argv = ["run"] + argv
@@ -3691,6 +3694,10 @@ def main() -> None:
             cmd_compare(parsed)
         case "profiles":
             cmd_profiles()
+        case "eval" | "validate" | "board":
+            from vlmbench.evals.cli import dispatch
+
+            dispatch(parsed, console)
 
 
 if __name__ == "__main__":

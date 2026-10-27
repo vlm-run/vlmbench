@@ -1,0 +1,4 @@
+kind: Serve
+extends: ocr-bench-gemini-3.5-flash-lite.yaml
+request:
+  prompt: prompts/ocr-md-v2.md

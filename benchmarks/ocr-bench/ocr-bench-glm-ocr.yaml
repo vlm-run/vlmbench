@@ -1,0 +1,4 @@
+kind: Serve
+extends: ../../configs/glm-ocr.yaml
+request:
+  method: markdown

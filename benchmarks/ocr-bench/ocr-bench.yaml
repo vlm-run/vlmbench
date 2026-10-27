@@ -1,0 +1,36 @@
+# Page image -> Markdown on three public benchmarks, each graded by its own package, plus an LLM judge.
+kind: Eval
+serves:
+  - deepseek-ocr-2
+  - dots-mocr
+  - glm-ocr
+  - lightonocr-3-4b
+  - paddleocr-vl-1.6
+  - pp-ocrv6
+  - vlm-run-ocr-auto
+  - gemini-3.5-flash-lite
+  - gemini-3.7-flash
+  - gemini-3.8-flash
+  - gemini-4-argon
+  - gemini-3.5-flash-lite-md-v2
+  - gemini-3.7-flash-md-v2
+  - gemini-3.8-flash-md-v2
+  - gemini-4-argon-md-v2
+  - gemma4-26b
+  - diffusiongemma-26b
+  - nemotron-3.5-parse
+datasets:
+  omniparse:
+    kind: omniparse
+    revision: 56a3c4f7fa99b01ed411410ef84929d41ee60ebf
+    samples: 10
+  olmocr:
+    kind: olmocr_bench
+    revision: 54a96a6fb6a2bd3b297e59869491db4d3625b711
+    samples: 10
+  parsebench:
+    kind: parsebench
+    revision: 2805a1d940f95a203e0ae4b88be9934f7765b3fc
+    samples: 10
+metrics:
+  - judges/faithfulness.yaml

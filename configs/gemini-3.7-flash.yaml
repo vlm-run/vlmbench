@@ -1,0 +1,3 @@
+kind: Serve
+extends: _vlmrun-gateway.yaml
+model: google/gemini-3.7-flash

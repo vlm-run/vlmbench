@@ -1,0 +1,5 @@
+kind: Serve
+extends: ../../configs/gemini-3.5-flash-lite.yaml
+request:
+  prompt: prompts/ocr-md-v1.md
+  max_tokens: 16384

@@ -1,0 +1,21 @@
+# Nemotron 3.5 Parse: vLLM 0.30.0 built from the model repo's Dockerfile, weights and chat template baked in.
+kind: Serve
+model: nvidia/Nemotron-3.5-Parse
+backend:
+  type: vllm
+  image: vlmft-nemotron-parse:v0.30.0
+  weights: /workspace
+  args:
+    - --trust-remote-code
+    - --dtype=bfloat16
+    - --distributed-executor-backend=uni
+    - --max-model-len=16384
+    - --max-num-seqs=128
+    - --max-num-batched-tokens=16384
+    - --no-enable-prefix-caching
+    - --gpu-memory-utilization=0.85
+    - '--limit-mm-per-prompt={"image": 1}'
+    - --chat-template=/workspace/chat_template.jinja
+  gpu_hour_usd: 0.70
+request:
+  concurrency: 64

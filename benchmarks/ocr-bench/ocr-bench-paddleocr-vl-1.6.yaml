@@ -1,0 +1,4 @@
+kind: Serve
+extends: ../../configs/paddleocr-vl-1.6.yaml
+request:
+  method: markdown

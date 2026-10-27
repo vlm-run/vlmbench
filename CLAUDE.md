@@ -5,7 +5,10 @@ Single-file, drop-in VLM benchmark CLI for your agents.
 ## Project Structure
 
 ```
-vlmbench/cli.py             # The entire CLI — single-file, all logic here
+vlmbench/cli.py             # `run`, `compare`, `profiles` (throughput), and the argparse entry point
+vlmbench/evals/             # `eval`, `validate`, `board`: accuracy + performance on benchmark folders
+configs/                    # kind: Serve — how to reach a model (local vLLM, gateway, any OpenAI-compatible API)
+benchmarks/<bench>/         # <bench>.yaml (kind: Eval), <bench>-<model>.yaml serves, prompts/, judges/
 pyproject.toml              # Package config, version, dependencies
 .claude/skills/vlmbench/MODELS.md  # Tested models and their vLLM --serve-args
 ```
@@ -48,7 +51,8 @@ make test
 
 ## Guidelines
 
-- Keep cli.py as a single file. Do not split into modules.
+- Throughput (`run`) stays in cli.py. Evals live in `vlmbench/evals/`, one module per concern (config, cache, client,
+  data, datasets/, serving, results, runner); a new benchmark is one module in `evals/datasets/`.
 - Version is defined in `vlmbench/version.py`. Update it in one place only.
 - **Always run `make lint` before pushing commits.** Fix any errors before pushing.
 - **Python 3.11+** — use modern features: `tomllib`, `StrEnum`, `ExceptionGroup`, `TaskGroup`, `type X = ...` aliases, `match/case`, `datetime.fromisoformat` improvements. Avoid legacy patterns and `from __future__ import annotations`.

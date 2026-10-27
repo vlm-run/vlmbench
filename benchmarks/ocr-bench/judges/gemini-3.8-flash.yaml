@@ -1,0 +1,6 @@
+kind: Serve
+extends: ../../../configs/gemini-3.8-flash.yaml
+request:
+  temperature: 0.0
+  max_tokens: 4096
+  concurrency: 16

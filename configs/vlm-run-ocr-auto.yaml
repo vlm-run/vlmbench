@@ -1,0 +1,3 @@
+kind: Serve
+extends: _vlmrun-gateway.yaml
+model: vlm-run/ocr:auto

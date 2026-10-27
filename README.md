@@ -111,6 +111,33 @@ uvx vlmbench run -m Qwen/Qwen3-VL-2B-Instruct \
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ```
 
+## Evals: accuracy + performance
+
+Benchmarks are folders of YAML, validated by pydantic:
+
+```
+configs/gemini-3.8-flash.yaml          # kind: Serve: how to reach the model
+benchmarks/ocr-bench/ocr-bench.yaml    # kind: Eval: serves x datasets x judges
+benchmarks/ocr-bench/ocr-bench-gemini-3.8-flash.yaml   # kind: Serve, extends the config, sets the prompt
+benchmarks/ocr-bench/prompts/ocr-md-v2.md              # versioned prompts, shared by any serve
+benchmarks/ocr-bench/judges/faithfulness.yaml          # kind: Metric: an LLM judge
+```
+
+```bash
+uv sync --extra evals                                  # the benchmarks' own graders (Python 3.12)
+vlmbench validate benchmarks/ocr-bench                 # resolved serves, config ids, prompts
+vlmbench eval benchmarks/ocr-bench                     # every serve x every dataset (test split)
+vlmbench eval benchmarks/ocr-bench -s gemini-3.8-flash -d parsebench --split dev   # tune on dev pages
+vlmbench board benchmarks/ocr-bench                    # latest scores, throughput, $ per 1k pages
+```
+
+- Local serves (`backend.type: vllm`) run one container at a time on a free GPU; remote serves run in parallel.
+- Replies are cached on disk (`~/.vlmbench/cache.sqlite`), keyed by config id and page bytes: re-grading or adding a
+  model calls nothing twice. `--refresh` calls again. Cache hits are never timed.
+- `result.json` holds `configs`, `performance` and `accuracy` rows joined on (`model_id`, `config_id`), with 95%
+  page-bootstrap intervals; `replies.jsonl` and `units.jsonl` sit beside it.
+- With `uv sync --extra logfire` and `LOGFIRE_TOKEN` set, every eval, dataset and request is a Logfire span.
+
 ## Leaderboard
 
 Best peak throughput per model on NVIDIA RTX PRO 6000 Blackwell (vLLM v0.15.1, 39 runs across concurrency sweeps):
