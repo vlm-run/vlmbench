@@ -46,11 +46,20 @@ def _eval(root: Path) -> dict:
                     "judge": round(sum(judged) / len(judged), 1) if judged else None,
                     "pages_s": _mean([p["items_per_s"] for p in ps]),
                     "usd_1k": _mean([p["usd_per_1k_items"] for p in ps]),
+                    "cost": round(sum(p["cost_usd"] or 0 for p in ps), 4) if any(p["cost_usd"] for p in ps) else None,
+                    "gpu_rate": cfg["backend"].get("gpu_hour_usd"),
                     "ttft_p50": _mean([(p.get("ttft_s") or {}).get("p50") for p in ps]),
                 }
             )
         out["splits"][split] = sorted(serves, key=lambda s: -(s["mean"] or 0))
-    out["perf"] = [p | {"serve": p["serve"].removeprefix(f"{root.name}-")} for p in perf]
+    out["perf"] = [
+        p
+        | {
+            "serve": p["serve"].removeprefix(f"{root.name}-"),
+            "gpu_rate": configs.get(p["config_id"], {}).get("backend", {}).get("gpu_hour_usd"),
+        }
+        for p in perf
+    ]
     return out
 
 
@@ -183,6 +192,8 @@ svg polygon.s{transition:opacity .15s}
 <script>
 const D=/*DATA*/null;
 const $=(s,r=document)=>r.querySelector(s), el=(t,a={},h="")=>{const e=document.createElement(t);Object.assign(e,a);if(h)e.innerHTML=h;return e};
+const usd=(v,rate)=>{if(v==null)return"—";const t="$"+(+v).toFixed(v>=1?2:v>=.01?3:4);
+ return rate?`<span class="cell" data-tip="GPU time at $${f(rate,2)}/h, not billed">~${t}</span>`:t};
 const f=(v,d=1)=>v==null?"—":(+v).toFixed(d), esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const tip=$("#tip");
 document.addEventListener("mousemove",e=>{const t=e.target.closest("[data-tip]");if(!t){tip.style.opacity=0;return}
@@ -231,7 +242,7 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   const card=el("div",{className:"card"});g.append(card);
   card.append(el("h2",{textContent:"Leaderboard"}),el("div",{className:"key"},`<span><span class="dot" style="background:var(--good)"></span>≥ 80</span><span><span class="dot" style="background:var(--warn)"></span>60–80</span><span><span class="dot" style="background:var(--bad)"></span>&lt; 60</span><span>hairline = 95% CI</span><span>mean of ${ev.datasets.length} benchmarks; judge not averaged in</span>`));
   const cols=[{t:"#"},{t:"model",key:"serve",l:1},{t:"backend",key:"backend",l:1},{t:"mean",key:"mean"},...ev.datasets.map(d=>({t:d,key:`scores.${d}.score`})),
-   {t:"judge",key:"judge"},{t:"items/s",key:"pages_s"},{t:"$ / 1k",key:"usd_1k"}];
+   {t:"judge",key:"judge"},{t:"items/s",key:"pages_s"},{t:"$ / 1k",key:"usd_1k"},{t:"cost",key:"cost"}];
   const tbl=el("table");tbl.createTHead().append(el("tr",{},cols.map(c=>`<th class="${c.l?"l":""}">${esc(c.t)}</th>`).join("")));tbl.createTBody();card.append(tbl);
   let rad=null;
   sortable(tbl,rows,cols,(r,i)=>hover(el("tr",{},`<td class="rank">${String(i+1).padStart(2,"0")}</td>`+
@@ -239,7 +250,7 @@ function accTab(){const root=$("#acc");root.replaceChildren();
    `<td><span class="cell" data-tip="${r.ci?`95% CI ${f(r.ci[0])}–${f(r.ci[1])}`:"not every dataset graded"}"><span class="big">${f(r.mean)}</span>${meter(r.mean,r.ci)}</span></td>`+
    ev.datasets.map(d=>{const s=r.scores[d];return `<td><span class="cell" data-tip="${esc(d)} ${s?f(s.score):"—"}${s&&s.ci?` · 95% CI ${f(s.ci[0])}–${f(s.ci[1])}`:""}">${s?f(s.score):"—"}${s?meter(s.score,s.ci,1):""}</span></td>`}).join("")+
    `<td><span class="cell" data-tip="LLM judge, 0–100">${f(r.judge)}${r.judge!=null?meter(r.judge,null,1):""}</span></td>`+
-   `<td>${f(r.pages_s,2)}</td><td>${r.usd_1k==null?"—":f(r.usd_1k,2)}</td>`),r));
+   `<td>${f(r.pages_s,2)}</td><td>${r.usd_1k==null?"—":f(r.usd_1k,2)}</td><td>${usd(r.cost,r.gpu_rate)}</td>`),r));
   function hover(tr,r){tr.onmouseenter=()=>rad?.focus(r.serve);tr.onmouseleave=()=>rad?.focus(null);return tr}
   rad=radar(ev,rows);g.append(rad.card)}
  pick.onchange=draw;draw()}
@@ -290,13 +301,14 @@ function runsTab(){const root=$("#runs");
  if(ev.length){const c=el("div",{className:"card"});root.append(c);
   c.append(el("h2",{textContent:"Eval throughput"}),el("div",{className:"key",textContent:"per serve × dataset · live calls only"}));
   const top=Math.max(...ev.map(p=>p.items_per_s||0));
-  const cols=[{t:"eval",key:"eval",l:1},{t:"serve",key:"serve",l:1},{t:"dataset",key:"dataset",l:1},{t:"split",key:"split",l:1},{t:"conc.",key:"concurrency"},
-   {t:"items/s",key:"items_per_s"},{t:"out tok/s",key:"output_tok_per_s"},{t:"TTFT p50 s",key:"ttft_s.p50"},{t:"latency p50 s",key:"latency_s.p50"},
-   {t:"latency p95 s",key:"latency_s.p95"},{t:"errors",key:"errors"},{t:"cut",key:"truncated"},{t:"$/1k items",key:"usd_per_1k_items"}];
+  const cols=[{t:"serve",key:"serve",l:1},{t:"dataset",key:"dataset",l:1},{t:"split",key:"split",l:1},{t:"conc.",key:"concurrency"},
+   {t:"items/s",key:"items_per_s"},{t:"cost",key:"cost_usd"},{t:"$/1k items",key:"usd_per_1k_items"},{t:"out tok/s",key:"output_tok_per_s"},
+   {t:"TTFT p50 s",key:"ttft_s.p50"},{t:"latency p50 · p95 s",key:"latency_s.p50"},{t:"errors",key:"errors"},{t:"cut",key:"truncated"}];
   const t=el("table");t.createTHead().append(el("tr",{},cols.map(x=>`<th class="${x.l?"l":""}">${x.t}</th>`).join("")));t.createTBody();c.append(t);
-  sortable(t,ev,cols,p=>el("tr",{},`<td class="l">${esc(p.eval)}</td><td class="l">${esc(p.serve)}</td><td class="l">${esc(p.dataset)}</td><td class="l">${esc(p.split)}</td><td>${p.concurrency}</td>`+
-   `<td><span class="cell"><span class="num">${f(p.items_per_s,2)}</span>${meter(top?100*(p.items_per_s||0)/top:0,null,1,"var(--ink-2)")}</span></td><td>${f(p.output_tok_per_s,0)}</td>`+
-   `<td>${f(p.ttft_s?.p50,2)}</td><td>${f(p.latency_s?.p50,1)}</td><td>${f(p.latency_s?.p95,1)}</td><td>${p.errors}</td><td>${p.truncated}</td><td>${p.usd_per_1k_items==null?"—":"$"+f(p.usd_per_1k_items,2)}</td>`))}
+  sortable(t,ev,cols,p=>el("tr",{},`<td class="l name">${esc(p.serve)}<span class="meta">${esc(p.eval)}</span></td><td class="l">${esc(p.dataset)}</td><td class="l">${esc(p.split)}</td><td>${p.concurrency}</td>`+
+   `<td><span class="cell"><span class="num">${f(p.items_per_s,2)}</span>${meter(top?100*(p.items_per_s||0)/top:0,null,1,"var(--ink-2)")}</span></td>`+
+   `<td>${usd(p.cost_usd,p.gpu_rate)}</td><td>${p.usd_per_1k_items==null?"—":"$"+f(p.usd_per_1k_items,2)}</td><td>${f(p.output_tok_per_s,0)}</td>`+
+   `<td>${f(p.ttft_s?.p50,2)}</td><td>${f(p.latency_s?.p50,1)} · ${f(p.latency_s?.p95,1)}</td><td>${p.errors}</td><td>${p.truncated}</td>`))}
  const c=el("div",{className:"card"});root.append(c);
  c.append(el("h2",{textContent:"Throughput runs"}),el("div",{className:"key",textContent:"vlmbench run · one row per concurrency"}));
  if(!D.runs.length){c.append(el("p",{className:"empty",textContent:"No runs yet."}));return}
