@@ -238,6 +238,15 @@ table.dense tr:hover td.name{background:var(--hover)}
 .legend input{accent-color:var(--ink-1)}
 .legend .sw{width:14px;height:2px;border-radius:1px;display:inline-block}
 .legend input:disabled+span{opacity:.35}
+.colm{min-width:0}
+.bars .key .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.bars .key .sw.mean{height:2px;background:var(--ink-1);border-radius:0;vertical-align:3px}
+.bars .key .sw.lead{height:0;border-top:1px dashed #1E5ACA;border-radius:0;vertical-align:3px}
+.barsvg svg{display:block;overflow:visible}.barsvg .ax{font:500 10.5px "Geist Mono",monospace;fill:var(--ink-3)}
+.barsvg text{text-transform:none;letter-spacing:0}.barsvg .xl{font:500 11px "Geist Mono",monospace;fill:var(--ink-2)}.barsvg .mv{font:700 11px "Geist Mono",monospace;fill:var(--ink-1)}
+.barsvg .top{fill:#1E5ACA}.barsvg .ld{stroke:#1E5ACA}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .barsvg .top{fill:#7aa5f5}:root:where(:not([data-theme="light"])) .barsvg .ld{stroke:#7aa5f5}}
+:root[data-theme="dark"] .barsvg .top{fill:#7aa5f5}:root[data-theme="dark"] .barsvg .ld{stroke:#7aa5f5}.barsvg g.grp{transition:opacity .12s}.barsvg.hov g.grp:not(.on){opacity:.3}
 /* the profile sits above the leaderboard; on a wide screen, beside it and pinned, so a hovered row's profile stays in view */
 .grid2{display:flex;flex-direction:column}.grid2>.side{order:-1}
 @media (min-width:1760px){main{max-width:1720px}
@@ -273,7 +282,7 @@ const frame=t=>{const w=el("div",{className:"frame"});w.append(t);
 // search: every word must appear in a row's model, backend, prompt, eval, dataset or split; ranks are kept
 const Q={terms:[]}, hay=r=>[r.serve,r.model,r.backend,r.prompt,r.eval,r.dataset,r.split,r.gpu].filter(Boolean).join(" ").toLowerCase();
 const match=r=>Q.terms.every(t=>hay(r).includes(t));
-$("#q").oninput=e=>{Q.terms=e.target.value.toLowerCase().split(/\s+/).filter(Boolean);document.querySelectorAll("table").forEach(t=>t.redraw?.())};
+$("#q").oninput=e=>{Q.terms=e.target.value.toLowerCase().split(/\s+/).filter(Boolean);document.querySelectorAll("table,.bars").forEach(t=>t.redraw?.())};
 document.addEventListener("keydown",e=>{const q=$("#q");
  if(e.key==="/"&&document.activeElement!==q&&!/input|select|textarea/i.test(document.activeElement?.tagName)){e.preventDefault();q.focus()}
  else if(e.key==="Escape"&&document.activeElement===q){q.value="";q.oninput({target:q});q.blur()}});
@@ -359,7 +368,8 @@ function accTab(){const root=$("#acc");root.replaceChildren();
    (fast?tile("Fastest",`${f(fast.pages_s,2)}<small>${ev.unit}/s</small>`,fast.serve):"")+
    tile("Models",`${ok.length}<small>${ds?esc(ds):`× ${sel.length} benchmarks`}</small>`,`${split} split`)));
   const g=el("div",{className:"grid2"});body.append(g);
-  const card=el("div",{className:"card"});g.append(card);
+  const colm=el("div",{className:"colm"});g.append(colm);
+  const card=el("div",{className:"card"});colm.append(card);
   card.append(el("h2",{textContent:"Leaderboard"}),el("div",{className:"key"},`<span><span class="dot" style="background:var(--good)"></span>≥ 80</span><span><span class="dot" style="background:var(--warn)"></span>60–80</span><span><span class="dot" style="background:var(--bad)"></span>&lt; 60</span><span>hairline = 95% CI</span><span>${ds?`${esc(ds)} score, then its metrics and categories`:`mean of ${sel.length} benchmarks; judge not averaged in`}</span>`));
   // between score and judge: every dataset, or one dataset's metrics then its categories (each name once)
   const mid=[];
@@ -384,8 +394,44 @@ function accTab(){const root=$("#acc");root.replaceChildren();
    `<td><span class="cell stack" data-tip="LLM judge, 0–100">${f(r.judge)}${r.judge!=null?meter(r.judge,null,1):""}</span></td>`+
    `<td>${f(r.pages_s,2)}</td><td>${r.usd_1k==null?"—":(r.gpu_rate?`<span class="cell" data-tip="GPU time at $${f(r.gpu_rate,2)}/h, not billed">~$${f(r.usd_1k,2)}</span>`:"$"+f(r.usd_1k,2))}</td>`),r));
   function hover(tr,r){tr.onmouseenter=()=>rad?.focus(r.serve);tr.onmouseleave=()=>rad?.focus(null);return tr}
-  rad=radar(ds?ev:{...ev,datasets:sel},rows);g.append(rad.card)}
+  rad=radar(ds?ev:{...ev,datasets:sel},rows);g.append(rad.card);
+  colm.append(bars(ev,rows,mid,ds,rad))}
  pick.onchange=draw;dpick.onchange=draw;draw()}
+
+// grouped bars: one group per model (ranked as the leaderboard), one bar per benchmark (or, for one dataset, per metric
+// and category); the leader banded, every group's mean a tick and its one label, each bar's value on hover
+function bars(ev,rows,mid,ds,rad){
+ const card=el("div",{className:"card bars"}), ser=mid.filter(c=>!/ratio/i.test(c.t));
+ const ORDER=[1,2,4,7,5,3,8,6]; // palette order by dataset position: any default subset stays far apart in hue
+ const hue=(c,i)=>`var(--s${ORDER[(ds?i:Math.max(0,ev.datasets.indexOf(c.t)))%8]})`;
+ card.append(el("h2",{textContent:ds?`${ds}, by metric and category`:"Scores by benchmark"}),
+  el("div",{className:"key"},ser.map((c,i)=>`<span><span class="sw" style="background:${hue(c,i)}"></span>${esc(c.t)}</span>`).join("")+
+   `<span><span class="sw mean"></span>mean</span><span><span class="sw lead"></span>leader's mean</span>`));
+ const wrap=el("div",{className:"barsvg"});card.append(wrap);
+ function draw(){
+  const rs=rows.filter(match).filter(r=>r.mean!=null||ser.some(c=>c.get(r)!=null));
+  if(!rs.length){wrap.innerHTML=`<p class="empty">Nothing to chart.</p>`;return}
+  const reach=Math.max(...rs.map(r=>r.serve.length))*6.6*Math.SQRT1_2; // a 45° label's horizontal and vertical extent
+  const W=1200,T=30,gw0=(W-40)/rs.length,L=Math.max(34,Math.round(reach-gw0/2+8)),B=Math.round(reach+28),H=300+B,pw=W-L-6,ph=H-T-B,y=v=>T+ph*(1-Math.max(0,Math.min(100,v))/100);
+  const gw=pw/rs.length,bw=Math.max(3,Math.min(16,(gw*.8-2*(ser.length-1))/ser.length)),cw=ser.length*bw+2*(ser.length-1);
+  const lead=rs.filter(r=>r.mean!=null).sort((a,b)=>b.mean-a.mean)[0];
+  let o=`<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Scores per model and benchmark">`;
+  for(const v of [0,20,40,60,80,100])o+=`<line x1="${L}" x2="${W-6}" y1="${y(v)}" y2="${y(v)}" stroke="var(--hair)" stroke-width="1"/>`+
+   `<text x="${L-8}" y="${y(v)+4}" text-anchor="end" class="ax">${v}</text>`;
+  rs.forEach((r,gi)=>{const x0=L+gi*gw, bx=x0+(gw-cw)/2, top=r===lead;
+   o+=`<g class="grp" data-serve="${esc(r.serve)}"><rect x="${x0}" y="${T}" width="${gw}" height="${ph}" fill="${top?"rgba(30,90,202,.07)":"transparent"}"/>`;
+   let hi=r.mean??0;
+   ser.forEach((c,i)=>{const v=c.get(r);if(v==null)return;hi=Math.max(hi,v);
+    const x=bx+i*(bw+2),yt=y(v),yb=y(0),rr=Math.min(3,bw/2,yb-yt);
+    o+=`<path d="M${x},${yb}V${yt+rr}Q${x},${yt} ${x+rr},${yt}H${x+bw-rr}Q${x+bw},${yt} ${x+bw},${yt+rr}V${yb}Z" fill="${hue(c,i)}" data-tip="${esc(r.serve)} · ${esc(c.t)} ${f(v)}"/>`});
+   if(r.mean!=null)o+=`<line x1="${bx-3}" x2="${bx+cw+3}" y1="${y(r.mean)}" y2="${y(r.mean)}" stroke="var(--ink-1)" stroke-width="1.5" data-tip="${esc(r.serve)} · mean ${f(r.mean)}"/>`+
+    `<text x="${x0+gw/2}" y="${y(hi)-8}" text-anchor="middle" class="mv${top?" top":""}">${f(r.mean)}</text>`;
+   o+=`<text transform="translate(${x0+gw/2+3},${H-B+14}) rotate(-45)" text-anchor="end" class="xl${top?" top":""}">${esc(r.serve)}</text></g>`});
+  if(lead)o+=`<line x1="${L}" x2="${W-6}" y1="${y(lead.mean)}" y2="${y(lead.mean)}" class="ld" stroke-width="1" stroke-dasharray="4 4" opacity=".6"/>`;
+  wrap.innerHTML=o+"</svg>";
+  wrap.querySelectorAll("g.grp").forEach(g=>{g.onmouseenter=()=>{wrap.classList.add("hov");g.classList.add("on");rad?.focus(g.dataset.serve)};
+   g.onmouseleave=()=>{wrap.classList.remove("hov");g.classList.remove("on");rad?.focus(null)}})}
+ card.redraw=draw;draw();return card}
 
 function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relative to the fastest serve
  const card=el("div",{className:"card side"});card.append(el("h2",{textContent:"Profile"}),
