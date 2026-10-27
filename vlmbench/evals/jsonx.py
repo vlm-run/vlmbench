@@ -14,7 +14,7 @@ def parse(text: str | None) -> dict | None:
         try:
             v = json.loads(candidate)
             return v if isinstance(v, dict) else {"value": v}
-        except (json.JSONDecodeError, TypeError):
+        except (ValueError, TypeError, RecursionError):  # also a runaway reply: a 16,000-digit number, deep nesting
             pass
     start = text.find("{")
     if start < 0:
@@ -22,7 +22,7 @@ def parse(text: str | None) -> dict | None:
     try:
         v, _ = json.JSONDecoder().raw_decode(text[start:])
         return v if isinstance(v, dict) else None
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
         return None
 
 

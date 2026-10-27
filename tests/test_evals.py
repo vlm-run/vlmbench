@@ -171,6 +171,7 @@ def test_json_replies_parse_leniently_and_windows_merge():
     assert parse('```json\n{"a": 1}\n```') == {"a": 1}
     assert parse('Here you go: {"a": [1, 2]} hope it helps') == {"a": [1, 2]}
     assert parse("no json") is None
+    assert parse('{"a": ' + "9" * 16288 + "}") is None  # a runaway reply is unparsed, never a crash
     a = {"name": "ACME", "rows": [{"x": 1}], "meta": {"date": None}}
     b = {"name": "other", "rows": [{"x": 2}], "meta": {"date": "2026-01-01"}}
     assert merge(a, b) == {"name": "ACME", "rows": [{"x": 1}, {"x": 2}], "meta": {"date": "2026-01-01"}}

@@ -51,18 +51,26 @@ def items(spec: DatasetSpec) -> list[Item]:
 
 
 def tables(text: str) -> list[str]:
-    """Every outermost `<table>` in a reply (unclosed ones closed); pipe tables via `markdown` when none."""
+    """Every outermost `<table>` with cells in a reply (unclosed ones closed); pipe tables via `markdown` when none.
+    A reply can open `<table>` and then write a pipe table inside it: that empty `<table>` does not hide the pipes."""
     import markdown
     from lxml import etree, html
 
+    def found(h: str) -> list[str]:
+        doc = html.fromstring(f"<div>{h}</div>")
+        return [
+            etree.tostring(t, encoding="unicode", with_tail=False)
+            for t in doc.xpath("//table[not(ancestor::table)]")
+            if t.xpath(".//td|.//th")
+        ]
+
     if not text or not text.strip():
         return []
-    if not re.search(r"<table\b", text, re.I):
-        text = markdown.markdown(text, extensions=["tables"])
-        if "<table" not in text:
-            return []
-    doc = html.fromstring(f"<div>{text}</div>")
-    return [etree.tostring(t, encoding="unicode", with_tail=False) for t in doc.xpath("//table[not(ancestor::table)]")]
+    out = found(text) if re.search(r"<table\b", text, re.I) else []
+    if not out:
+        md = markdown.markdown(re.sub(r"</?table\b[^>]*>", "", text, flags=re.I), extensions=["tables"])
+        out = found(md) if "<table" in md else []
+    return out
 
 
 # --- convert.py (verbatim logic) ---
