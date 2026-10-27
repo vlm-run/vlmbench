@@ -29,6 +29,13 @@ def _root(revision: str) -> Path:
 
 
 @cache
+def _pool() -> ProcessPoolExecutor:
+    """One worker pool per run: spawning and importing the evaluator is most of a small grade's time.
+    Spawn, not fork: forking a process that runs olmOCR's browser threads deadlocks the workers."""
+    return ProcessPoolExecutor(8, mp_context=multiprocessing.get_context("spawn"))
+
+
+@cache
 def _cases(revision: str) -> dict:
     from parse_bench.test_cases.loader import load_test_cases
 
@@ -104,11 +111,9 @@ def score(spec: DatasetSpec, its: list[Item], replies: dict[str, str]) -> dict:
     agg = EvaluationRunner(output_dir=Path("/tmp"))
     by: dict[str, list] = {}
     units: dict[str, dict[str, list[float]]] = {}
-    # spawn: forking a process that runs olmOCR's browser threads deadlocks the workers
-    with ProcessPoolExecutor(8, mp_context=multiprocessing.get_context("spawn")) as pool:
-        for item, dim, res in pool.map(_evaluate, jobs):
-            by.setdefault(dim, []).append(res)
-            if (v := agg._aggregate_metrics([res]).get(f"avg_{HEADLINE[dim]}")) is not None:
-                units.setdefault(item, {})[dim] = [v, 1]  # the page's own value; a dimension averages pages
+    for item, dim, res in _pool().map(_evaluate, jobs):
+        by.setdefault(dim, []).append(res)
+        if (v := agg._aggregate_metrics([res]).get(f"avg_{HEADLINE[dim]}")) is not None:
+            units.setdefault(item, {})[dim] = [v, 1]  # the page's own value; a dimension averages pages
     dims = {d: 100 * agg._aggregate_metrics(rs)[f"avg_{HEADLINE[d]}"] for d, rs in by.items()}
     return {"score": sum(dims.values()) / max(len(dims), 1), "metrics": dims, "by_category": dims, "units": units}
