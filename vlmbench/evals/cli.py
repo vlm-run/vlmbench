@@ -1,4 +1,4 @@
-"""`vlmbench eval | lint | board`: argparse wiring for the evals package (imports stay lazy, so `run` is fast)."""
+"""`vlmbench eval | lint | board | dashboard`: argparse wiring for the evals package (imports stay lazy, so `run` is fast)."""
 
 import argparse
 from pathlib import Path
@@ -16,6 +16,13 @@ def add_parsers(subparsers) -> None:
     li = subparsers.add_parser("lint", help="Check configs and benchmark folders load and follow the layout.")
     li.add_argument("paths", type=Path, nargs="*", help="Files or folders (default: configs/ benchmarks/)")
     li.add_argument("-v", "--verbose", action="store_true", help="Show each serve's config id, model and prompt")
+    da = subparsers.add_parser("dashboard", help="Write (and serve) an HTML page of every eval and run collected.")
+    da.add_argument(
+        "--out", type=Path, default=None, help="Where to write it (default: ~/.vlmbench/dashboard/index.html)"
+    )
+    da.add_argument("--host", default="127.0.0.1", help="Bind address (a Tailscale IP to share it)")
+    da.add_argument("--port", type=int, default=8795)
+    da.add_argument("--no-serve", action="store_true", help="Only write the page")
     bo = subparsers.add_parser("board", help="Latest scores per serve on a benchmark, best first.")
     bo.add_argument("bench", type=Path)
     bo.add_argument("--split", choices=["test", "dev"], default="test")
@@ -24,7 +31,10 @@ def add_parsers(subparsers) -> None:
 def dispatch(args: argparse.Namespace, console) -> None:
     from rich.console import Console
 
-    from vlmbench.evals import runner
+    try:
+        from vlmbench.evals import runner
+    except ImportError as e:
+        raise SystemExit(f"{e.name} is missing: evals need the extra, `pip install 'vlmbench[evals]'`") from None
 
     console = console if console.is_terminal else Console(width=200)
     log = lambda m: console.print(m, highlight=False)  # noqa: E731
@@ -38,6 +48,14 @@ def dispatch(args: argparse.Namespace, console) -> None:
 
             if lint(args.paths or [Path("configs"), Path("benchmarks")], args.verbose, log):
                 raise SystemExit(1)
+        case "dashboard":
+            from vlmbench.evals import dashboard
+
+            out = dashboard.build(args.out)
+            console.print(f"[dim]{out}[/dim]")
+            if not args.no_serve:
+                console.print(f"http://{args.host}:{args.port}/  (Ctrl-C to stop)")
+                dashboard.serve(out, args.host, args.port)
         case "board":
             _board(runner.board(args.bench, args.split), console)
 

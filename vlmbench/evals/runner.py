@@ -15,7 +15,7 @@ from vlmbench.evals.cache import DiskCache
 from vlmbench.evals.client import Client
 from vlmbench.evals.config import Eval, Metric, Serve, Settings, bench_files, expand, load
 from vlmbench.evals.data import Item, render, sample
-from vlmbench.evals.datasets import DATASETS
+from vlmbench.evals.datasets import DATASETS, normalize
 from vlmbench.evals.results import SCHEMA, interval, performance, write
 from vlmbench.evals.trace import configure, record, span
 from vlmbench.version import __version__
@@ -39,7 +39,7 @@ async def _predict(client: Client, serve: Serve, todo: dict[str, list[tuple[Item
             return await client.complete(serve, png, item=f"{d}/{it.id}")
 
     for d, its in todo.items():
-        with span("bench.dataset", dataset=d, serve=serve.name, model=serve.model, config_id=serve.config_id) as s:
+        with span("vlmbench.dataset", dataset=d, serve=serve.name, model=serve.model, config_id=serve.config_id) as s:
             t0 = time.perf_counter()
             recs = await asyncio.gather(*(one(d, it, png) for it, png in its))
             out[d] = (recs, time.perf_counter() - t0)
@@ -70,7 +70,7 @@ async def _judge(client: Client, metric: Metric, judge: Serve, sem: asyncio.Sema
             r = await client.complete(judge, png, text, item=f"judge:{metric.name}:{it.id}")
             return it.id, _judge_score(r.get("text"), *metric.scale)
 
-    with span("bench.judge", metric=metric.name, judge=judge.model, items=len(recs)) as js:
+    with span("vlmbench.judge", metric=metric.name, judge=judge.model, items=len(recs)) as js:
         pairs = await asyncio.gather(*(one(it, png, rec) for (it, png), rec in zip(its, recs)))
         scored = {i: [s, 1] for i, s in pairs if s is not None}
         record(
@@ -101,7 +101,7 @@ async def _run(bench: Path, only, datasets, split: str, refresh: bool, log) -> P
         got = await asyncio.gather(*(_predict(client, serves[n], todo, log) for n in names if not serves[n].local))
         return dict(zip([n for n in names if not serves[n].local], got))
 
-    with span("bench.eval", eval=ev.name, split=split, serves=names, datasets=ds_names) as root:
+    with span("vlmbench.eval", eval=ev.name, split=split, serves=names, datasets=ds_names) as root:
         replies |= await remote()
         for n in [n for n in names if serves[n].local]:
             every = all(client.cached(serves[n], png) for its in todo.values() for _, png in its)
@@ -126,8 +126,8 @@ async def _run(bench: Path, only, datasets, split: str, refresh: bool, log) -> P
                 spec, its = ev.datasets[d], todo[d]
                 recs, wall = replies[n][d]
                 perf.append(performance(s, d, recs, wall))
-                texts = {it.id: r.get("text") or "" for (it, _), r in zip(its, recs)}
-                with span("bench.grade", dataset=d, serve=n, grader=spec.kind, config_id=s.config_id) as gs:
+                texts = {it.id: normalize(spec.kind, r.get("text")) for (it, _), r in zip(its, recs)}
+                with span("vlmbench.grade", dataset=d, serve=n, grader=spec.kind, config_id=s.config_id) as gs:
                     g = DATASETS[spec.kind].score(spec, [it for it, _ in its], texts)
                     record(
                         gs, score=round(g["score"], 2), **{f"metric.{k}": round(v, 2) for k, v in g["metrics"].items()}

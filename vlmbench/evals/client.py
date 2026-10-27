@@ -101,7 +101,7 @@ class Client:
     async def complete(self, serve: Serve, image: Path, text: str | None = None, item: str | None = None) -> dict:
         """The serve's reply to one page (and `text`, appended after the serve's own prompt when given)."""
         k = reply_key(serve, image, text)
-        with span("bench.request", serve=serve.name, model=serve.model, config_id=serve.config_id, item=item) as s:
+        with span("vlmbench.request", serve=serve.name, model=serve.model, config_id=serve.config_id, item=item) as s:
             rec = None
             if not self.refresh:
                 try:

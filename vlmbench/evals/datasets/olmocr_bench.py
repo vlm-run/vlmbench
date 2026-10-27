@@ -32,6 +32,11 @@ def _rows(revision: str) -> dict[str, list[dict]]:
     }
 
 
+def normalize(text: str) -> str:
+    """Header / footer spans dropped: olmOCR-bench wants running headers and footers absent."""
+    return _FURNITURE.sub("", text)
+
+
 def items(spec: DatasetSpec) -> list[Item]:
     root, out = _root(spec.revision), {}
     for name, rows in _rows(spec.revision).items():
@@ -62,7 +67,7 @@ def _passes(test, md: str) -> bool:
 
 
 def score(spec: DatasetSpec, its: list[Item], replies: dict[str, str]) -> dict:
-    md = {it.id: _FURNITURE.sub("", replies.get(it.id) or "") for it in its}
+    md = {it.id: replies.get(it.id) or "" for it in its}
     tests = _tests(spec.revision, set(md))
     with ThreadPoolExecutor(32) as pool:  # as olmocr.bench: math tests render KaTeX in a browser pool
         ok = {g: list(pool.map(lambda t: _passes(t, md.get(t.pdf, "")), ts)) for g, ts in tests.items()}

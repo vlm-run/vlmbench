@@ -24,6 +24,11 @@ def _root(revision: str) -> Path:
     return Path(snapshot_download(REPO, repo_type="dataset", revision=revision, max_workers=8))
 
 
+def normalize(text: str) -> str:
+    """Header / footer tags unwrapped: OmniParseBench wants that text present, and plain."""
+    return _FURNITURE.sub(r"\2", text)
+
+
 def items(spec: DatasetSpec) -> list[Item]:
     from omni_parse_bench import benchmark
 
@@ -38,7 +43,7 @@ def score(spec: DatasetSpec, its: list[Item], replies: dict[str, str]) -> dict:
     _, pages, by_page = benchmark.load(str(_root(spec.revision)))
     verdicts, tests, units = [], [], {}
     for it in its:
-        ts, text = by_page[it.id], _FURNITURE.sub(r"\2", replies.get(it.id) or "")
+        ts, text = by_page[it.id], replies.get(it.id)
         vs = metric.score({"html": as_html(text) if text else None}, ts, unsupported={"blocks"})
         for t, v in zip(ts, vs):  # a family scores flat over its scored (pass / fail) tests
             if v.result in ("pass", "fail") and (f := vocab.FAMILIES[t.test_type]) in ("text", "tables"):

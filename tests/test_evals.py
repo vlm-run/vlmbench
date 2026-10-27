@@ -158,7 +158,7 @@ def test_a_cached_request_is_a_bench_request_span_with_its_results(tmp_path, cap
         rec = asyncio.run(Client(cache).complete(serve, png, item="omniparse/p1"))
         assert rec["cached"] and rec["text"] == "hello"
         spans = {s["name"]: s["attributes"] for s in capfire.exporter.exported_spans_as_dict()}
-        attrs = spans["bench.request"]
+        attrs = spans["vlmbench.request"]
         assert attrs["item"] == "omniparse/p1" and attrs["config_id"] == serve.config_id
         assert attrs["cached"] is True and attrs["completion_tokens"] == 3 and attrs["chars"] == 5
     finally:

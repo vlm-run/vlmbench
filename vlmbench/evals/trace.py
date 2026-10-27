@@ -1,4 +1,4 @@
-"""Logfire spans, in vlm-playground's shape: `with span("bench.x", **attrs) as s:` then `record(s, **results)`.
+"""Logfire spans, in vlm-playground's shape: `with span("vlmbench.x", **attrs) as s:` then `record(s, **results)`.
 Enabled when `vlmbench[logfire]` is installed and `LOGFIRE_TOKEN` is set; a no-op otherwise."""
 
 import os

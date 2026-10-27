@@ -124,7 +124,7 @@ benchmarks/ocr-bench/judges/faithfulness.yaml          # kind: Metric: an LLM ju
 ```
 
 ```bash
-uv sync --extra evals                                  # the benchmarks' own graders (Python 3.12)
+uv sync --extra evals                                  # graders, cache, tracing (ParseBench needs Python 3.12)
 vlmbench lint -v                                       # configs + benchmarks load; config ids, prompts
 vlmbench eval benchmarks/ocr-bench                     # every serve x every dataset (test split)
 vlmbench eval benchmarks/ocr-bench -s gemini-3.8-flash -d parsebench --split dev   # tune on dev pages
@@ -136,7 +136,9 @@ vlmbench board benchmarks/ocr-bench                    # latest scores, throughp
   model calls nothing twice. `--refresh` calls again. Cache hits are never timed.
 - `result.json` holds `configs`, `performance` and `accuracy` rows joined on (`model_id`, `config_id`), with 95%
   page-bootstrap intervals; `replies.jsonl` and `units.jsonl` sit beside it.
-- With `uv sync --extra logfire` and `LOGFIRE_TOKEN` set, every eval, dataset and request is a Logfire span.
+- With `LOGFIRE_TOKEN` set, every eval, dataset, request, grade and judge is a `vlmbench.*` Logfire span.
+- `vlmbench dashboard` writes and serves one HTML page: accuracy evals (tables with score bars and intervals, a
+  radar per eval) and runs (eval throughput and `vlmbench run` sweeps).
 
 ## Leaderboard
 

@@ -3771,13 +3771,9 @@ wheels = [
 name = "vlmbench"
 source = { editable = "." }
 dependencies = [
-    { name = "cachetools" },
     { name = "datasets" },
-    { name = "httpx" },
     { name = "openai" },
     { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
     { name = "pypdfium2" },
     { name = "pyyaml" },
     { name = "rich" },
@@ -3790,16 +3786,18 @@ build = [
     { name = "twine" },
 ]
 evals = [
+    { name = "cachetools" },
+    { name = "httpx" },
+    { name = "logfire" },
     { name = "olmocr" },
     { name = "omni-parse-bench", extra = ["harness"] },
     { name = "parse-bench", marker = "python_full_version >= '3.12'" },
     { name = "playwright" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
 ]
 hf = [
     { name = "datasets" },
-]
-logfire = [
-    { name = "logfire" },
 ]
 test = [
     { name = "pre-commit" },
@@ -3814,11 +3812,11 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "build", marker = "extra == 'build'" },
-    { name = "cachetools", specifier = ">=5.5" },
+    { name = "cachetools", marker = "extra == 'evals'", specifier = ">=5.5" },
     { name = "datasets", specifier = ">=4.5.0" },
     { name = "datasets", marker = "extra == 'hf'", specifier = ">=2.0" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.0" },
+    { name = "httpx", marker = "extra == 'evals'", specifier = ">=0.27" },
+    { name = "logfire", marker = "extra == 'evals'", specifier = ">=4.0" },
     { name = "olmocr", marker = "extra == 'evals'", specifier = "==0.4.27" },
     { name = "omni-parse-bench", extras = ["harness"], marker = "extra == 'evals'", specifier = "==0.2.0" },
     { name = "openai", specifier = ">=1.0" },
@@ -3826,8 +3824,8 @@ requires-dist = [
     { name = "pillow", specifier = ">=10" },
     { name = "playwright", marker = "extra == 'evals'", specifier = "==1.62.0" },
     { name = "pre-commit", marker = "extra == 'test'" },
-    { name = "pydantic", specifier = ">=2.10" },
-    { name = "pydantic-settings", specifier = ">=2.6" },
+    { name = "pydantic", marker = "extra == 'evals'", specifier = ">=2.10" },
+    { name = "pydantic-settings", marker = "extra == 'evals'", specifier = ">=2.6" },
     { name = "pypdfium2", specifier = ">=4" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "pyyaml", specifier = ">=6" },
@@ -3835,7 +3833,7 @@ requires-dist = [
     { name = "tenacity", specifier = ">=8" },
     { name = "twine", marker = "extra == 'build'" },
 ]
-provides-extras = ["hf", "evals", "logfire", "test", "build"]
+provides-extras = ["hf", "evals", "test", "build"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.0.2" }]
