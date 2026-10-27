@@ -128,6 +128,8 @@ Kind = Literal[
     "ccocr",
     "rdtablebench",
     "fintabnet",
+    "mpdocbench",
+    "marathondoc",
     "extractbench",
     "extractbench_pro",
     "longarray",

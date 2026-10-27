@@ -191,6 +191,10 @@ def test_a_document_is_read_in_page_windows(tmp_path):
     assert [len(w) for w, _ in ws] == [2, 2, 1] and ws[2][1].endswith("pages 5-5 of 5.")
     whole = load(_write(tmp_path, "w.yaml", "kind: Serve\nmodel: m\nbackend: {type: remote, base_url: http://x}\n"))
     assert windows(whole, [tmp_path / "p.png"] * 3, "schema") == [([tmp_path / "p.png"] * 3, "schema")]
+    pages = [tmp_path / f"q{i}.png" for i in range(3)]
+    assert windows(s, pages, None) == [
+        ([p], None) for p in pages
+    ]  # a text document: one page per request, no instruction
 
 
 def test_longarray_scores_rows_order_insensitively():

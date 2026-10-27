@@ -1,4 +1,4 @@
-# Page image -> Markdown on seven public benchmarks, each graded by its own package, plus an LLM judge.
+# Page image -> Markdown on nine public benchmarks, each graded by its own package, plus an LLM judge.
 kind: Eval
 budget_usd: 10  # the most one run may spend, judges included; `--budget` overrides
 serves:
@@ -49,5 +49,13 @@ datasets:
     kind: fintabnet
     revision: 7c8e35d9f21abe95525e52e3c7fc0134a774d0ca
     samples: 10
+  mpdocbench:  # MPDocBench-Parse (Alibaba Qwen-Doc): dozens of pages per document; revision is the Qwen-Doc commit
+    kind: mpdocbench
+    revision: 4e5aee32280febb7b0844237ba087f837e3c8905
+    samples: 3
+  marathondoc:  # Baidu MarathonDocBench: 100-300 pages per document, read page by page
+    kind: marathondoc
+    revision: fa05fccbe82ee6ec628006a1d58bb153954c3ee3
+    samples: 2
 metrics:
   - judges/faithfulness.yaml

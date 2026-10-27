@@ -29,7 +29,10 @@ def pages(ev: Eval, names: list[str], split: str, home: Path, samples: int | Non
     for d in names:
         spec, mod = ev.datasets[d], DATASETS[ev.datasets[d].kind]
         its = sample(mod.items(spec), spec.samples if samples is None else samples, split)
-        if getattr(mod, "DOCUMENT", False):
+        if getattr(mod, "DOCUMENT", False) == "text":  # a long document read page by page: the module ships its pages
+            todo[d] = [(it, mod.pages(spec, it)) for it in its]
+            instr[d] = {it.id: None for it in its}
+        elif getattr(mod, "DOCUMENT", False):
             from concurrent.futures import ProcessPoolExecutor
 
             with ProcessPoolExecutor(16) as pool:  # pdfium is not thread-safe; pages are rendered once, then cached
@@ -41,8 +44,11 @@ def pages(ev: Eval, names: list[str], split: str, home: Path, samples: int | Non
     return todo, instr
 
 
-def windows(serve: Serve, pngs: list[Path], text: str) -> list[tuple[list[Path], str]]:
-    """A document's requests: `pages_per_call` pages each, every one told which pages it holds."""
+def windows(serve: Serve, pngs: list[Path], text: str | None) -> list[tuple[list[Path], str | None]]:
+    """A document's requests: `pages_per_call` pages each, every one told which pages it holds. A text document
+    (no instruction) is read one page per request, each with the serve's own prompt, as a page benchmark is."""
+    if text is None:
+        return [([p], None) for p in pngs]
     n, k = len(pngs), serve.request.pages_per_call or len(pngs)
     if n <= k:
         return [(pngs, text)]
@@ -50,7 +56,8 @@ def windows(serve: Serve, pngs: list[Path], text: str) -> list[tuple[list[Path],
 
 
 async def _document(client: Client, serve: Serve, sem, item: str, pngs: list[Path], text: str) -> dict:
-    """One reply per document: each window's JSON merged in page order; tokens, cost and errors summed."""
+    """One reply per document: each window's JSON merged in page order (a text document's pages joined instead);
+    tokens, cost and errors summed."""
 
     async def call(w: list[Path], t: str, i: int) -> dict:
         async with sem:
@@ -59,12 +66,16 @@ async def _document(client: Client, serve: Serve, sem, item: str, pngs: list[Pat
     t0 = time.perf_counter()
     parts = await asyncio.gather(*(call(w, t, i) for i, (w, t) in enumerate(windows(serve, pngs, text))))
     merged, parsed = {}, 0
-    for r in parts:
+    for r in parts if text is not None else []:
         if (v := parse(r.get("text"))) is not None:
             merged, parsed = merge(merged, v), parsed + 1
     total = lambda k: sum(r.get(k) or 0 for r in parts)  # noqa: E731
     rec = {
-        "text": json.dumps(merged, ensure_ascii=False) if parsed else "",
+        "text": json.dumps(merged, ensure_ascii=False)
+        if parsed
+        else ""
+        if text is not None
+        else "\n\n".join(r.get("text") or "" for r in parts),
         "finish": "length" if any(r.get("finish") == "length" for r in parts) else "stop",
         "latency_s": round(time.perf_counter() - t0, 3),
         "ttft_s": min((r["ttft_s"] for r in parts if r.get("ttft_s") is not None), default=None),
@@ -75,7 +86,7 @@ async def _document(client: Client, serve: Serve, sem, item: str, pngs: list[Pat
         "cached": all(r.get("cached") for r in parts),
         "pages": len(pngs),
         "windows": len(parts),
-        "windows_unparsed": len(parts) - parsed,
+        "windows_unparsed": len(parts) - parsed if text is not None else 0,
     }
     if all("error" in r for r in parts):
         rec["error"] = parts[0]["error"]

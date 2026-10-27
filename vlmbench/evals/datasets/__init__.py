@@ -5,7 +5,8 @@ A module has `REPO`, `items(spec) -> list[Item]` (ids are the benchmark's own),
 reply text; `units[item][group] = [passed, tests]` rebuilds the score for bootstrap intervals), and optionally
 `normalize(text) -> text`: the benchmark's own conventions, applied to every model's reply before grading.
 A document-level benchmark (`DOCUMENT = True`) sends every page of an item, with `instruction(spec, item)` (its
-JSON schema) after the serve's prompt.
+JSON schema) after the serve's prompt. A long document parsed to markdown (`DOCUMENT = "text"`) ships its page images
+from `pages(spec, item)`; each page is read alone with the serve's own prompt and the replies joined in page order.
 A model's own output format is the serve's `postprocess`, applied once when the reply arrives.
 """
 
@@ -15,6 +16,8 @@ from vlmbench.evals.datasets import (
     extractbench_pro,
     fintabnet,
     longarray,
+    marathondoc,
+    mpdocbench,
     olmocr_bench,
     omnidocbench,
     omniparse,
@@ -31,6 +34,8 @@ DATASETS = {
     "ccocr": ccocr,
     "rdtablebench": rdtablebench,
     "fintabnet": fintabnet,
+    "mpdocbench": mpdocbench,
+    "marathondoc": marathondoc,
     "extractbench": extractbench,
     "extractbench_pro": extractbench_pro,
     "longarray": longarray,
