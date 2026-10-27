@@ -147,7 +147,8 @@ th{font:500 10.5px "Space Grotesk",sans-serif;letter-spacing:.12em;text-transfor
 td{padding:11px 10px;border-bottom:1px solid var(--hair);text-align:right;white-space:nowrap;font-size:13px}
 th:first-child,td:first-child,th.l,td.l{text-align:left}
 th[aria-sort=descending]::after{content:" ↓"}th[aria-sort=ascending]::after{content:" ↑"}
-tbody tr:hover td{background:var(--hover)}
+tbody tr:hover td,tbody tr.on td{background:var(--hover)}
+svg g.s{transition:opacity .15s}
 td.rank{color:var(--ink-3);width:28px;padding-right:0}
 td.name{font-family:"Space Grotesk",sans-serif;font-size:14px;font-weight:500}
 td.name .meta{display:block;font:400 11px "Geist Mono",monospace;color:var(--ink-3);margin-top:1px}
@@ -232,13 +233,15 @@ function accTab(){const root=$("#acc");root.replaceChildren();
   const cols=[{t:"#"},{t:"model",key:"serve",l:1},{t:"mean",key:"mean"},...ev.datasets.map(d=>({t:d,key:`scores.${d}.score`})),
    {t:"judge",key:"judge"},{t:"pages/s",key:"pages_s"},{t:"$ / 1k",key:"usd_1k"}];
   const tbl=el("table");tbl.createTHead().append(el("tr",{},cols.map(c=>`<th class="${c.l?"l":""}">${esc(c.t)}</th>`).join("")));tbl.createTBody();card.append(tbl);
-  sortable(tbl,rows,cols,(r,i)=>el("tr",{},`<td class="rank">${String(i+1).padStart(2,"0")}</td>`+
+  let rad=null;
+  sortable(tbl,rows,cols,(r,i)=>hover(el("tr",{},`<td class="rank">${String(i+1).padStart(2,"0")}</td>`+
    `<td class="l name">${esc(r.serve)}<span class="meta">${esc(r.prompt||"")} · ${r.backend==="vllm"?"local vLLM":"API"}</span></td>`+
    `<td><span class="cell" data-tip="${r.ci?`95% CI ${f(r.ci[0])}–${f(r.ci[1])}`:"not every dataset graded"}"><span class="big">${f(r.mean)}</span>${meter(r.mean,r.ci)}</span></td>`+
    ev.datasets.map(d=>{const s=r.scores[d];return `<td><span class="cell" data-tip="${esc(d)} ${s?f(s.score):"—"}${s&&s.ci?` · 95% CI ${f(s.ci[0])}–${f(s.ci[1])}`:""}">${s?f(s.score):"—"}${s?meter(s.score,s.ci,1):""}</span></td>`}).join("")+
    `<td><span class="cell" data-tip="LLM judge, 0–100">${f(r.judge)}${r.judge!=null?meter(r.judge,null,1):""}</span></td>`+
-   `<td>${f(r.pages_s,2)}</td><td>${r.usd_1k==null?"—":f(r.usd_1k,2)}</td>`));
-  g.append(radar(ev,rows))}
+   `<td>${f(r.pages_s,2)}</td><td>${r.usd_1k==null?"—":f(r.usd_1k,2)}</td>`),r));
+  function hover(tr,r){tr.onmouseenter=()=>rad?.focus(r.serve);tr.onmouseleave=()=>rad?.focus(null);return tr}
+  rad=radar(ev,rows);g.append(rad.card)}
  pick.onchange=draw;draw()}
 
 function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relative to the fastest serve
@@ -259,18 +262,27 @@ function radar(ev,rows){ // 5 axes: each benchmark, the judge, and speed relativ
  const leg=el("div",{className:"legend"});wrap.append(leg);
  function drawLegend(){leg.replaceChildren(...rows.map(r=>{const on=slots.has(r.serve);
   const lab=el("label",{},`<input type="checkbox" ${on?"checked":""} ${!on&&!free.length?"disabled":""}><span><span class="sw" style="background:${on?`var(--s${slots.get(r.serve)})`:"var(--hair)"}"></span> ${esc(r.serve)}</span>`);
-  lab.onmouseenter=()=>svg.querySelectorAll("polygon.s").forEach(p=>p.style.opacity=p.dataset.serve===r.serve?1:.15);
-  lab.onmouseleave=()=>svg.querySelectorAll("polygon.s").forEach(p=>p.style.opacity=1);
+  lab.onmouseenter=()=>focus(r.serve);lab.onmouseleave=()=>focus(null);
   lab.querySelector("input").onchange=e=>{if(e.target.checked){slots.set(r.serve,free.shift())}else{free.push(slots.get(r.serve));free.sort((a,b)=>a-b);slots.delete(r.serve)}drawLegend();drawPlot()};return lab}))}
+ let preview=null;
  function drawPlot(){let s="";for(const v of [25,50,75,100])s+=`<polygon points="${axes.map((_,i)=>pt(i,v).join(",")).join(" ")}" fill="none" stroke="var(--hair)" stroke-width="1"/>`;
   axes.forEach((a,i)=>{const [x,y]=pt(i,100),[lx,ly]=pt(i,118);s+=`<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="var(--hair)"/>`+
    `<text x="${lx}" y="${ly}" text-anchor="${Math.abs(lx-cx)<8?"middle":lx>cx?"start":"end"}" dominant-baseline="middle">${esc(a.k)}</text>`});
   s+=`<text class="tick" x="${cx+4}" y="${cy-R/2}">50</text><text class="tick" x="${cx+4}" y="${cy-R}">100</text>`;
-  for(const r of rows){if(!slots.has(r.serve))continue;const c=`var(--s${slots.get(r.serve)})`;
-   const ps=axes.map((a,i)=>pt(i,a.get(r)??0));s+=`<polygon class="s" data-serve="${esc(r.serve)}" points="${ps.map(p=>p.join(",")).join(" ")}" fill="none" stroke="${c}" stroke-width="1.75" stroke-linejoin="round"/>`;
-   ps.forEach((p,i)=>{const v=axes[i].get(r);s+=`<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="${c}" stroke="var(--surface-1)" stroke-width="1.5"/><circle cx="${p[0]}" cy="${p[1]}" r="10" fill="transparent" data-tip="${esc(r.serve)} · ${esc(axes[i].k)}: ${v==null?"—":f(v)}"/>`})}
+  const series=(r,c,dash)=>{const ps=axes.map((a,i)=>pt(i,a.get(r)??0));
+   let g=`<g class="s" data-serve="${esc(r.serve)}"><polygon points="${ps.map(p=>p.join(",")).join(" ")}" fill="none" stroke="${c}" stroke-width="1.75" stroke-linejoin="round"${dash?' stroke-dasharray="4 3"':""}/>`;
+   ps.forEach((p,i)=>{const v=axes[i].get(r);g+=`<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="${c}" stroke="var(--surface-1)" stroke-width="1.5"/><circle cx="${p[0]}" cy="${p[1]}" r="10" fill="transparent" data-tip="${esc(r.serve)} · ${esc(axes[i].k)}: ${v==null?"—":f(v)}"/>`});
+   return g+"</g>"};
+  for(const r of rows)if(slots.has(r.serve))s+=series(r,`var(--s${slots.get(r.serve)})`);
+  if(preview&&!slots.has(preview.serve))s+=series(preview,"var(--ink-1)",1);  // a hovered row not on the radar
   svg.innerHTML=s}
- drawLegend();drawPlot();return card}
+ function focus(serve){ // one serve at full strength, every other at 15%; an unselected one drawn dashed
+  const r=rows.find(x=>x.serve===serve)||null, redraw=(r&&!slots.has(r.serve))||(preview&&preview!==r);
+  preview=r&&!slots.has(r.serve)?r:null;if(redraw)drawPlot();
+  svg.querySelectorAll("g.s").forEach(g=>{const on=!serve||g.dataset.serve===serve;g.style.opacity=on?1:.15;
+   g.querySelector("polygon").setAttribute("stroke-width",serve&&on?2.75:1.75)});
+  leg.querySelectorAll("label").forEach((l,i)=>l.style.color=serve&&rows[i].serve===serve?"var(--ink-1)":"")}
+ drawLegend();drawPlot();return {card,focus}}
 
 // ── runs tab ──
 function runsTab(){const root=$("#runs");
