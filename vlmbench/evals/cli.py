@@ -49,15 +49,14 @@ def _board(rows: list[dict], console) -> None:
         return
     cols = list(dict.fromkeys(k for r in rows for k in r))
     t = Table(*cols, box=None, header_style="bold")
-    fmt = (
-        lambda v: "—"
-        if v is None
-        else f"{v:.2f}"
-        if isinstance(v, float) and v < 10
-        else f"{v:.1f}"
-        if isinstance(v, float)
-        else str(v)
-    )  # noqa: E731
     for r in rows:
-        t.add_row(*(fmt(r.get(c)) for c in cols))
+        t.add_row(*(_fmt(r.get(c)) for c in cols))
     console.print(t)
+
+
+def _fmt(v) -> str:
+    if v is None:
+        return "—"
+    if isinstance(v, float):
+        return f"{v:.2f}" if v < 10 else f"{v:.1f}"
+    return str(v)
