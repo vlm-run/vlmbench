@@ -172,6 +172,9 @@ body{margin:0;font:14px/1.5 "Space Grotesk",ui-sans-serif,system-ui,sans-serif;-
 main{max-width:1280px;margin:0 auto;padding:40px 40px 96px}
 header{display:flex;align-items:center;gap:28px}
 h1{font-size:18px;font-weight:700;letter-spacing:-.01em;margin:0}
+.brand{display:inline-flex;align-items:center;gap:10px;color:inherit;text-decoration:none}.logo{height:22px;width:auto;display:block}
+footer{display:flex;gap:10px;margin-top:24px;padding-top:20px;border-top:1px solid var(--hair);font:500 12px "Geist Mono",monospace;color:var(--ink-3)}
+footer a{color:var(--ink-2);text-decoration:none}footer a:hover{color:var(--ink-1);text-decoration:underline}
 .sub{color:var(--ink-3);font-size:12px}
 nav.tabs{display:flex;gap:22px}
 nav.tabs button,.seg button,select{font:500 13px "Space Grotesk",sans-serif;color:var(--ink-3);background:none;border:0;padding:4px 0;cursor:pointer}
@@ -185,8 +188,9 @@ td.none{text-align:left;color:var(--ink-3);padding:28px 10px}
 .frame thead th{position:sticky;top:0;z-index:2;background:var(--surface-1);border-bottom:0;box-shadow:inset 0 -1px 0 var(--ink-1);padding-top:8px}
 .frame table.dense th:nth-child(2){z-index:3;box-shadow:inset 0 -1px 0 var(--ink-1),8px 0 8px -8px var(--hair)}
 .radar svg{overflow:visible}
-.pop{position:fixed;z-index:20;display:none;flex-direction:column;gap:6px;min-width:280px;padding:12px 14px;background:var(--ink-1);border-radius:6px;font:500 12px "Geist Mono",monospace}
-.pop.on{display:flex}.pop a{color:var(--surface-1);text-decoration:none}.pop a:hover{text-decoration:underline}.pop a.rev{color:var(--ink-3)}
+.pop{position:fixed;z-index:20;display:flex;visibility:hidden;flex-direction:column;gap:3px;padding:6px 9px;background:#fff;border:1px solid #e7e6e1;
+ box-shadow:0 2px 8px rgba(0,0,0,.08);border-radius:4px;font:500 11px "Geist Mono",monospace}
+.pop.on{visibility:visible}.pop a{color:#0b0b0b;text-decoration:none}.pop a:hover{text-decoration:underline}.pop a.rev{color:#9a9993}
 th[data-ds]{cursor:help}
 .chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px 18px;margin:-28px 0 40px}
 .chips button{font:500 12.5px "Geist Mono",monospace;color:var(--ink-3);background:none;border:0;padding:2px 0;cursor:pointer;display:inline-flex;align-items:center;gap:7px}
@@ -244,16 +248,17 @@ table.dense tr:hover td.name{background:var(--hover)}
 svg text{fill:var(--ink-3);font:500 10.5px "Space Grotesk",sans-serif;letter-spacing:.1em;text-transform:uppercase}
 svg .tick{font:400 9.5px "Geist Mono",monospace;letter-spacing:0;text-transform:none}
 svg polygon.s{transition:opacity .15s}
-.tip{position:fixed;pointer-events:none;background:var(--ink-1);color:var(--surface-1);font:500 12px "Geist Mono",monospace;
- padding:5px 9px;border-radius:4px;opacity:0;transition:opacity .08s;white-space:nowrap;z-index:9}
+.tip{position:fixed;pointer-events:none;background:#fff;color:#0b0b0b;border:1px solid #e7e6e1;box-shadow:0 2px 8px rgba(0,0,0,.08);
+ font:500 11px "Geist Mono",monospace;padding:3px 7px;border-radius:4px;opacity:0;transition:opacity .08s;white-space:nowrap;z-index:9}
 .empty{color:var(--ink-3);padding:24px 0}
 </style></head>
 <body><div class="viz-root"><main>
-<header><h1>vlmbench</h1>
+<header><a class="brand" href="https://vlm.run" target="_blank" rel="noopener"><svg class="logo" role="img" aria-label="VLM Run" viewBox="0 0 171 130" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10.4983 16.086C10.4983 7.20196 17.7003 0 26.5843 0H47.581V10.724H26.5843C23.623 10.724 21.2223 13.1247 21.2223 16.086V58.1921C21.2223 61.1535 18.8217 63.5541 15.8603 63.5541L15.8603 66.1222C18.8217 66.1222 21.2223 68.5229 21.2223 71.4842V113.59C21.2223 116.552 23.623 118.952 26.5843 118.952H47.581V129.676H26.5843C17.7003 129.676 10.4983 122.474 10.4983 113.59V70.2002H0V59.4762H10.4983V16.086Z" fill="#1E5ACA"/><path d="M44.3593 60.8161L32.4557 27.7432H42.1716L50.1503 51.5506L58.0003 27.7432H67.5232L55.6195 60.8161H44.3593Z" fill="#1E5ACA"/><path d="M69.26 60.8161V15.7752H78.3325V60.8161H69.26Z" fill="#1E5ACA"/><path d="M122.94 27.3572C129.76 27.3572 135.165 31.2178 135.165 41.8346V60.8161H126.092V42.3493C126.092 37.3949 124.291 34.8211 120.366 34.8211C116.441 34.8211 113.803 37.7166 113.803 42.7354V60.8161H104.73V42.3493C104.73 37.3949 102.929 34.8211 98.9392 34.8211C95.0142 34.8211 92.4404 37.8453 92.4404 42.7998V60.8161H83.3679V27.7432H91.2822L92.1187 31.8613C94.1134 29.2875 97.0089 27.4215 101.835 27.3572C105.888 27.2928 109.685 28.7727 111.744 32.9551C114.06 29.4162 117.921 27.3572 122.94 27.3572Z" fill="#1E5ACA"/><path d="M58.3526 73.3203H59.8969V81.5564H56.2936C50.8887 81.5564 48.8297 85.1596 48.8297 90.1785V106.393H39.7572V73.3203H47.9932L48.8297 78.2748C50.6313 75.315 53.2051 73.3203 58.3526 73.3203Z" fill="#1E5ACA"/><path d="M84.7322 89.8567V73.3203H93.8047V106.393H85.7617L84.9252 102.404C82.8019 104.978 79.9064 106.779 75.2093 106.779C68.3888 106.779 62.0831 103.369 62.0831 91.6584V73.3203H71.1556V90.4358C71.1556 96.3555 73.0859 99.251 77.59 99.251C82.0941 99.251 84.7322 95.9694 84.7322 89.8567Z" fill="#1E5ACA"/><path d="M117.807 72.9342C124.949 72.9342 131.062 76.7305 131.062 88.0551V106.393H121.989V88.9559C121.989 83.358 119.866 80.3982 115.298 80.3982C110.601 80.3982 107.898 83.744 107.898 89.4707V106.393H98.8256V73.3203H106.74L107.576 77.4383C109.7 74.8646 112.724 72.9342 117.807 72.9342Z" fill="#1E5ACA"/><path d="M159.732 16.086C159.732 7.20196 152.53 0 143.646 0H122.649V10.724H143.646C146.607 10.724 149.008 13.1247 149.008 16.086V58.1921C149.008 61.1535 151.408 63.5541 154.37 63.5541V66.1222C151.408 66.1222 149.008 68.5229 149.008 71.4842V113.59C149.008 116.552 146.607 118.952 143.646 118.952H122.649V129.676H143.646C152.53 129.676 159.732 122.474 159.732 113.59V70.2002H170.23V59.4762H159.732V16.086Z" fill="#1E5ACA"/></svg><h1>vlmbench</h1></a>
 <nav class="tabs" role="tablist"><button role="tab" data-tab="acc" aria-selected="true">Accuracy</button>
 <button role="tab" data-tab="runs" aria-selected="false">Runs</button></nav>
 <span style="flex:1"></span><input id="q" type="search" placeholder="search models   /" autocomplete="off" spellcheck="false" aria-label="Search models, backends, prompts, datasets"><span class="sub mono" id="sub"></span><div class="seg" id="theme"><button data-t="light">Light</button><button data-t="dark">Dark</button></div></header>
 <section id="acc"></section><section id="runs" hidden></section>
+<footer><a href="https://github.com/vlm-run/vlmbench" target="_blank" rel="noopener">github.com/vlm-run/vlmbench</a><span>·</span><span>open-source, by <a href="https://vlm.run" target="_blank" rel="noopener">VLM Run</a></span></footer>
 </main><div class="tip" id="tip"></div></div>
 <script>
 const D=/*DATA*/null;
@@ -279,11 +284,14 @@ function link(th,l){if(!l)return;
  const hf=`https://huggingface.co/datasets/${l.repo}`, rev=l.revision?`${hf}/tree/${l.revision}`:null;
  th.onmouseenter=()=>{clearTimeout(popT);
   pop.innerHTML=`<a href="${hf}" target="_blank" rel="noopener">${esc(l.repo)} ↗</a>`+(rev?`<a class="rev" href="${rev}" target="_blank" rel="noopener">pinned @ ${esc(l.revision.slice(0,10))}</a>`:"");
-  const b=th.getBoundingClientRect();pop.style.left=`${Math.max(8,Math.min(innerWidth-pop.offsetWidth-8,b.left+b.width/2-140))}px`;pop.style.top=`${b.bottom+6}px`;pop.classList.add("on")};
+  above(pop,th.getBoundingClientRect());pop.classList.add("on")};
  th.onmouseleave=()=>{popT=setTimeout(()=>pop.classList.remove("on"),150)}}
 window.addEventListener("scroll",()=>pop.classList.remove("on"),true);
-document.addEventListener("mousemove",e=>{const t=e.target.closest("[data-tip]");if(!t){tip.style.opacity=0;return}
- tip.textContent=t.dataset.tip;tip.style.left=(e.clientX+12)+"px";tip.style.top=(e.clientY+12)+"px";tip.style.opacity=1});
+// a tooltip sits above what it describes (below only when there is no room), never over the numbers beside it
+function above(node,b,gap=6){const top=b.top-node.offsetHeight-gap;node.style.top=`${top<4?b.bottom+gap:top}px`;
+ node.style.left=`${Math.max(8,Math.min(innerWidth-node.offsetWidth-8,b.left+b.width/2-node.offsetWidth/2))}px`}
+document.addEventListener("mouseover",e=>{const t=e.target.closest("[data-tip]");if(!t||!t.dataset.tip){tip.style.opacity=0;return}
+ tip.textContent=t.dataset.tip;above(tip,t.getBoundingClientRect());tip.style.opacity=1});
 // theme toggle: an explicit choice beats the OS setting both ways
 document.querySelectorAll("#theme button").forEach(b=>b.onclick=()=>{document.documentElement.dataset.theme=b.dataset.t;
  document.querySelectorAll("#theme button").forEach(x=>x.setAttribute("aria-pressed",x===b))});
