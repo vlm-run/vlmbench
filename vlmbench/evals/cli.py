@@ -1,4 +1,4 @@
-"""`vlmbench eval | lint | board | dashboard`: argparse wiring for the evals package (imports stay lazy, so `run` is fast)."""
+"""`vlmbench eval | lint | dashboard`: argparse wiring for the evals package (imports stay lazy, so `run` is fast)."""
 
 import argparse
 from pathlib import Path
@@ -26,9 +26,6 @@ def add_parsers(subparsers) -> None:
     da.add_argument("--host", default="127.0.0.1", help="Bind address (a Tailscale IP to share it)")
     da.add_argument("--port", type=int, default=8795)
     da.add_argument("--no-serve", action="store_true", help="Only write the page")
-    bo = subparsers.add_parser("board", help="Latest scores per serve on a benchmark, best first.")
-    bo.add_argument("bench", help="A benchmark name or folder")
-    bo.add_argument("--split", choices=["test", "dev"], default="test")
 
 
 def dispatch(args: argparse.Namespace, console) -> None:
@@ -61,8 +58,6 @@ def dispatch(args: argparse.Namespace, console) -> None:
             if not args.no_serve:
                 console.print(f"http://{args.host}:{args.port}/  (Ctrl-C to stop)")
                 dashboard.serve(out, args.host, args.port)
-        case "board":
-            _board(runner.board(args.bench, args.split), console)
 
 
 def _board(rows: list[dict], console) -> None:

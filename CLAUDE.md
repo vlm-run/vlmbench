@@ -6,7 +6,7 @@ Single-file, drop-in VLM benchmark CLI for your agents.
 
 ```
 vlmbench/cli.py             # `run`, `compare`, `profiles` (throughput), and the argparse entry point
-vlmbench/evals/             # `eval`, `lint`, `board`: accuracy + performance on benchmark folders
+vlmbench/evals/             # `eval`, `lint`, `dashboard`: accuracy + performance on benchmark folders
 configs/providers/          # where requests go: vlmrun, openrouter, vllm (local container)
 configs/models/             # one model on one provider (`provider:` a name or {use: <name>, ...overrides})
 configs/benchmarks/<bench>/ # <bench>.yaml (kind: Eval: datasets, request defaults, serves + overrides, judges), prompts/

@@ -81,7 +81,6 @@ vlmbench lint -v                                      # every config resolves; i
 vlmbench eval ocr-bench                               # every model × every dataset
 vlmbench eval ocr-bench -s gemini-3.8-flash --split dev   # tune prompts on dev pages
 vlmbench eval extract-bench --budget 5                # stop spending at $5 (budget_usd in the Eval)
-vlmbench board ocr-bench                              # latest scores in the terminal
 ```
 
 - **Datasets**: OCR (OmniParseBench, olmOCR-bench, ParseBench, OmniDocBench, CC-OCR, RD-TableBench, FinTabNet,
