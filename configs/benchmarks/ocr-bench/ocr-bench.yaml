@@ -22,7 +22,12 @@ serves:
   gemini-3.8-flash-md-v2: {model: gemini-3.8-flash, request: *v2}
   gemini-4-argon-md-v2: {model: gemini-4-argon, request: *v2}
   # local vLLM on one RTX 5090
-  gemma4-26b: {request: {prompt: prompts/ocr-md-v1.md, temperature: 0.0, max_tokens: 12288}}
+  gemma4-26b:  # 1,120-token image budget (its model config)
+    request: {prompt: prompts/ocr-md-v1.md, temperature: 0.0, max_tokens: 12288}
+  gemma4-26b-280:  # the same model at a 280-token image budget, to measure what 1,120 buys
+    model: gemma4-26b
+    provider: {args: ['--mm-processor-kwargs={"max_soft_tokens": 280}']}  # appended: vLLM keeps the last value
+    request: {prompt: prompts/ocr-md-v1.md, temperature: 0.0, max_tokens: 12288}
   diffusiongemma-26b:  # 1,120-token image budget (its model config); no temperature: vLLM refuses any but 1.0
     request: {prompt: prompts/ocr-md-v1.md, max_tokens: 12288}
   diffusiongemma-26b-280:  # the same model at a 280-token image budget, to measure what 1,120 buys
