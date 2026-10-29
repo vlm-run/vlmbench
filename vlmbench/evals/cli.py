@@ -41,7 +41,15 @@ def dispatch(args: argparse.Namespace, console) -> None:
     match args.command:
         case "eval":
             out = runner.run(
-                args.bench, args.serve, args.dataset, args.split, args.refresh, log, args.samples, args.budget
+                args.bench,
+                args.serve,
+                args.dataset,
+                args.split,
+                args.refresh,
+                log,
+                samples=args.samples,
+                budget=args.budget,
+                judges=not args.no_judges,
             )
             console.print(f"[dim]{out}[/dim]")
             _board(runner.board(args.bench, args.split), console)

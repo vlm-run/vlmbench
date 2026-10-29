@@ -248,3 +248,19 @@ def test_dataset_draws_rebuild_the_interval_for_any_set_of_datasets():
     lo, hi = interval([(40.0, a), (70.0, b)], draws=4000)
     assert abs(m[100] - lo) < 1.5 and abs(m[3899] - hi) < 1.5
     assert draws(50.0, {}) == []
+
+
+def test_eval_flags_reach_the_runner(monkeypatch):
+    import argparse
+
+    from rich.console import Console
+
+    from vlmbench.evals import cli, runner
+
+    seen = {}
+    monkeypatch.setattr(runner, "run", lambda *a, **k: seen.update(k) or "out")
+    monkeypatch.setattr(runner, "board", lambda *a, **k: [])
+    p = argparse.ArgumentParser()
+    cli.add_parsers(p.add_subparsers(dest="command"))
+    cli.dispatch(p.parse_args(["eval", "ocr-bench", "--no-judges", "--budget", "2", "--samples", "3"]), Console())
+    assert seen == {"samples": 3, "budget": 2.0, "judges": False}
